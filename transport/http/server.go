@@ -39,6 +39,11 @@ func (s *Server) Start() error {
 		logger.Error("Failed to register default server", "error", err)
 		return err
 	}
+	// Mark default server as persistent so it's not cleaned up
+	if err := s.registry.SetPersistence("default", true); err != nil {
+		logger.Error("Failed to set default server persistence", "error", err)
+		return err
+	}
 	logger.Info("Default server registered successfully", "server_id", "default")
 	go s.startCleanupGoroutine()
 	s.setupEcho()
