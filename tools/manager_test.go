@@ -122,9 +122,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 	// Test concurrent execution
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			result, err := manager.CallTool("slowTool", map[string]any{})
 			if err != nil {
 				t.Errorf("Concurrent CallTool failed: %v", err)
@@ -132,7 +130,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 			if result != "slow result" {
 				t.Errorf("Expected 'slow result', got %v", result)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

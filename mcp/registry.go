@@ -7,10 +7,11 @@ import (
 
 // ServerInfo represents information about a registered server
 type ServerInfo struct {
-	ID        string
-	Tools     []Tool
-	CreatedAt time.Time
-	LastSeen  time.Time
+	ID         string
+	Tools      []Tool
+	CreatedAt  time.Time
+	LastSeen   time.Time
+	Persistent bool
 }
 
 // ClientInfo represents information about a connected client
@@ -114,6 +115,19 @@ func (r *Registry) UpdateLastSeen(id string, isServer bool) error {
 	return nil
 }
 
+// SetPersistence sets the persistent flag for a server
+func (r *Registry) SetPersistence(id string, persistent bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	server, exists := r.servers[id]
+	if !exists {
+		return ErrServerNotFound
+	}
+	server.Persistent = persistent
+	return nil
+}
+
 // IsClientInitialized checks if a client is initialized
 func (r *Registry) IsClientInitialized(id string) bool {
 	r.mu.RLock()
@@ -156,7 +170,7 @@ func (r *Registry) Cleanup(timeout time.Duration) {
 
 	// Cleanup servers
 	for id, server := range r.servers {
-		if now.Sub(server.LastSeen) > timeout {
+		if !server.Persistent && now.Sub(server.LastSeen) > timeout {
 			delete(r.servers, id)
 		}
 	}
