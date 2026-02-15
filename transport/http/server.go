@@ -2,8 +2,11 @@ package http
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -58,9 +61,12 @@ func (s *Server) Start() error {
 func (s *Server) setupEcho() {
 	s.echo.Use(middleware.Logger())
 	s.echo.Use(middleware.Recover())
+	s.echo.Use(s.originValidationMiddleware())
 	s.echo.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodOptions},
+		AllowOriginFunc: func(origin string) (bool, error) {
+			return s.isAllowedOrigin(origin), nil
+		},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodOptions},
 		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, "Mcp-Session-Id", "Last-Event-ID"},
 	}))
 	RegisterRoutes(s.echo, s)
@@ -84,9 +90,57 @@ func (s *Server) startStdioServer() error {
 func (s *Server) startStreamableHTTPServer() error {
 	logger.Info("Starting MCP server in Streamable HTTP mode", "port", s.config.Server.Port)
 	logger.Debug("Streamable HTTP server configuration", "config", s.config)
-	addr := fmt.Sprintf("[::]:%d", s.config.Server.Port)
+	host := strings.TrimSpace(s.config.Server.Host)
+	if host == "" {
+		host = "localhost"
+	}
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", s.config.Server.Port))
 	logger.Info("Streamable HTTP server starting to listen", "address", addr)
 	return s.echo.Start(addr)
+}
+
+func (s *Server) originValidationMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			origin := c.Request().Header.Get(echo.HeaderOrigin)
+			if origin == "" {
+				return next(c)
+			}
+			if !s.isAllowedOrigin(origin) {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden origin"})
+			}
+			return next(c)
+		}
+	}
+}
+
+func (s *Server) isAllowedOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	allowed := map[string]struct{}{
+		"localhost": {},
+		"127.0.0.1": {},
+		"::1":       {},
+	}
+
+	cfgHost := strings.ToLower(strings.TrimSpace(s.config.Server.Host))
+	if cfgHost != "" && cfgHost != "0.0.0.0" && cfgHost != "::" {
+		allowed[cfgHost] = struct{}{}
+	}
+
+	_, ok := allowed[host]
+	return ok
 }
 
 func (s *Server) GetRegistry() *mcp.Registry {

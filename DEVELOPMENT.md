@@ -7,11 +7,13 @@ This document contains the development roadmap, architecture details, and techni
 ### ✅ Completed Features
 
 #### 1. Project Setup
+
 - [x] Create project directory structure
 - [x] Initialize Go module with echo framework
 - [x] Create basic project files and documentation
 
 #### 2. Core Architecture
+
 - [x] Implement MCP server initialization
 - [x] Implement dual transport layer (stdio and Streamable HTTP)
 - [x] Implement message handling with JSON-RPC
@@ -19,19 +21,22 @@ This document contains the development roadmap, architecture details, and techni
 - [x] Implement session management for Streamable HTTP
 
 #### 3. Transport Layer
+
 - [x] **stdio transport**: Direct process communication
 - [x] **Streamable HTTP transport**: HTTP-based with SSE streaming
 - [x] **Session management**: Unique session IDs and cleanup
 - [x] **CORS support**: Proper headers for web-based clients
 
 #### 4. Tool System
+
 - [x] **Interface-based design**: `types.Tool` interface for all tools
 - [x] **Organized categories**: Node, Script, Scene, Project, Utility tools
-- [x] **JSON-RPC integration**: Direct JSON handling with `json.RawMessage`
+- [x] **JSON-RPC integration**: Direct JSON handling with flexible request IDs
 - [x] **Thread-safe management**: Concurrent tool execution support
 - [x] **Backward compatibility**: Legacy tool function support
 
 #### 5. Configuration System
+
 - [x] JSON-based configuration
 - [x] Environment variable overrides
 - [x] Configuration validation
@@ -40,16 +45,18 @@ This document contains the development roadmap, architecture details, and techni
 ### 🔄 In Progress
 
 #### 6. Testing
+
 - [x] Unit tests for core components
 - [x] Transport layer tests
 - [x] Tool system tests
-- [ ] Integration tests
+- [x] Integration tests
 - [ ] Performance testing
 - [ ] Concurrent connection testing
 
 ### 📋 Planned Features
 
 #### 7. Godot Integration
+
 - [ ] Implement actual Godot API integration
 - [ ] Real-time scene tree updates
 - [ ] Script execution and modification
@@ -57,6 +64,7 @@ This document contains the development roadmap, architecture details, and techni
 - [ ] Editor state management
 
 #### 8. Advanced Features
+
 - [ ] Tool parameter validation with JSON Schema
 - [ ] Tool execution progress reporting
 - [ ] Tool execution logging and monitoring
@@ -65,17 +73,27 @@ This document contains the development roadmap, architecture details, and techni
 - [ ] Performance optimization
 
 #### 9. Documentation and Deployment
+
 - [ ] API documentation
 - [ ] Usage examples and tutorials
 - [ ] Build scripts and distribution packages
 - [ ] Installation and upgrade instructions
 - [ ] Changelog and release notes
 
+#### 10. Skills Support
+
+- [ ] Skill manifest discovery and registration
+- [ ] Skill-to-tool mapping and routing
+- [ ] Skill-scoped prompt templates
+- [ ] Skill loading configuration (local/remote)
+- [ ] Skills compatibility tests (Inspector + HTTP smoke)
+
 ## Architecture Details
 
 ### Transport Layer Architecture
 
 #### stdio Transport
+
 ```go
 // transport/stdio/server.go
 type StdioServer struct {
@@ -89,6 +107,7 @@ func (s *StdioServer) Start() error {
 ```
 
 #### Streamable HTTP Transport
+
 ```go
 // transport/http/server.go
 type Server struct {
@@ -111,6 +130,7 @@ type StreamableHTTPTransport struct {
 ### Tool System Architecture
 
 #### Tool Interface
+
 ```go
 // tools/types/common.go
 type Tool interface {
@@ -129,23 +149,58 @@ type ToolRegistry interface {
 ```
 
 #### Tool Categories
+
 - **Node Tools** (`tools/node/`): Scene tree manipulation
 - **Script Tools** (`tools/script/`): Script management
 - **Scene Tools** (`tools/scene/`): Scene operations
 - **Project Tools** (`tools/project/`): Project management
 - **Utility Tools** (`tools/utility/`): General utilities
 
+#### Skills Integration (Planned)
+
+- Expose skill metadata through MCP prompt endpoints (`prompts/list`, `prompts/get`)
+- Allow a skill to bind one or more tool invocations with validated input
+- Keep skill loading optional so server startup remains stable without external skill packs
+
 ### Message Flow
 
 #### stdio Flow
-```
-Client Process → stdin → StdioServer → ToolManager → Tool → stdout → Client Process
+
+```mermaid
+sequenceDiagram
+    participant Client Process
+    participant StdioServer
+    participant ToolManager
+    participant Tool
+    Client Process->>StdioServer: JSON-RPC message
+    StdioServer->>ToolManager: Execute tool
+    ToolManager->>Tool: Execute tool
+    Tool-->>ToolManager: Tool result
+    ToolManager-->>StdioServer: Tool result
+    StdioServer-->>Client Process: JSON-RPC response
 ```
 
 #### Streamable HTTP Flow
-```
-Client → HTTP POST /mcp → Router → Handler → ToolManager → Tool → JSON Response → Client
-Client → HTTP GET /mcp → SSE Stream → Server Push → Client
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router
+    participant Handler
+    participant ToolManager
+    participant Tool
+    participant ServerPush as "Server Push"
+    Client->>Router: HTTP POST /mcp
+    Router->>Handler: Handle request
+    Handler->>ToolManager: Execute tool
+    ToolManager->>Tool: Execute tool
+    Tool-->>ToolManager: Tool result
+    ToolManager-->>Handler: Tool result
+    Handler-->>Router: JSON Response
+    Router-->>Client: JSON Response
+    Client->>Router: HTTP GET /mcp
+    Router->>ServerPush: SSE Stream
+    ServerPush-->>Client: Server Push
 ```
 
 ## Technical Implementation Notes
@@ -158,11 +213,13 @@ The server uses JSON-RPC 2.0 for all message communication:
 // mcp/jsonrpc/messages.go
 type Request struct {
     JSONRPC string          `json:"jsonrpc"`
-    ID      json.RawMessage `json:"id"`
+    ID      any             `json:"id,omitempty"`
     Method  string          `json:"method"`
     Params  json.RawMessage `json:"params,omitempty"`
 }
 ```
+
+Skill-oriented requests will use the same JSON-RPC envelope and rely on prompt/tool methods for discovery and invocation.
 
 ### Session Management
 
@@ -176,10 +233,11 @@ type SessionManager struct {
 }
 
 type Session struct {
-    ID        string
-    Created   time.Time
-    LastSeen  time.Time
-    Transport *StreamableHTTPTransport
+    ID          string
+    Created     time.Time
+    LastSeen    time.Time
+    Initialized bool
+    Transport   *StreamableHTTPTransport
 }
 ```
 
@@ -215,6 +273,7 @@ type Config struct {
 ### Transport Migration (SSE → Streamable HTTP)
 
 **Changes Made:**
+
 1. **Removed**: Deprecated SSE transport (`transport/sse.go`)
 2. **Added**: Streamable HTTP transport with session management
 3. **Updated**: All endpoints from `/events` to `/mcp`
@@ -222,6 +281,7 @@ type Config struct {
 5. **Improved**: Error handling and connection management
 
 **Benefits:**
+
 - Standard compliance with latest MCP specification
 - Better session management with unique IDs
 - Improved security with proper CORS validation
@@ -231,6 +291,7 @@ type Config struct {
 ### Tool System Refactoring
 
 **Changes Made:**
+
 1. **Interface-based design**: All tools implement `types.Tool`
 2. **Organized structure**: Tools grouped by category
 3. **JSON optimization**: Direct `json.RawMessage` handling
@@ -238,6 +299,7 @@ type Config struct {
 5. **Backward compatibility**: Legacy function support
 
 **Benefits:**
+
 - Unified tool management
 - Better performance with optimized JSON handling
 - Improved maintainability and extensibility
@@ -247,24 +309,28 @@ type Config struct {
 ## Development Guidelines
 
 ### Code Style
+
 - Follow Go conventions and best practices
 - Use meaningful variable and function names
 - Add comprehensive comments for complex logic
 - Implement proper error handling
 
 ### Testing
+
 - Write unit tests for all new features
 - Maintain high test coverage
 - Test both stdio and HTTP transports
 - Test concurrent scenarios
 
 ### Documentation
+
 - Update README.md for user-facing changes
 - Update DEVELOPMENT.md for technical changes
 - Add inline comments for complex logic
 - Document API changes and breaking changes
 
 ### Performance
+
 - Use efficient JSON handling with `json.RawMessage`
 - Implement proper connection pooling
 - Monitor memory usage and cleanup
@@ -273,18 +339,21 @@ type Config struct {
 ## Future Considerations
 
 ### Scalability
+
 - Consider microservice architecture for large deployments
 - Implement load balancing for multiple server instances
 - Add caching layer for frequently accessed data
 - Consider database integration for persistent state
 
 ### Security
+
 - Implement authentication and authorization
 - Add rate limiting for API endpoints
 - Implement request validation and sanitization
 - Add audit logging for security events
 
 ### Monitoring
+
 - Add metrics collection and monitoring
 - Implement health checks and status endpoints
 - Add performance profiling and optimization

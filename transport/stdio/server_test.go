@@ -66,6 +66,18 @@ func TestStdioServer(t *testing.T) {
 		t.Error("handleToolCall returned nil response")
 	}
 
+	// Test tools list message
+	toolsListMsg := jsonrpc.Request{
+		Method: "tools/list",
+	}
+	response, err = server.handleMessage(toolsListMsg)
+	if err != nil {
+		t.Errorf("handleToolsList failed: %v", err)
+	}
+	if response == nil {
+		t.Error("handleToolsList returned nil response")
+	}
+
 	// Test progress message
 	progressMsg := jsonrpc.Request{
 		Method: "tools/progress",
@@ -110,10 +122,17 @@ func TestMessageValidation(t *testing.T) {
 		Params: json.RawMessage(`invalid json`),
 	}
 	response, err = server.handleMessage(invalidPayloadMsg)
-	if err == nil {
-		t.Error("handleMessage should return error for invalid payload format")
+	if err != nil {
+		t.Errorf("handleMessage returned unexpected error for invalid payload format: %v", err)
 	}
-	if response != nil {
-		t.Error("handleMessage should return nil response for invalid payload format")
+	if response == nil {
+		t.Fatal("handleMessage should return error response for invalid payload format")
+	}
+	rpcResp, ok := response.(*jsonrpc.Response)
+	if !ok {
+		t.Fatal("handleMessage should return jsonrpc.Response for invalid payload format")
+	}
+	if rpcResp.Error == nil {
+		t.Error("invalid payload should produce JSON-RPC error response")
 	}
 }
