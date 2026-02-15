@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +18,10 @@ import (
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/tools"
 )
+
+const maxJSONRPCBodyBytes = 1 << 20
 
 func RegisterRoutes(e *echo.Echo, s *Server) {
 	e.GET("/", s.handleHTTPInfo)
@@ -48,8 +52,15 @@ func (s *Server) handleOptions(c echo.Context) error {
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
 
-	body, err := io.ReadAll(c.Request().Body)
+	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
+	defer limitedBody.Close()
+
+	body, err := io.ReadAll(limitedBody)
 	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			logger.Warn("Request body too large", "limit_bytes", maxJSONRPCBodyBytes, "remote_addr", c.RealIP())
+			return c.JSON(http.StatusRequestEntityTooLarge, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Request body too large", nil))
+		}
 		logger.Error("Failed to read request body", "error", err)
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 	}
@@ -77,9 +88,13 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 
 		if hasInitialize {
 			if sessionID == "" {
-				sessionID = generateSessionID()
+				sessionID, err = generateSessionID()
+				if err != nil {
+					logger.Error("Failed to generate session ID", "error", err)
+					return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInternalError), "Internal error", nil))
+				}
 				s.sessionManager.CreateSession(sessionID)
-				logger.Debug("Generated new session ID", "session_id", sessionID)
+				logger.Debug("Generated new MCP session")
 			} else if !s.sessionManager.TouchSession(sessionID) {
 				return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
 			}
@@ -157,7 +172,7 @@ func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
 		return err
 	}
 
-	go s.sendHeartbeats(sessionID, transport)
+	go s.sendHeartbeats(transport)
 	<-c.Request().Context().Done()
 	s.sessionManager.ClearTransport(sessionID)
 	return nil
@@ -286,7 +301,7 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 }
 
 func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Response, error) {
-	logger.Debug("Handling init message", "request_id", msg.ID, "session_id", sessionID)
+	logger.Debug("Handling init message", "request_id", msg.ID)
 	if sessionID != "" {
 		s.sessionManager.CreateSession(sessionID)
 	}
@@ -381,7 +396,7 @@ func (s *Server) handleToolCall(msg jsonrpc.Request) *jsonrpc.Response {
 	resultJSON, err := s.toolManager.ExecuteTool(toolName, argsJSON)
 	if err != nil {
 		logger.Error("Tool execution failed", "tool", toolName, "error", err)
-		if strings.HasPrefix(err.Error(), "tool not found:") {
+		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
 		return jsonrpc.NewResponse(msg.ID, map[string]any{
@@ -566,7 +581,7 @@ func parseCursor(paramsRaw json.RawMessage, total int) (int, error) {
 	return offset, nil
 }
 
-func (s *Server) sendHeartbeats(sessionID string, transport *StreamableHTTPTransport) {
+func (s *Server) sendHeartbeats(transport *StreamableHTTPTransport) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -574,18 +589,18 @@ func (s *Server) sendHeartbeats(sessionID string, transport *StreamableHTTPTrans
 			return
 		}
 		if err := transport.SendSSE("heartbeat", map[string]string{"timestamp": time.Now().Format(time.RFC3339)}); err != nil {
-			logger.Error("Failed to send heartbeat", "error", err, "session_id", sessionID)
+			logger.Error("Failed to send heartbeat", "error", err)
 			return
 		}
 	}
 }
 
-func generateSessionID() string {
+func generateSessionID() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("session_%d", time.Now().UnixNano())
+		return "", fmt.Errorf("failed to read cryptographic random bytes: %w", err)
 	}
-	return "session_" + hex.EncodeToString(buf)
+	return "session_" + hex.EncodeToString(buf), nil
 }
 
 func negotiateProtocolVersion(paramsRaw json.RawMessage) string {

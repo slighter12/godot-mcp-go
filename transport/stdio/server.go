@@ -192,7 +192,7 @@ func (s *StdioServer) handleToolCall(msg jsonrpc.Request) (any, error) {
 	result, err := s.toolManager.CallTool(toolName, toolCall.Arguments)
 	if err != nil {
 		logger.Error("Stdio tool call failed", "tool", toolName, "error", err)
-		if strings.HasPrefix(err.Error(), "tool not found:") {
+		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil), nil
 		}
 		return jsonrpc.NewResponse(msg.ID, map[string]any{

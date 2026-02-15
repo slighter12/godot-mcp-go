@@ -70,8 +70,7 @@ func IsServerError(err error) bool {
 
 // IsError checks if the error is a JSON-RPC error with the given code
 func IsError(err error, code ErrorCode) bool {
-	var e *JSONRPCError
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*JSONRPCError](err); ok {
 		return e.Code == code
 	}
 	return false

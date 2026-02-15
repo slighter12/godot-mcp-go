@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,12 @@ import (
 
 // ToolFunc represents a tool function (legacy type for backward compatibility)
 type ToolFunc func(args map[string]any) (any, error)
+
+var ErrToolNotFound = errors.New("tool not found")
+
+func IsToolNotFound(err error) bool {
+	return errors.Is(err, ErrToolNotFound)
+}
 
 // Manager implements ToolRegistry interface
 type Manager struct {
@@ -73,7 +80,7 @@ func (m *Manager) ListTools() []types.Tool {
 func (m *Manager) ExecuteTool(name string, args json.RawMessage) ([]byte, error) {
 	tool, exists := m.GetTool(name)
 	if !exists {
-		return nil, errors.New("tool not found: " + name)
+		return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
 	}
 
 	logger.Debug("Executing tool", "name", name, "args", string(args))

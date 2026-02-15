@@ -11,7 +11,12 @@ import (
 
 func main() {
 	// Load configuration
-	cfg, err := config.LoadConfig(config.GetConfigPath())
+	configPath, err := config.GetConfigPath()
+	if err != nil {
+		log.Fatalf("Failed to resolve config path: %+v", err)
+	}
+
+	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %+v", err)
 	}

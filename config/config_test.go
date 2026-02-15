@@ -209,7 +209,10 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 }
 
 func TestGetConfigPath(t *testing.T) {
-	path := GetConfigPath()
+	path, err := GetConfigPath()
+	if err != nil {
+		t.Fatalf("Expected no error resolving config path, got %v", err)
+	}
 	if path == "" {
 		t.Error("Expected non-empty config path")
 	}

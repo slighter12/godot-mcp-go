@@ -213,31 +213,35 @@ func (c *Config) Validate() error {
 }
 
 // GetConfigPath returns the path to the configuration file
-func GetConfigPath() string {
+func GetConfigPath() (string, error) {
 	// First check environment variable
 	if path := os.Getenv("MCP_CONFIG_PATH"); path != "" {
-		return path
+		return path, nil
 	}
 
 	// Then check config/mcp_config.json in current directory
 	if _, err := os.Stat("config/mcp_config.json"); err == nil {
-		return "config/mcp_config.json"
+		return "config/mcp_config.json", nil
 	}
 
 	// Finally check home directory
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "config/mcp_config.json"
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
 	configPath := filepath.Join(home, ".godot-mcp", "config/mcp_config.json")
 
 	// Create default config if it doesn't exist
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); err != nil {
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to stat config file: %w", err)
+		}
+
 		// Create directory if it doesn't exist
 		dir := filepath.Dir(configPath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "config/mcp_config.json"
+			return "", fmt.Errorf("failed to create config directory: %w", err)
 		}
 
 		// Create default config
@@ -246,13 +250,13 @@ func GetConfigPath() string {
 		// Write default config
 		data, err := json.MarshalIndent(defaultConfig, "", "  ")
 		if err != nil {
-			return "config/mcp_config.json"
+			return "", fmt.Errorf("failed to marshal default config: %w", err)
 		}
 
 		if err := os.WriteFile(configPath, data, 0644); err != nil {
-			return "config/mcp_config.json"
+			return "", fmt.Errorf("failed to write default config: %w", err)
 		}
 	}
 
-	return configPath
+	return configPath, nil
 }

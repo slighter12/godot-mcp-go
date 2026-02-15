@@ -83,45 +83,43 @@ func _on_streamable_http_request_completed(result: int, response_code: int, head
         print("MCP Server: Streamable HTTP request failed with result: ", result)
         emit_signal("error", "Streamable HTTP request failed: " + str(result))
         return
-        
+
     print("MCP Server: Streamable HTTP response received - code: ", response_code)
-    
-    # 檢查是否為初始化響應
-    if response_code == 200:
-        var response_text = body.get_string_from_utf8()
-        print("MCP Server: Response body: ", response_text)
-        
-        var json = JSON.new()
-        var err = json.parse(response_text)
-        if err == OK:
-            var response = json.get_data()
-            
-            # 檢查是否為初始化響應
-            if response.has("result") and response["result"].has("type") and response["result"]["type"] == "init":
-                print("MCP Server: Initialization successful")
-                
-                # 從響應頭中獲取會話 ID
-    for header in headers:
-                    if header.begins_with("Mcp-Session-Id: "):
-                        session_id = header.split(": ")[1]
-                        print("MCP Server: Session ID received: ", session_id)
-            break
-            
-                is_connecting = false
-                emit_signal("connected")
-                
-                # 建立 SSE 流以接收服務器消息
-                establish_sse_stream()
-            else:
-                print("MCP Server: Unexpected response format")
-                emit_signal("error", "Unexpected response format")
-        else:
-            print("MCP Server: Failed to parse response JSON")
-            emit_signal("error", "Failed to parse response JSON")
-                else:
+
+    if response_code != 200:
         is_connecting = false
         print("MCP Server: Streamable HTTP request failed with status: ", response_code)
         emit_signal("error", "Streamable HTTP request failed with status: " + str(response_code))
+        return
+
+    var response_text = body.get_string_from_utf8()
+    print("MCP Server: Response body: ", response_text)
+
+    var json = JSON.new()
+    var err = json.parse(response_text)
+    if err != OK:
+        is_connecting = false
+        print("MCP Server: Failed to parse response JSON")
+        emit_signal("error", "Failed to parse response JSON")
+        return
+
+    var response = json.get_data()
+    if not (response.has("result") and response["result"].has("type") and response["result"]["type"] == "init"):
+        is_connecting = false
+        print("MCP Server: Unexpected response format")
+        emit_signal("error", "Unexpected response format")
+        return
+
+    print("MCP Server: Initialization successful")
+    for header in headers:
+        if header.begins_with("Mcp-Session-Id: "):
+            session_id = header.split(": ")[1]
+            print("MCP Server: Session ID received: ", session_id)
+            break
+
+    is_connecting = false
+    emit_signal("connected")
+    establish_sse_stream()
 
 func establish_sse_stream():
     print("MCP Server: Establishing SSE stream for server-to-client communication...")
@@ -134,11 +132,14 @@ func establish_sse_stream():
     streamable_http_connection.request(streamable_http_url, headers, HTTPClient.METHOD_GET)
 
 func connect_stdio():
+    if not OS.has_environment("GODOT_MCP_ALLOW_STDIO_EXEC") or OS.get_environment("GODOT_MCP_ALLOW_STDIO_EXEC") != "1":
+        emit_signal("error", "Stdio process execution is disabled. Set GODOT_MCP_ALLOW_STDIO_EXEC=1 to enable.")
+        return
+
     print("MCP Server: Starting stdio process: ", server_command)
     var args = []
-    var env = ["MCP_USE_STDIO=true"]
-    
-    stdio_pid = OS.create_process(server_command, args, env)
+
+    stdio_pid = OS.create_process(server_command, args)
     if stdio_pid == -1:
         print("MCP Server: Failed to start stdio process")
         emit_signal("error", "Failed to start stdio process")
@@ -163,14 +164,7 @@ func send_message(message: Dictionary):
     match connection_type:
         "stdio":
             if stdio_pid != -1 and OS.is_process_running(stdio_pid):
-                # 使用系統命令發送消息
-                var output = []
-                var exit_code = OS.execute("echo", [json_message], output, true, stdio_pid)
-                if exit_code != 0:
-                    print("MCP Server: Failed to send message to stdio process")
-                    emit_signal("error", "Failed to send message to stdio process")
-                else:
-                    print("MCP Server: Message sent via stdio")
+                emit_signal("error", "Stdio transport send is not implemented in the plugin. Use streamable_http transport.")
             else:
                 print("MCP Server: Stdio process not running")
         "streamable_http":
