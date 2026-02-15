@@ -180,9 +180,9 @@ func TestConcurrentLogging(t *testing.T) {
 
 	// Create multiple goroutines to log messages
 	done := make(chan bool)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				logger.Info("message", "id", id, "count", j)
 			}
 			done <- true
@@ -190,7 +190,7 @@ func TestConcurrentLogging(t *testing.T) {
 	}
 
 	// Wait for all goroutines to finish
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
