@@ -4,6 +4,7 @@ extends EditorPlugin
 var mcp_server: Node
 var mcp_interface: Node
 var settings_dialog: AcceptDialog
+var current_streamable_http_url: String = "http://localhost:9080/mcp"
 
 func _enter_tree():
     print("Godot MCP Plugin: Entering tree...")
@@ -28,6 +29,7 @@ func _enter_tree():
     # Create settings dialog.
     settings_dialog = preload("res://addons/godot_mcp/mcp_settings_dialog.tscn").instantiate()
     add_child(settings_dialog)
+    settings_dialog.connect("settings_saved", Callable(self, "_on_settings_saved"))
     
     # Add toolbar menu item.
     add_tool_menu_item("MCP Settings", _on_settings_pressed)
@@ -36,18 +38,19 @@ func _enter_tree():
     var config = ConfigFile.new()
     var err = config.load("res://addons/godot_mcp/config.cfg")
     if err == OK:
-        var streamable_http_url = config.get_value("mcp", "streamable_http_url", "http://localhost:9080/mcp")
-        print("Godot MCP Plugin: Connecting with streamable_http")
-        mcp_server.connect_streamable_http(streamable_http_url)
+        current_streamable_http_url = config.get_value("mcp", "streamable_http_url", current_streamable_http_url)
     else:
         print("Godot MCP Plugin: Failed to load config, using default connection")
-        mcp_server.connect_streamable_http("http://localhost:9080/mcp")
+    print("Godot MCP Plugin: Connecting with streamable_http")
+    mcp_server.connect_streamable_http(current_streamable_http_url)
     print("Godot MCP Plugin: Initialized successfully")
 
 func _exit_tree():
     print("Godot MCP Plugin: Exiting tree...")
+    remove_tool_menu_item("MCP Settings")
     
     if mcp_server:
+        mcp_server.disconnect_from_server()
         mcp_server.queue_free()
     
     if mcp_interface:
@@ -73,3 +76,8 @@ func _on_mcp_message_received(message: Dictionary):
 func _on_settings_pressed():
     print("MCP Plugin: Opening settings dialog")
     settings_dialog.popup_centered() 
+
+func _on_settings_saved(streamable_http_url: String):
+    current_streamable_http_url = streamable_http_url
+    print("Godot MCP Plugin: Reconnecting with updated streamable_http URL")
+    mcp_server.connect_streamable_http(current_streamable_http_url)

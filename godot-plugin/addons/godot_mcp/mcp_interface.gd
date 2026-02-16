@@ -8,7 +8,10 @@ var mcp_server: Node
 var tools: Dictionary = {}
 var client_id: String = ""
 var request_counter: int = 0
-var pending_tool_calls: Dictionary = {}
+
+var pending_requests: Dictionary = {}
+var tools_request_in_progress: bool = false
+var tools_refresh_buffer: Dictionary = {}
 
 func _ready():
     if mcp_server == null:
@@ -20,35 +23,43 @@ func _ready():
     mcp_server.connected.connect(_on_connected)
     mcp_server.disconnected.connect(_on_disconnected)
     mcp_server.error.connect(_on_error)
-    
-    # Generate a unique client ID.
-    client_id = str(randi())
+
+    var rng = RandomNumberGenerator.new()
+    rng.randomize()
+    client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
 
 func set_mcp_server(server: Node):
     mcp_server = server
 
 func _on_connected():
-    # Send initialized notification after initialize response is received.
-    var initialized_notification = {
-        "jsonrpc": "2.0",
-        "method": "initialized"
-    }
-    mcp_server.send_message(initialized_notification)
+    tools.clear()
+    tools_refresh_buffer.clear()
+    pending_requests.clear()
+    tools_request_in_progress = false
+
+    _send_initialized_notification()
+    _request_tools_list("")
 
 func _on_disconnected():
-    # Clear tool list on disconnect.
     tools.clear()
-    pending_tool_calls.clear()
+    tools_refresh_buffer.clear()
+    pending_requests.clear()
+    tools_request_in_progress = false
 
-func _on_error(error: String):
-    print("MCP interface error: ", error)
+func _on_error(error_message: String):
+    print("MCP interface error: ", error_message)
 
 func call_tool(tool_name: String, arguments: Dictionary = {}):
     if not tools.has(tool_name):
         emit_signal("tool_error", tool_name, "Tool not found: " + tool_name)
         return
-    
-    var request_id = _next_request_id()
+
+    var request_id = _new_request_id()
+    pending_requests[request_id] = {
+        "kind": "tool_call",
+        "tool_name": tool_name
+    }
+
     var tool_call_request = {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -58,77 +69,163 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
             "arguments": arguments
         }
     }
-    
-    pending_tool_calls[request_id] = tool_name
-    mcp_server.send_message(tool_call_request)
+
+    if not mcp_server.send_message(tool_call_request):
+        pending_requests.erase(request_id)
+        emit_signal("tool_error", tool_name, "Failed to send tools/call request")
+        return
     emit_signal("tool_called", tool_name, arguments)
 
 func handle_message(message: Dictionary):
     if message.get("jsonrpc", "") != "2.0":
-        print("Ignoring non JSON-RPC 2.0 payload: ", message)
         return
 
     if message.has("method"):
-        # Server-initiated method calls are out of scope for this plugin sample.
-        print("Ignoring server-initiated JSON-RPC method: ", message.get("method", ""))
+        _handle_server_notification(message)
         return
 
     if not message.has("id"):
-        print("Ignoring JSON-RPC response without id: ", message)
         return
 
-    var response_id = message.get("id", null)
-    var request_id = "" if response_id == null else str(response_id)
-    var pending_tool_name = ""
-    if request_id != "" and pending_tool_calls.has(request_id):
-        pending_tool_name = pending_tool_calls[request_id]
-        pending_tool_calls.erase(request_id)
+    var request_id = str(message.get("id", ""))
+    if request_id == "":
+        return
+
+    var pending = pending_requests.get(request_id, {})
+    pending_requests.erase(request_id)
 
     if message.has("error"):
-        var err_obj = message.get("error", {})
-        if err_obj is Dictionary:
-            var err_msg = _extract_jsonrpc_error_message(err_obj)
-            if pending_tool_name != "":
-                emit_signal("tool_error", pending_tool_name, err_msg)
-            handle_error({"message": err_msg})
-            return
+        _handle_error_response(pending, message.get("error", {}))
+        return
 
-    if message.has("result"):
-        var result = message.get("result", {})
-        if result is Dictionary:
-            if result.get("type", "") == "init":
-                handle_init(result)
-                return
-            if pending_tool_name != "" and not result.has("tool"):
-                result["tool"] = pending_tool_name
-            if result.has("tool") or result.has("isError") or pending_tool_name != "":
-                if result.get("isError", false):
-                    var tool_name = result.get("tool", pending_tool_name)
-                    var err_msg = _extract_tool_error_message(result)
-                    emit_signal("tool_error", tool_name, err_msg)
-                    handle_error({"message": err_msg})
-                else:
-                    handle_tool_result(result)
-                return
+    if not message.has("result"):
+        return
 
-    print("Unknown JSON-RPC message shape: ", message)
+    _handle_result_response(pending, message.get("result"))
 
-func handle_init(payload: Dictionary):
-    # Refresh tool list.
-    tools.clear()
-    for tool in payload.get("tools", []):
-        tools[tool.name] = tool
+func _handle_server_notification(message: Dictionary):
+    var method = str(message.get("method", ""))
+    if method == "notifications/tools/list_changed":
+        if not tools_request_in_progress:
+            _request_tools_list("")
 
-func handle_tool_result(payload: Dictionary):
-    var tool_name = payload.get("tool", "")
-    var result = payload.get("result", {})
-    emit_signal("tool_result", tool_name, result)
+func _handle_error_response(pending: Dictionary, error_obj: Variant):
+    var error_message = _extract_jsonrpc_error_message(error_obj)
+    var kind = str(pending.get("kind", ""))
+
+    if kind == "tool_call":
+        var tool_name = str(pending.get("tool_name", ""))
+        if tool_name != "":
+            emit_signal("tool_error", tool_name, error_message)
+    elif kind == "tools_list":
+        tools_request_in_progress = false
+        tools_refresh_buffer.clear()
+
+    handle_error({"message": error_message})
+
+func _handle_result_response(pending: Dictionary, result: Variant):
+    var kind = str(pending.get("kind", ""))
+    if kind == "tools_list":
+        _handle_tools_list_result(result)
+        return
+
+    if kind == "tool_call":
+        _handle_tool_call_result(result, pending)
+        return
+
+func _handle_tools_list_result(result: Variant):
+    if not (result is Dictionary):
+        tools_request_in_progress = false
+        tools_refresh_buffer.clear()
+        handle_error({"message": "Invalid tools/list result payload"})
+        return
+
+    var result_dict: Dictionary = result
+    var listed_tools = result_dict.get("tools", [])
+    if listed_tools is Array:
+        for tool in listed_tools:
+            if tool is Dictionary and tool.has("name"):
+                tools_refresh_buffer[str(tool["name"])] = tool
+
+    var next_cursor_value = result_dict.get("nextCursor", "")
+    var next_cursor = str(next_cursor_value).strip_edges()
+    if next_cursor != "":
+        _request_tools_list(next_cursor)
+        return
+
+    tools = tools_refresh_buffer.duplicate(true)
+    tools_refresh_buffer.clear()
+    tools_request_in_progress = false
+
+func _handle_tool_call_result(result: Variant, pending: Dictionary):
+    var tool_name = str(pending.get("tool_name", ""))
+    if not (result is Dictionary):
+        emit_signal("tool_error", tool_name, "Invalid tool result payload")
+        return
+
+    var result_dict: Dictionary = result
+    var response_tool_name = str(result_dict.get("tool", "")).strip_edges()
+    if response_tool_name != "":
+        tool_name = response_tool_name
+
+    var is_error = bool(result_dict.get("isError", false))
+    if is_error:
+        var err_msg = _extract_tool_error_message(result_dict)
+        emit_signal("tool_error", tool_name, err_msg)
+        return
+
+    var payload: Variant = result_dict.get("result", null)
+    if payload == null:
+        payload = result_dict.get("structuredContent", {})
+
+    if payload is Dictionary:
+        emit_signal("tool_result", tool_name, payload)
+        return
+
+    emit_signal("tool_result", tool_name, {"value": payload})
 
 func handle_error(payload: Dictionary):
     var message = payload.get("message", "Unknown error")
     print("MCP error: ", message)
 
-func _next_request_id() -> String:
+func _send_initialized_notification():
+    var initialized_notification = {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {
+            "clientId": client_id
+        }
+    }
+    if not mcp_server.send_message(initialized_notification):
+        handle_error({"message": "Failed to send initialized notification"})
+
+func _request_tools_list(cursor: String):
+    if cursor == "":
+        tools_refresh_buffer.clear()
+    tools_request_in_progress = true
+
+    var request_id = _new_request_id()
+    pending_requests[request_id] = {
+        "kind": "tools_list"
+    }
+
+    var params = {}
+    if cursor != "":
+        params["cursor"] = cursor
+
+    var request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/list",
+        "params": params
+    }
+    if not mcp_server.send_message(request):
+        pending_requests.erase(request_id)
+        tools_request_in_progress = false
+        tools_refresh_buffer.clear()
+        handle_error({"message": "Failed to send tools/list request"})
+
+func _new_request_id() -> String:
     request_counter += 1
     return "godot-%s-%d" % [client_id, request_counter]
 
@@ -140,5 +237,7 @@ func _extract_tool_error_message(result: Dictionary) -> String:
             return str(first["text"])
     return str(result.get("error", "Tool execution failed"))
 
-func _extract_jsonrpc_error_message(error_obj: Dictionary) -> String:
-    return str(error_obj.get("message", "Unknown JSON-RPC error"))
+func _extract_jsonrpc_error_message(error_obj: Variant) -> String:
+    if error_obj is Dictionary:
+        return str(error_obj.get("message", "Unknown JSON-RPC error"))
+    return "Unknown JSON-RPC error"
