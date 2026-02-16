@@ -158,10 +158,10 @@ func TestLoadConfigFileNotFound(t *testing.T) {
 	}
 }
 
-func TestLoadConfigInvalidJSON(t *testing.T) {
-	// Create a temporary config file with invalid JSON
+func TestLoadConfigPartialJSON(t *testing.T) {
+	// Create a temporary config file with partial but valid JSON.
 	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "invalid_config.json")
+	configPath := filepath.Join(tempDir, "partial_config.json")
 
 	invalidConfig := `{
 		"name": "test-server",
@@ -205,6 +205,30 @@ func TestLoadConfigInvalidJSON(t *testing.T) {
 
 	if cfg.Server.Port != 8080 {
 		t.Errorf("Expected port 8080, got %d", cfg.Server.Port)
+	}
+}
+
+func TestLoadConfigMalformedJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "malformed_config.json")
+
+	malformedConfig := `{
+		"name": "test-server",
+		"version": "1.0.0",
+		"server": {
+			"host": "localhost",
+			"port": 8080,
+		}
+	}`
+
+	err := os.WriteFile(configPath, []byte(malformedConfig), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write malformed config file: %v", err)
+	}
+
+	_, err = LoadConfig(configPath)
+	if err == nil {
+		t.Fatal("Expected error when loading malformed JSON config")
 	}
 }
 

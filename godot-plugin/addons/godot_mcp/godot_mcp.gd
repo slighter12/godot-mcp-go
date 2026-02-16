@@ -8,42 +8,40 @@ var settings_dialog: AcceptDialog
 func _enter_tree():
     print("Godot MCP Plugin: Entering tree...")
     
-    # 創建 MCP 服務器節點
+    # Create MCP server node.
     mcp_server = preload("res://addons/godot_mcp/mcp_server.gd").new()
+    mcp_server.name = "mcp_server"
     add_child(mcp_server)
     
-    # 創建 MCP 接口節點
+    # Create MCP interface node.
     mcp_interface = preload("res://addons/godot_mcp/mcp_interface.gd").new()
+    mcp_interface.name = "mcp_interface"
     add_child(mcp_interface)
+    mcp_interface.set_mcp_server(mcp_server)
     
-    # 連接信號
+    # Connect signals.
     mcp_server.connected.connect(_on_mcp_connected)
     mcp_server.disconnected.connect(_on_mcp_disconnected)
     mcp_server.error.connect(_on_mcp_error)
     mcp_server.message_received.connect(_on_mcp_message_received)
     
-    # 創建設置對話框
+    # Create settings dialog.
     settings_dialog = preload("res://addons/godot_mcp/mcp_settings_dialog.tscn").instantiate()
     add_child(settings_dialog)
     
-    # 添加工具欄按鈕
+    # Add toolbar menu item.
     add_tool_menu_item("MCP Settings", _on_settings_pressed)
     
-    # 加載設置並連接
+    # Load settings and connect via streamable HTTP.
     var config = ConfigFile.new()
     var err = config.load("res://addons/godot_mcp/config.cfg")
     if err == OK:
-        var type = config.get_value("mcp", "connection_type", "streamable_http")
         var streamable_http_url = config.get_value("mcp", "streamable_http_url", "http://localhost:9080/mcp")
-        
-        print("Godot MCP Plugin: Connecting with type: ", type)
-        if type == "streamable_http":
-            mcp_server.connect_streamable_http(streamable_http_url)
-        else:
-            mcp_server.connect_to_server()
+        print("Godot MCP Plugin: Connecting with streamable_http")
+        mcp_server.connect_streamable_http(streamable_http_url)
     else:
         print("Godot MCP Plugin: Failed to load config, using default connection")
-        mcp_server.connect_to_server()
+        mcp_server.connect_streamable_http("http://localhost:9080/mcp")
     print("Godot MCP Plugin: Initialized successfully")
 
 func _exit_tree():

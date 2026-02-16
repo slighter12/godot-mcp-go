@@ -22,37 +22,13 @@ offset_bottom = -50.0
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="StdioSettings" type="VBoxContainer" parent="VBoxContainer"]
-layout_mode = 2
-visible = false
-
-[node name="Label" type="Label" parent="VBoxContainer/StdioSettings"]
-layout_mode = 2
-text = "Stdio 設置"
-
-[node name="HSeparator" type="HSeparator" parent="VBoxContainer/StdioSettings"]
-layout_mode = 2
-
-[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/StdioSettings"]
-layout_mode = 2
-
-[node name="Label" type="Label" parent="VBoxContainer/StdioSettings/HBoxContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "服務器命令:"
-
-[node name="ServerCommand" type="LineEdit" parent="VBoxContainer/StdioSettings/HBoxContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-placeholder_text = "./godot-mcp-go"
-
 [node name="StreamableHTTPSettings" type="VBoxContainer" parent="VBoxContainer"]
 layout_mode = 2
-visible = false
+visible = true
 
 [node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings"]
 layout_mode = 2
-text = "Streamable HTTP 設置"
+text = "Streamable HTTP Settings"
 
 [node name="HSeparator" type="HSeparator" parent="VBoxContainer/StreamableHTTPSettings"]
 layout_mode = 2
@@ -63,7 +39,7 @@ layout_mode = 2
 [node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer"]
 layout_mode = 2
 size_flags_horizontal = 3
-text = "服務器 URL:"
+text = "Server URL:"
 
 [node name="StreamableHTTPURL" type="LineEdit" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer"]
 layout_mode = 2

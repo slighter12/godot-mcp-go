@@ -10,16 +10,24 @@ var client_id: String = ""
 var server_id: String = "default"
 
 func _ready():
-    mcp_server = get_node("/root/EditorNode/GodotMCP/mcp_server")
+    if mcp_server == null:
+        mcp_server = get_parent().get_node_or_null("mcp_server")
+    if mcp_server == null:
+        push_error("MCP Interface: mcp_server node not found")
+        return
+
     mcp_server.connected.connect(_on_connected)
     mcp_server.disconnected.connect(_on_disconnected)
     mcp_server.error.connect(_on_error)
     
-    # Generate a unique client ID
+    # Generate a unique client ID.
     client_id = str(randi())
 
+func set_mcp_server(server: Node):
+    mcp_server = server
+
 func _on_connected():
-    # 連接成功後，發送初始化消息
+    # Send initialize message after the connection is established.
     var init_message = {
         "type": "init",
         "client_id": client_id,
@@ -29,7 +37,7 @@ func _on_connected():
     mcp_server.send_message(init_message)
 
 func _on_disconnected():
-    # 清理工具列表
+    # Clear tool list on disconnect.
     tools.clear()
 
 func _on_error(error: String):
@@ -68,7 +76,7 @@ func handle_message(message: Dictionary):
             print("Unknown message type: ", message_type)
 
 func handle_init(payload: Dictionary):
-    # 更新工具列表
+    # Refresh tool list.
     tools.clear()
     for tool in payload.get("tools", []):
         tools[tool.name] = tool

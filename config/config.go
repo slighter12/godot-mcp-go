@@ -43,7 +43,10 @@ type Logging struct {
 
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
 	return &Config{
 		Name:        "godot-mcp-go",
 		Version:     "0.1.0",

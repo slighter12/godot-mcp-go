@@ -180,6 +180,8 @@ sequenceDiagram
     StdioServer-->>Client Process: JSON-RPC response
 ```
 
+Note: The current Godot editor plugin uses `streamable_http` only. `stdio` remains available for non-plugin clients and CLI integrations.
+
 #### Streamable HTTP Flow
 
 ```mermaid

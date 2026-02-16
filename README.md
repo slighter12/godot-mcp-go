@@ -16,6 +16,7 @@ This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0
 ## Architecture
 
 ### Transport Layer
+
 - **stdio**: Direct process communication via standard input/output
 - **Streamable HTTP**: HTTP-based communication with optional SSE streaming
   - POST requests for client-to-server communication
@@ -23,6 +24,7 @@ This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0
   - Session management with unique session IDs
 
 ### Tool System
+
 Tools are organized into categories and implement the `types.Tool` interface:
 
 - **Node Tools**: Scene tree manipulation, node properties, creation/deletion
@@ -32,7 +34,8 @@ Tools are organized into categories and implement the `types.Tool` interface:
 - **Utility Tools**: General utilities and offerings
 
 ### Directory Structure
-```
+
+```text
 transport/
 ├── http/           # HTTP transport implementation
 │   ├── server.go   # HTTP server with echo framework
@@ -54,22 +57,26 @@ transport/
 ## Installation
 
 1. Clone the repository:
+
    ```bash
    git clone https://github.com/slighter12/godot-mcp-go.git
    cd godot-mcp-go
    ```
 
 2. Install dependencies:
+
    ```bash
    go mod tidy
    ```
 
 3. Build the server:
+
    ```bash
    go build
    ```
 
 4. Link the MCP plugin to your Godot project:
+
    ```bash
    # Create the addons directory if it doesn't exist
    mkdir -p /path/to/your/godot/project/addons
@@ -83,6 +90,7 @@ transport/
 ### Streamable HTTP Mode (Default)
 
 1. Start the server:
+
    ```bash
    ./godot-mcp-go
    ```
@@ -94,9 +102,15 @@ transport/
 ### Stdio Mode
 
 1. Start the server with stdio mode:
+
    ```bash
    MCP_USE_STDIO=true ./godot-mcp-go
    ```
+
+### Godot Plugin Transport Note
+
+- The Godot editor plugin currently supports `streamable_http` only.
+- The server still supports both `stdio` and `streamable_http` transports for non-plugin clients.
 
 ## Configuration
 
@@ -137,7 +151,7 @@ The server can be configured through `config/mcp_config.json`:
 
 ### Environment Variables
 
-- `MCP_USE_STDIO`: Set to "true" to use stdio transport
+- `MCP_USE_STDIO`: Set to "true" to use stdio transport on the Go server
 - `MCP_DEBUG`: Set to "true" to enable debug mode
 - `MCP_PORT`: Override server port
 - `MCP_HOST`: Override server host
@@ -147,6 +161,7 @@ The server can be configured through `config/mcp_config.json`:
 ## Available Tools
 
 ### Scene Tools
+
 - `list-project-scenes`: Lists all `.tscn` files in the project
 - `read-scene`: Reads a specific scene file
 - `create-scene`: Creates a new scene
@@ -154,6 +169,7 @@ The server can be configured through `config/mcp_config.json`:
 - `apply-scene`: Applies a scene to the current project
 
 ### Node Tools
+
 - `get-scene-tree`: Returns the scene tree structure
 - `get-node-properties`: Gets properties of a specific node
 - `create-node`: Creates a new node
@@ -161,6 +177,7 @@ The server can be configured through `config/mcp_config.json`:
 - `modify-node`: Updates node properties
 
 ### Script Tools
+
 - `list-project-scripts`: Lists all scripts in the project
 - `read-script`: Reads a specific script
 - `modify-script`: Modifies a script
@@ -168,6 +185,7 @@ The server can be configured through `config/mcp_config.json`:
 - `analyze-script`: Analyzes a script
 
 ### Project Tools
+
 - `get-project-settings`: Gets project settings
 - `list-project-resources`: Lists all resources in the project
 - `get-editor-state`: Gets the current editor state
@@ -179,6 +197,7 @@ The server can be configured through `config/mcp_config.json`:
 To enable MCP integration with Cursor IDE, create or modify:
 
 `~/.cursor/mcp.json`:
+
 ```json
 {
     "mcpServers": {
@@ -237,15 +256,18 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## References
 
 ### Core Technologies
+
 - [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP documentation
 - [MCP Specification](https://modelcontextprotocol.io/specification/) - Protocol specification
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification) - JSON-RPC protocol
 
 ### Frameworks and Libraries
+
 - [Echo Framework](https://echo.labstack.com/) - HTTP web framework for Go
 - [Godot Engine](https://godotengine.org/) - Game engine and editor
 
 ### Related Projects
+
 - [ee0pdt/Godot-MCP](https://github.com/ee0pdt/Godot-MCP) - Original Godot MCP implementation
 - [metoro-io/mcp-golang](https://github.com/metoro-io/mcp-golang) - Go MCP reference implementation
 - [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) - Another Go MCP implementation

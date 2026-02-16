@@ -6,20 +6,17 @@ signal disconnected
 signal error(error: String)
 signal message_received(message: Dictionary)
 
-var stdio_pid: int = -1
-var connection_type: String = "streamable_http"  # 或 "stdio" 或 "streamable_http"
-var streamable_http_url: String = "http://localhost:9080/mcp"  # Streamable HTTP 端點
-var server_command: String = "./godot-mcp-go"
+var streamable_http_url: String = "http://localhost:9080/mcp"
 var is_connecting: bool = false
 var streamable_http_connection: HTTPRequest
 var session_id: String = ""
 
 func _ready():
     print("MCP Server: Initializing...")
-    # 加載設置
+    # Load settings.
     load_settings()
     
-    # 初始化 Streamable HTTP 連接
+    # Initialize Streamable HTTP connection.
     streamable_http_connection = HTTPRequest.new()
     add_child(streamable_http_connection)
     streamable_http_connection.request_completed.connect(_on_streamable_http_request_completed)
@@ -29,22 +26,17 @@ func load_settings():
     var config = ConfigFile.new()
     var err = config.load("res://addons/godot_mcp/config.cfg")
     if err == OK:
-        connection_type = config.get_value("mcp", "connection_type", "streamable_http")
         streamable_http_url = config.get_value("mcp", "streamable_http_url", "http://localhost:9080/mcp")
-        server_command = config.get_value("mcp", "server_command", "./godot-mcp-go")
-        print("MCP Server: Settings loaded - type: ", connection_type, ", url: ", streamable_http_url)
+        var configured_type = config.get_value("mcp", "connection_type", "streamable_http")
+        if configured_type != "streamable_http":
+            print("MCP Server: connection_type '%s' is unsupported in the plugin. Using streamable_http." % configured_type)
+        print("MCP Server: Settings loaded - type: streamable_http, url: ", streamable_http_url)
     else:
         print("MCP Server: Failed to load settings, using defaults")
 
 func connect_to_server():
     print("MCP Server: Attempting to connect...")
-    match connection_type:
-        "stdio":
-            connect_stdio()
-        "streamable_http":
-            connect_streamable_http(streamable_http_url)
-        _:
-            emit_signal("error", "Invalid connection type: " + connection_type)
+    connect_streamable_http(streamable_http_url)
 
 func connect_streamable_http(url: String):
     if is_connecting:
@@ -54,7 +46,7 @@ func connect_streamable_http(url: String):
     is_connecting = true
     print("MCP Server: Connecting to Streamable HTTP at ", url)
     
-    # 發送初始化請求
+    # Send initialize request.
     var init_message = {
         "jsonrpc": "2.0",
         "id": "init",
@@ -131,60 +123,16 @@ func establish_sse_stream():
     
     streamable_http_connection.request(streamable_http_url, headers, HTTPClient.METHOD_GET)
 
-func connect_stdio():
-    if not OS.has_environment("GODOT_MCP_ALLOW_STDIO_EXEC") or OS.get_environment("GODOT_MCP_ALLOW_STDIO_EXEC") != "1":
-        emit_signal("error", "Stdio process execution is disabled. Set GODOT_MCP_ALLOW_STDIO_EXEC=1 to enable.")
-        return
-
-    print("MCP Server: Starting stdio process: ", server_command)
-    var args = []
-
-    stdio_pid = OS.create_process(server_command, args)
-    if stdio_pid == -1:
-        print("MCP Server: Failed to start stdio process")
-        emit_signal("error", "Failed to start stdio process")
-        return
-    
-    print("MCP Server: Stdio process started with PID: ", stdio_pid)
-    emit_signal("connected")
-    # 發送初始化消息
-    send_init_message()
-
-func send_init_message():
-    print("MCP Server: Sending init message...")
-    var init_message = {
-        "type": "init",
-        "payload": {}
-    }
-    send_message(init_message)
-
 func send_message(message: Dictionary):
     print("MCP Server: Sending message: ", message)
     var json_message = JSON.stringify(message)
-    match connection_type:
-        "stdio":
-            if stdio_pid != -1 and OS.is_process_running(stdio_pid):
-                emit_signal("error", "Stdio transport send is not implemented in the plugin. Use streamable_http transport.")
-            else:
-                print("MCP Server: Stdio process not running")
-        "streamable_http":
-            # 使用 HTTP POST 發送消息
-            if streamable_http_connection and session_id != "":
-                var headers = [
-                    "Content-Type: application/json",
-                    "Accept: application/json, text/event-stream",
-                    "Mcp-Session-Id: " + session_id
-                ]
-                streamable_http_connection.request(streamable_http_url, headers, HTTPClient.METHOD_POST, json_message)
-                print("MCP Server: Message sent via Streamable HTTP")
-            else:
-                print("MCP Server: Streamable HTTP not initialized or no session ID")
-        _:
-            print("MCP Server: Invalid connection type")
-            emit_signal("error", "Invalid connection type: " + connection_type)
-
-func _process(_delta):
-    if stdio_pid != -1 and not OS.is_process_running(stdio_pid):
-        print("MCP Server: Process terminated unexpectedly")
-        emit_signal("error", "Process terminated unexpectedly")
-        stdio_pid = -1 
+    if streamable_http_connection and session_id != "":
+        var headers = [
+            "Content-Type: application/json",
+            "Accept: application/json, text/event-stream",
+            "Mcp-Session-Id: " + session_id
+        ]
+        streamable_http_connection.request(streamable_http_url, headers, HTTPClient.METHOD_POST, json_message)
+        print("MCP Server: Message sent via Streamable HTTP")
+    else:
+        print("MCP Server: Streamable HTTP not initialized or no session ID")

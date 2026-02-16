@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/tools"
+	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
 // StdioServer handles MCP communication over stdio
@@ -135,7 +133,7 @@ func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error)
 		"server_id":       "default",
 		"tools":           s.toolManager.GetTools(),
 		"protocolVersion": negotiateProtocolVersion(msg.Params),
-		"capabilities":    serverCapabilities(),
+		"capabilities":    shared.ServerCapabilities(),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
@@ -149,24 +147,7 @@ func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error)
 }
 
 func (s *StdioServer) handleToolsList(msg jsonrpc.Request) *jsonrpc.Response {
-	tools := s.toolManager.GetTools()
-	sort.Slice(tools, func(i, j int) bool {
-		return tools[i].Name < tools[j].Name
-	})
-
-	start, err := parseCursor(msg.Params, len(tools))
-	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-	}
-	end := min(start+50, len(tools))
-
-	result := map[string]any{
-		"tools": tools[start:end],
-	}
-	if end < len(tools) {
-		result["nextCursor"] = strconv.Itoa(end)
-	}
-	return jsonrpc.NewResponse(msg.ID, result)
+	return shared.BuildToolsListResponse(msg, s.toolManager.GetTools())
 }
 
 func (s *StdioServer) handleToolCall(msg jsonrpc.Request) (any, error) {
@@ -204,115 +185,27 @@ func (s *StdioServer) handleToolCall(msg jsonrpc.Request) (any, error) {
 	}
 
 	logger.Debug("Stdio tool call successful", "tool", toolName, "result", result)
-	return jsonrpc.NewResponse(msg.ID, map[string]any{
-		"type":              string(mcp.TypeResult),
-		"tool":              toolName,
-		"result":            result,
-		"content":           toolContentFromResult(result),
-		"structuredContent": result,
-		"isError":           false,
-	}), nil
+	return jsonrpc.NewResponse(msg.ID, shared.BuildToolSuccessResult(toolName, result)), nil
 }
 
 func (s *StdioServer) handleResourcesList(msg jsonrpc.Request) *jsonrpc.Response {
-	resources := []map[string]any{
-		{
-			"uri":      "godot://project/info",
-			"name":     "Project Info",
-			"mimeType": "application/json",
-		},
-		{
-			"uri":      "godot://scene/current",
-			"name":     "Current Scene",
-			"mimeType": "application/json",
-		},
-		{
-			"uri":      "godot://script/current",
-			"name":     "Current Script",
-			"mimeType": "application/json",
-		},
-	}
-
-	start, err := parseCursor(msg.Params, len(resources))
-	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-	}
-	end := min(start+50, len(resources))
-
-	result := map[string]any{
-		"resources": resources[start:end],
-	}
-	if end < len(resources) {
-		result["nextCursor"] = strconv.Itoa(end)
-	}
-	return jsonrpc.NewResponse(msg.ID, result)
+	return shared.BuildResourcesListResponse(msg)
 }
 
 func (s *StdioServer) handleResourcesRead(msg jsonrpc.Request) *jsonrpc.Response {
-	var params struct {
-		URI string `json:"uri"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid resources/read payload", nil)
-	}
-	if params.URI == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource URI is required", nil)
-	}
-
-	result, err := readGodotResource(params.URI)
-	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-	}
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInternalError), "Failed to encode resource result", nil)
-	}
-
-	return jsonrpc.NewResponse(msg.ID, map[string]any{
-		"contents": []map[string]any{
-			{
-				"uri":      params.URI,
-				"mimeType": "application/json",
-				"text":     string(resultJSON),
-			},
-		},
-	})
+	return shared.BuildResourcesReadResponse(msg, readGodotResource)
 }
 
 func (s *StdioServer) handlePromptsList(msg jsonrpc.Request) *jsonrpc.Response {
-	prompts := []map[string]any{}
-	start, err := parseCursor(msg.Params, len(prompts))
-	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-	}
-	if start != 0 {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid cursor value", nil)
-	}
-
-	return jsonrpc.NewResponse(msg.ID, map[string]any{
-		"prompts": prompts,
-	})
+	return shared.BuildPromptsListResponse(msg)
 }
 
 func (s *StdioServer) handlePromptsGet(msg jsonrpc.Request) *jsonrpc.Response {
-	var params struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid prompts/get payload", nil)
-	}
-	if params.Name == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Prompt name is required", nil)
-	}
-	return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Prompt not found", map[string]any{
-		"name": params.Name,
-	})
+	return shared.BuildPromptsGetResponse(msg)
 }
 
 func (s *StdioServer) handlePing(msg jsonrpc.Request) *jsonrpc.Response {
-	return jsonrpc.NewResponse(msg.ID, &mcp.PongMessage{
-		Type: string(mcp.TypePong),
-	})
+	return shared.BuildPingResponse(msg)
 }
 
 func readGodotResource(path string) (any, error) {
@@ -326,47 +219,6 @@ func readGodotResource(path string) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}
-}
-
-func toolContentFromResult(result any) []map[string]any {
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return []map[string]any{{"type": "text", "text": "tool call completed"}}
-	}
-	return []map[string]any{{"type": "text", "text": string(resultJSON)}}
-}
-
-func serverCapabilities() map[string]any {
-	return map[string]any{
-		"tools":     map[string]any{},
-		"resources": map[string]any{},
-		"prompts":   map[string]any{},
-	}
-}
-
-func parseCursor(paramsRaw json.RawMessage, total int) (int, error) {
-	if len(paramsRaw) == 0 {
-		return 0, nil
-	}
-
-	var params struct {
-		Cursor string `json:"cursor"`
-	}
-	if err := json.Unmarshal(paramsRaw, &params); err != nil {
-		return 0, fmt.Errorf("invalid params payload")
-	}
-	if strings.TrimSpace(params.Cursor) == "" {
-		return 0, nil
-	}
-
-	offset, err := strconv.Atoi(params.Cursor)
-	if err != nil {
-		return 0, fmt.Errorf("invalid cursor value")
-	}
-	if offset < 0 || offset > total {
-		return 0, fmt.Errorf("invalid cursor value")
-	}
-	return offset, nil
 }
 
 func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
