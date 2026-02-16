@@ -102,30 +102,9 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Override with environment variables (highest priority)
-	if portStr := os.Getenv("MCP_PORT"); portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			cfg.Server.Port = port
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PORT value %q: %v", portStr, err)
-		}
-	}
-
-	if host := os.Getenv("MCP_HOST"); host != "" {
-		cfg.Server.Host = host
-	}
-
-	if debug := os.Getenv("MCP_DEBUG"); debug != "" {
-		cfg.Server.Debug = debug == "true"
-	}
-
-	if logLevel := os.Getenv("MCP_LOG_LEVEL"); logLevel != "" {
-		cfg.Logging.Level = logLevel
-	}
-
-	if logPath := os.Getenv("MCP_LOG_PATH"); logPath != "" {
-		cfg.Logging.Path = logPath
-	}
+	// Override with environment variables (highest priority).
+	applyEnvOverrides(cfg)
+	cfg.Normalize()
 
 	// Validate the configuration
 	if err := cfg.Validate(); err != nil {
@@ -155,6 +134,49 @@ func SaveConfig(cfg *Config, path string) error {
 	return nil
 }
 
+func applyEnvOverrides(cfg *Config) {
+	if portStr := os.Getenv("MCP_PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			cfg.Server.Port = port
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PORT value %q: %v", portStr, err)
+		}
+	}
+
+	if host := os.Getenv("MCP_HOST"); host != "" {
+		cfg.Server.Host = host
+	}
+
+	if debug := os.Getenv("MCP_DEBUG"); debug != "" {
+		if parsed, err := strconv.ParseBool(debug); err == nil {
+			cfg.Server.Debug = parsed
+		} else {
+			log.Printf("warning: ignoring invalid MCP_DEBUG value %q: %v", debug, err)
+		}
+	}
+
+	if logLevel := os.Getenv("MCP_LOG_LEVEL"); logLevel != "" {
+		cfg.Logging.Level = logLevel
+	}
+
+	if logPath := os.Getenv("MCP_LOG_PATH"); logPath != "" {
+		cfg.Logging.Path = logPath
+	}
+}
+
+// Normalize canonicalizes config values so downstream validation and runtime
+// logic operate on stable representations.
+func (c *Config) Normalize() {
+	c.Server.Host = strings.TrimSpace(c.Server.Host)
+	c.Logging.Level = strings.ToLower(strings.TrimSpace(c.Logging.Level))
+	c.Logging.Format = strings.ToLower(strings.TrimSpace(c.Logging.Format))
+	c.Logging.Path = strings.TrimSpace(c.Logging.Path)
+	for i := range c.Transports {
+		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
+		c.Transports[i].URL = strings.TrimSpace(c.Transports[i].URL)
+	}
+}
+
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	// Validate server configuration
@@ -173,11 +195,9 @@ func (c *Config) Validate() error {
 		"warn":  true,
 		"error": true,
 	}
-	logLevel := strings.ToLower(strings.TrimSpace(c.Logging.Level))
-	if !validLogLevels[logLevel] {
+	if !validLogLevels[c.Logging.Level] {
 		return errors.New("invalid log level")
 	}
-	c.Logging.Level = logLevel
 
 	validLogFormats := map[string]bool{
 		"json": true,
@@ -189,12 +209,6 @@ func (c *Config) Validate() error {
 
 	if c.Logging.Path == "" {
 		return errors.New("log path cannot be empty")
-	}
-
-	// Ensure log directory exists
-	logDir := filepath.Dir(c.Logging.Path)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
 	// Validate transports
@@ -224,10 +238,10 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// GetConfigPath returns the path to the configuration file
-func GetConfigPath() (string, error) {
+// ResolveConfigPath returns the path that should be used for configuration.
+func ResolveConfigPath() (string, error) {
 	// First check environment variable
-	if path := os.Getenv("MCP_CONFIG_PATH"); path != "" {
+	if path := strings.TrimSpace(os.Getenv("MCP_CONFIG_PATH")); path != "" {
 		return path, nil
 	}
 
@@ -242,33 +256,42 @@ func GetConfigPath() (string, error) {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	configPath := filepath.Join(home, ".godot-mcp", "config/mcp_config.json")
+	return filepath.Join(home, ".godot-mcp", "config", "mcp_config.json"), nil
+}
 
-	// Create default config if it doesn't exist
-	if _, err := os.Stat(configPath); err != nil {
-		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("failed to stat config file: %w", err)
-		}
-
-		// Create directory if it doesn't exist
-		dir := filepath.Dir(configPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create config directory: %w", err)
-		}
-
-		// Create default config
-		defaultConfig := NewConfig()
-
-		// Write default config
-		data, err := json.MarshalIndent(defaultConfig, "", "  ")
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal default config: %w", err)
-		}
-
-		if err := os.WriteFile(configPath, data, 0644); err != nil {
-			return "", fmt.Errorf("failed to write default config: %w", err)
-		}
+// EnsureDefaultConfig creates a default config file if one does not exist.
+func EnsureDefaultConfig(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("config path cannot be empty")
 	}
 
-	return configPath, nil
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat config file: %w", err)
+	}
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	defaultConfig := NewConfig()
+	defaultConfig.Normalize()
+	data, err := json.MarshalIndent(defaultConfig, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal default config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write default config: %w", err)
+	}
+
+	return nil
+}
+
+// GetConfigPath returns the resolved config path.
+// Deprecated: use ResolveConfigPath and EnsureDefaultConfig.
+func GetConfigPath() (string, error) {
+	return ResolveConfigPath()
 }

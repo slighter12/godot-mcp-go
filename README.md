@@ -149,10 +149,18 @@ The server can be configured through `config/mcp_config.json`:
 }
 ```
 
+On startup, the server resolves the config path in this order:
+1. `MCP_CONFIG_PATH`
+2. `config/mcp_config.json` (project local, if present)
+3. `~/.godot-mcp/config/mcp_config.json`
+
+If the resolved file does not exist, the server creates a default config file at that path.
+
 ### Environment Variables
 
 - `MCP_USE_STDIO`: Set to "true" to use stdio transport on the Go server
 - `MCP_DEBUG`: Set to "true" to enable debug mode
+- `MCP_CONFIG_PATH`: Override config file path
 - `MCP_PORT`: Override server port
 - `MCP_HOST`: Override server host
 - `MCP_LOG_LEVEL`: Override log level

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,8 +57,9 @@ func TestLoadConfig(t *testing.T) {
 	// Create a temporary config file
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "test_config.json")
+	logPath := filepath.Join(tempDir, "test.log")
 
-	testConfig := `{
+	testConfig := fmt.Sprintf(`{
 		"name": "test-server",
 		"version": "1.0.0",
 		"description": "Test server",
@@ -84,9 +86,9 @@ func TestLoadConfig(t *testing.T) {
 		"logging": {
 			"level": "debug",
 			"format": "text",
-			"path": "/tmp/test.log"
+			"path": %q
 		}
-	}`
+	}`, logPath)
 
 	err := os.WriteFile(configPath, []byte(testConfig), 0644)
 	if err != nil {
@@ -146,8 +148,8 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("Expected logging format 'text', got '%s'", cfg.Logging.Format)
 	}
 
-	if cfg.Logging.Path != "/tmp/test.log" {
-		t.Errorf("Expected logging path '/tmp/test.log', got '%s'", cfg.Logging.Path)
+	if cfg.Logging.Path != logPath {
+		t.Errorf("Expected logging path '%s', got '%s'", logPath, cfg.Logging.Path)
 	}
 }
 
@@ -162,8 +164,9 @@ func TestLoadConfigPartialJSON(t *testing.T) {
 	// Create a temporary config file with partial but valid JSON.
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "partial_config.json")
+	logPath := filepath.Join(tempDir, "partial_test.log")
 
-	invalidConfig := `{
+	invalidConfig := fmt.Sprintf(`{
 		"name": "test-server",
 		"version": "1.0.0",
 		"server": {
@@ -179,9 +182,9 @@ func TestLoadConfigPartialJSON(t *testing.T) {
 		"logging": {
 			"level": "info",
 			"format": "json",
-			"path": "/tmp/test.log"
+			"path": %q
 		}
-	}`
+	}`, logPath)
 
 	err := os.WriteFile(configPath, []byte(invalidConfig), 0644)
 	if err != nil {
@@ -248,7 +251,55 @@ func TestGetConfigPath(t *testing.T) {
 	}
 }
 
+func TestGetConfigPathNoSideEffects(t *testing.T) {
+	missingPath := filepath.Join(t.TempDir(), "nested", "missing_config.json")
+	t.Setenv("MCP_CONFIG_PATH", missingPath)
+
+	path, err := GetConfigPath()
+	if err != nil {
+		t.Fatalf("Expected no error resolving config path, got %v", err)
+	}
+	if path != missingPath {
+		t.Fatalf("Expected MCP_CONFIG_PATH '%s', got '%s'", missingPath, path)
+	}
+
+	if _, err := os.Stat(missingPath); !os.IsNotExist(err) {
+		t.Fatalf("Expected GetConfigPath to have no side effects, stat err=%v", err)
+	}
+}
+
+func TestEnsureDefaultConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "nested", "mcp_config.json")
+	if err := EnsureDefaultConfig(configPath); err != nil {
+		t.Fatalf("EnsureDefaultConfig failed: %v", err)
+	}
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("Expected default config file to exist, stat err=%v", err)
+	}
+}
+
+func TestValidateHasNoFilesystemSideEffects(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "logs", "app.log")
+
+	cfg := NewConfig()
+	cfg.Logging.Path = logPath
+	cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate should succeed, got: %v", err)
+	}
+
+	logDir := filepath.Dir(logPath)
+	if _, err := os.Stat(logDir); !os.IsNotExist(err) {
+		t.Fatalf("Validate should not create log directory, stat err=%v", err)
+	}
+}
+
 func TestSaveConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	saveLogPath := filepath.Join(tempDir, "save_test.log")
+
 	// Create a test config
 	cfg := &Config{
 		Name:        "test-save",
@@ -277,12 +328,11 @@ func TestSaveConfig(t *testing.T) {
 		Logging: Logging{
 			Level:  "debug",
 			Format: "json",
-			Path:   "/tmp/save_test.log",
+			Path:   saveLogPath,
 		},
 	}
 
 	// Create a temporary directory for the test
-	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "save_test_config.json")
 
 	// Save the config

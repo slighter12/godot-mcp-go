@@ -7,7 +7,8 @@ import (
 	"sync"
 )
 
-// StreamableHTTPTransport handles MCP communication over Streamable HTTP
+// StreamableHTTPTransport provides optional SSE writer utilities.
+// The current request handling path in router.go is still response-based.
 type StreamableHTTPTransport struct {
 	writer  http.ResponseWriter
 	flusher http.Flusher

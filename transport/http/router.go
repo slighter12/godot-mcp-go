@@ -61,6 +61,8 @@ func (s *Server) handleOptions(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
+	// Current transport mode is "single request -> single HTTP response".
+	// SSE helpers are reserved for future server-push support.
 
 	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
 	defer limitedBody.Close()
