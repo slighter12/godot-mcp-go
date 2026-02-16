@@ -293,7 +293,7 @@ func ParseJSONRPCFrame(frame []byte) ([]jsonrpc.Request, []any, bool, error) {
 	for _, rawMsg := range rawMessages {
 		var envelope map[string]json.RawMessage
 		if err := json.Unmarshal(rawMsg, &envelope); err != nil {
-			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 			continue
 		}
 
@@ -356,7 +356,9 @@ func parseIDFromEnvelope(envelope map[string]json.RawMessage) (any, bool, bool) 
 	}
 
 	var id any
-	if err := json.Unmarshal(trimmed, &id); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	if err := decoder.Decode(&id); err != nil {
 		return nil, true, false
 	}
 	if !isValidJSONRPCID(id) {
@@ -366,9 +368,11 @@ func parseIDFromEnvelope(envelope map[string]json.RawMessage) (any, bool, bool) 
 }
 
 func isValidJSONRPCID(id any) bool {
-	switch id.(type) {
-	case nil, string, float64, int, int64, int32, uint, uint64, uint32:
+	switch v := id.(type) {
+	case string:
 		return true
+	case json.Number:
+		return isJSONInteger(v.String())
 	default:
 		return false
 	}
@@ -379,5 +383,19 @@ func isValidParamsValue(raw json.RawMessage) bool {
 	if len(trimmed) == 0 {
 		return false
 	}
-	return trimmed[0] == '{' || trimmed[0] == '['
+	return trimmed[0] == '{'
+}
+
+func isJSONInteger(value string) bool {
+	if value == "" || strings.ContainsAny(value, ".eE") {
+		return false
+	}
+	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return true
+	}
+	if strings.HasPrefix(value, "-") {
+		return false
+	}
+	_, err := strconv.ParseUint(value, 10, 64)
+	return err == nil
 }
