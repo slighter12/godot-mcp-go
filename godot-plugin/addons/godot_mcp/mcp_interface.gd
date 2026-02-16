@@ -7,7 +7,7 @@ signal tool_error(tool_name: String, error: String)
 var mcp_server: Node
 var tools: Dictionary = {}
 var client_id: String = ""
-var server_id: String = "default"
+var request_counter: int = 0
 
 func _ready():
     if mcp_server == null:
@@ -27,14 +27,15 @@ func set_mcp_server(server: Node):
     mcp_server = server
 
 func _on_connected():
-    # Send initialize message after the connection is established.
-    var init_message = {
-        "type": "init",
-        "client_id": client_id,
-        "server_id": server_id,
-        "payload": {}
+    # Send initialized notification after initialize response is received.
+    var initialized_notification = {
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {
+            "client_id": client_id
+        }
     }
-    mcp_server.send_message(init_message)
+    mcp_server.send_message(initialized_notification)
 
 func _on_disconnected():
     # Clear tool list on disconnect.
@@ -48,20 +49,39 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
         emit_signal("tool_error", tool_name, "Tool not found: " + tool_name)
         return
     
-    var tool_call = {
-        "type": "tool_call",
-        "client_id": client_id,
-        "server_id": server_id,
-        "payload": {
-            "tool": tool_name,
+    var tool_call_request = {
+        "jsonrpc": "2.0",
+        "id": _next_request_id(),
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
             "arguments": arguments
         }
     }
     
-    mcp_server.send_message(tool_call)
+    mcp_server.send_message(tool_call_request)
     emit_signal("tool_called", tool_name, arguments)
 
 func handle_message(message: Dictionary):
+    if message.has("error"):
+        var err_obj = message.get("error", {})
+        if err_obj is Dictionary:
+            handle_error({
+                "message": err_obj.get("message", "Unknown error")
+            })
+            return
+
+    if message.has("result"):
+        var result = message.get("result", {})
+        if result is Dictionary:
+            if result.get("type", "") == "init":
+                handle_init(result)
+                return
+            if result.has("tool") or result.has("isError"):
+                handle_tool_result(result)
+                return
+
+    # Legacy message handling fallback.
     var message_type = message.get("type", "")
     var payload = message.get("payload", {})
     
@@ -88,4 +108,8 @@ func handle_tool_result(payload: Dictionary):
 
 func handle_error(payload: Dictionary):
     var message = payload.get("message", "Unknown error")
-    print("MCP error: ", message) 
+    print("MCP error: ", message)
+
+func _next_request_id() -> String:
+    request_counter += 1
+    return "godot-%s-%d" % [client_id, request_counter]

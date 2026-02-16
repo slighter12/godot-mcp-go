@@ -96,22 +96,29 @@ func _on_streamable_http_request_completed(result: int, response_code: int, head
         return
 
     var response = json.get_data()
-    if not (response.has("result") and response["result"].has("type") and response["result"]["type"] == "init"):
+    if is_connecting:
+        if not (response.has("result") and response["result"].has("type") and response["result"]["type"] == "init"):
+            is_connecting = false
+            print("MCP Server: Unexpected response format")
+            emit_signal("error", "Unexpected response format")
+            return
+
+        print("MCP Server: Initialization successful")
+        for header in headers:
+            if header.begins_with("Mcp-Session-Id: "):
+                session_id = header.split(": ")[1]
+                print("MCP Server: Session ID received: ", session_id)
+                break
+
         is_connecting = false
-        print("MCP Server: Unexpected response format")
-        emit_signal("error", "Unexpected response format")
+        emit_signal("connected")
+        establish_sse_stream()
         return
 
-    print("MCP Server: Initialization successful")
-    for header in headers:
-        if header.begins_with("Mcp-Session-Id: "):
-            session_id = header.split(": ")[1]
-            print("MCP Server: Session ID received: ", session_id)
-            break
-
-    is_connecting = false
-    emit_signal("connected")
-    establish_sse_stream()
+    if response is Dictionary:
+        emit_signal("message_received", response)
+    else:
+        emit_signal("error", "Unexpected response payload")
 
 func establish_sse_stream():
     print("MCP Server: Establishing SSE stream for server-to-client communication...")
