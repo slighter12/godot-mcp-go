@@ -8,6 +8,7 @@ var mcp_server: Node
 var tools: Dictionary = {}
 var client_id: String = ""
 var request_counter: int = 0
+var pending_tool_calls: Dictionary = {}
 
 func _ready():
     if mcp_server == null:
@@ -37,6 +38,7 @@ func _on_connected():
 func _on_disconnected():
     # Clear tool list on disconnect.
     tools.clear()
+    pending_tool_calls.clear()
 
 func _on_error(error: String):
     print("MCP interface error: ", error)
@@ -46,9 +48,10 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
         emit_signal("tool_error", tool_name, "Tool not found: " + tool_name)
         return
     
+    var request_id = _next_request_id()
     var tool_call_request = {
         "jsonrpc": "2.0",
-        "id": _next_request_id(),
+        "id": request_id,
         "method": "tools/call",
         "params": {
             "name": tool_name,
@@ -56,17 +59,38 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
         }
     }
     
+    pending_tool_calls[request_id] = tool_name
     mcp_server.send_message(tool_call_request)
     emit_signal("tool_called", tool_name, arguments)
 
 func handle_message(message: Dictionary):
-    # This reference implementation only accepts JSON-RPC responses.
+    if message.get("jsonrpc", "") != "2.0":
+        print("Ignoring non JSON-RPC 2.0 payload: ", message)
+        return
+
+    if message.has("method"):
+        # Server-initiated method calls are out of scope for this plugin sample.
+        print("Ignoring server-initiated JSON-RPC method: ", message.get("method", ""))
+        return
+
+    if not message.has("id"):
+        print("Ignoring JSON-RPC response without id: ", message)
+        return
+
+    var response_id = message.get("id", null)
+    var request_id = "" if response_id == null else str(response_id)
+    var pending_tool_name = ""
+    if request_id != "" and pending_tool_calls.has(request_id):
+        pending_tool_name = pending_tool_calls[request_id]
+        pending_tool_calls.erase(request_id)
+
     if message.has("error"):
         var err_obj = message.get("error", {})
         if err_obj is Dictionary:
-            handle_error({
-                "message": err_obj.get("message", "Unknown error")
-            })
+            var err_msg = _extract_jsonrpc_error_message(err_obj)
+            if pending_tool_name != "":
+                emit_signal("tool_error", pending_tool_name, err_msg)
+            handle_error({"message": err_msg})
             return
 
     if message.has("result"):
@@ -75,9 +99,11 @@ func handle_message(message: Dictionary):
             if result.get("type", "") == "init":
                 handle_init(result)
                 return
-            if result.has("tool") or result.has("isError"):
+            if pending_tool_name != "" and not result.has("tool"):
+                result["tool"] = pending_tool_name
+            if result.has("tool") or result.has("isError") or pending_tool_name != "":
                 if result.get("isError", false):
-                    var tool_name = result.get("tool", "")
+                    var tool_name = result.get("tool", pending_tool_name)
                     var err_msg = _extract_tool_error_message(result)
                     emit_signal("tool_error", tool_name, err_msg)
                     handle_error({"message": err_msg})
@@ -113,3 +139,6 @@ func _extract_tool_error_message(result: Dictionary) -> String:
         if first.get("type", "") == "text" and first.has("text"):
             return str(first["text"])
     return str(result.get("error", "Tool execution failed"))
+
+func _extract_jsonrpc_error_message(error_obj: Dictionary) -> String:
+    return str(error_obj.get("message", "Unknown JSON-RPC error"))

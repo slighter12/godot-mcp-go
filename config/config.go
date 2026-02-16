@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/slighter12/godot-mcp-go/mcp"
 )
 
 // Config represents the MCP server configuration
@@ -66,8 +68,9 @@ func NewConfig() *Config {
 				Enabled: true,
 				URL:     "http://localhost:9080/mcp",
 				Headers: map[string]string{
-					"Accept":       "application/json, text/event-stream",
-					"Content-Type": "application/json",
+					"Accept":               "application/json, text/event-stream",
+					"Content-Type":         "application/json",
+					"MCP-Protocol-Version": mcp.ProtocolVersion,
 				},
 			},
 		},

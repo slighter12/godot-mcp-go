@@ -18,9 +18,8 @@ This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0
 ### Transport Layer
 
 - **stdio**: Direct process communication via standard input/output
-- **Streamable HTTP**: HTTP-based communication with optional SSE streaming
-  - POST requests for client-to-server communication
-  - GET requests for server-to-client streaming
+- **Streamable HTTP**: HTTP-based communication (POST-only in this implementation)
+  - POST requests for client-to-server request/notification/response delivery
   - Session management with unique session IDs
 
 ### Tool System
@@ -50,7 +49,7 @@ transport/
 
 ## Prerequisites
 
-- Go 1.24.1 or later
+- Go 1.26 or later
 - Godot 4.x
 - Basic understanding of the Model Context Protocol
 
@@ -137,7 +136,8 @@ The server can be configured through `config/mcp_config.json`:
       "url": "http://localhost:9080/mcp",
       "headers": {
         "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-11-25"
       }
     }
   ],

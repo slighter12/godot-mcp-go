@@ -23,7 +23,7 @@ This document contains the development roadmap, architecture details, and techni
 #### 3. Transport Layer
 
 - [x] **stdio transport**: Direct process communication
-- [x] **Streamable HTTP transport**: HTTP-based with SSE streaming
+- [x] **Streamable HTTP transport**: HTTP-based POST transport
 - [x] **Session management**: Unique session IDs and cleanup
 - [x] **CORS support**: Proper headers for web-based clients
 
@@ -191,7 +191,6 @@ sequenceDiagram
     participant Handler
     participant ToolManager
     participant Tool
-    participant ServerPush as "Server Push"
     Client->>Router: HTTP POST /mcp
     Router->>Handler: Handle request
     Handler->>ToolManager: Execute tool
@@ -200,9 +199,6 @@ sequenceDiagram
     ToolManager-->>Handler: Tool result
     Handler-->>Router: JSON Response
     Router-->>Client: JSON Response
-    Client->>Router: HTTP GET /mcp
-    Router->>ServerPush: SSE Stream
-    ServerPush-->>Client: Server Push
 ```
 
 ## Technical Implementation Notes

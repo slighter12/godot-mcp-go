@@ -17,6 +17,7 @@ type Session struct {
 	Created     time.Time
 	LastSeen    time.Time
 	Initialized bool
+	ProtocolVer string
 	Transport   *StreamableHTTPTransport
 }
 
@@ -124,6 +125,32 @@ func (sm *SessionManager) MarkInitialized(sessionID string) bool {
 	session.Initialized = true
 	session.LastSeen = time.Now()
 	return true
+}
+
+// SetProtocolVersion stores the negotiated protocol version for a session.
+func (sm *SessionManager) SetProtocolVersion(sessionID string, version string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	session.ProtocolVer = version
+	session.LastSeen = time.Now()
+	return true
+}
+
+// GetProtocolVersion returns the negotiated protocol version for a session.
+func (sm *SessionManager) GetProtocolVersion(sessionID string) (string, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return "", false
+	}
+	return session.ProtocolVer, true
 }
 
 // RemoveSession removes a session

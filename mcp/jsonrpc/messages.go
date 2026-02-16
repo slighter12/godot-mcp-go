@@ -13,7 +13,7 @@ type Request struct {
 // Response represents a JSON-RPC response
 type Response struct {
 	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id,omitempty"`
+	ID      any    `json:"id"`
 	Result  any    `json:"result,omitempty"`
 	Error   *Error `json:"error,omitempty"`
 }

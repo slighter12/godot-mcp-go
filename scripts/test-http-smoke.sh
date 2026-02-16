@@ -5,6 +5,7 @@ GO_BIN="${GO:-go}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 SERVER_URL="${SERVER_URL:-http://${SERVER_HOST}:${SERVER_PORT}/mcp}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
 
 log_file="$(mktemp /tmp/godot-mcp-go-smoke.XXXXXX.log)"
 init_headers="$(mktemp /tmp/godot-mcp-go-smoke.XXXXXX.headers)"
@@ -30,35 +31,40 @@ done
 curl -sS -D "$init_headers" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"init-smoke","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"make-smoke","version":"0.1.0"}}}' >/dev/null
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-smoke\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-smoke\",\"version\":\"0.1.0\"}}}" >/dev/null
 
 session_id="$(awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$init_headers" | tail -n1)"
 test -n "$session_id"
 
 status_no_session="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H 'Content-Type: application/json' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 test "$status_no_session" = "400"
 
 status_bad_session="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H 'Content-Type: application/json' \
-  -H 'Mcp-Session-Id: session_invalid' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H 'MCP-Session-Id: session_invalid' \
   -X POST "$SERVER_URL" \
   --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
 test "$status_bad_session" = "404"
 
 status_ok="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H 'Content-Type: application/json' \
-  -H "Mcp-Session-Id: $session_id" \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H "MCP-Session-Id: $session_id" \
   -X POST "$SERVER_URL" \
   --data '{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}')"
 test "$status_ok" = "200"
 
 status_notify="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H 'Content-Type: application/json' \
-  -H "Mcp-Session-Id: $session_id" \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H "MCP-Session-Id: $session_id" \
   -X POST "$SERVER_URL" \
   --data '{"jsonrpc":"2.0","method":"notifications/initialized"}')"
 test "$status_notify" = "202"

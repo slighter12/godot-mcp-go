@@ -67,7 +67,14 @@ func (s *Server) setupEcho() {
 			return s.isAllowedOrigin(origin), nil
 		},
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodOptions},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, "Mcp-Session-Id", "Last-Event-ID"},
+		AllowHeaders: []string{
+			echo.HeaderOrigin,
+			echo.HeaderContentType,
+			echo.HeaderAccept,
+			"MCP-Session-Id",
+			"MCP-Protocol-Version",
+			"Last-Event-ID",
+		},
 	}))
 	RegisterRoutes(s.echo, s)
 }

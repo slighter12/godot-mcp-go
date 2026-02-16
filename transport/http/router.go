@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/slighter12/godot-mcp-go/logger"
@@ -21,6 +20,20 @@ import (
 )
 
 const maxJSONRPCBodyBytes = 1 << 20
+
+const (
+	headerSessionID       = "MCP-Session-Id"
+	headerProtocolVersion = "MCP-Protocol-Version"
+	legacyProtocolVersion = "2025-03-26"
+)
+
+var supportedProtocolVersions = map[string]struct{}{
+	"2024-11-05":          {},
+	legacyProtocolVersion: {},
+	"2025-06-18":          {},
+	"2025-11-25":          {},
+	"2025-06-14":          {}, // legacy compatibility for older clients.
+}
 
 func RegisterRoutes(e *echo.Echo, s *Server) {
 	e.GET("/", s.handleHTTPInfo)
@@ -64,27 +77,32 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 	}
 
-	requests, prebuiltResponses, isBatch, err := parseJSONRPCRequests(body)
+	requests, prebuiltResponses, acceptedOneWay, err := parseJSONRPCRequests(body)
 	if err != nil {
 		logger.Error("Failed to parse JSON-RPC request", "error", err)
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 	}
-	if len(requests) == 0 && len(prebuiltResponses) == 0 {
+	if len(requests) == 0 && len(prebuiltResponses) == 0 && !acceptedOneWay {
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 	}
 
-	sessionID := c.Request().Header.Get("Mcp-Session-Id")
-	if len(requests) > 0 {
-		hasInitialize := false
-		hasNonInitialize := false
-		for _, req := range requests {
-			if req.Method == "initialize" {
-				hasInitialize = true
-			} else {
-				hasNonInitialize = true
-			}
-		}
+	sessionID := c.Request().Header.Get(headerSessionID)
+	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
+	if requestedProtocolVersion != "" && !isSupportedProtocolVersion(requestedProtocolVersion) {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unsupported MCP-Protocol-Version header", nil))
+	}
 
+	hasInitialize := false
+	hasNonInitialize := false
+	for _, req := range requests {
+		if req.Method == "initialize" {
+			hasInitialize = true
+		} else {
+			hasNonInitialize = true
+		}
+	}
+
+	if len(requests) > 0 {
 		if hasInitialize {
 			if sessionID == "" {
 				sessionID, err = generateSessionID()
@@ -101,12 +119,30 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 
 		if !hasInitialize || hasNonInitialize {
 			if sessionID == "" {
-				return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing Mcp-Session-Id header", nil))
+				return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
 			}
 			if !s.sessionManager.TouchSession(sessionID) {
 				return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
 			}
 		}
+	}
+	if acceptedOneWay {
+		if sessionID == "" {
+			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
+		}
+	}
+	if sessionID != "" && (len(requests) == 0 || acceptedOneWay) {
+		if !s.sessionManager.TouchSession(sessionID) {
+			return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
+		}
+	}
+
+	requireProtocolHeader := hasNonInitialize || acceptedOneWay
+	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
+		if requestedProtocolVersion == "" && requireProtocolHeader {
+			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
+		}
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
 	}
 
 	responses := make([]any, 0, len(requests)+len(prebuiltResponses))
@@ -129,62 +165,39 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	}
 
 	if sessionID != "" {
-		c.Response().Header().Set("Mcp-Session-Id", sessionID)
+		c.Response().Header().Set(headerSessionID, sessionID)
 	}
 
 	if len(requests) == 0 && len(prebuiltResponses) > 0 {
-		if isBatch {
-			return c.JSON(http.StatusBadRequest, prebuiltResponses)
-		}
 		return c.JSON(http.StatusBadRequest, prebuiltResponses[0])
 	}
 
 	if len(responses) == 0 {
 		return c.NoContent(http.StatusAccepted)
 	}
-	if isBatch {
-		return c.JSON(http.StatusOK, responses)
-	}
 	return c.JSON(http.StatusOK, responses[0])
 }
 
 func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
-	logger.Info("Streamable HTTP GET request (SSE stream)", "remote_addr", c.RealIP())
-	sessionID := c.Request().Header.Get("Mcp-Session-Id")
-	if sessionID == "" {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing Mcp-Session-Id header", nil))
-	}
-	if !s.sessionManager.TouchSession(sessionID) {
-		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-	}
-
-	c.Response().Header().Set("Content-Type", "text/event-stream")
-	c.Response().Header().Set("Cache-Control", "no-cache")
-	c.Response().Header().Set("Connection", "keep-alive")
-	c.Response().Header().Set("Access-Control-Allow-Headers", "Mcp-Session-Id, Last-Event-ID")
-
-	transport := NewStreamableHTTPTransport(c.Response().Writer, c.Response().Writer.(http.Flusher))
-	s.sessionManager.SetTransport(sessionID, transport)
-
-	if err := transport.SendSSE("heartbeat", map[string]string{"status": "connected"}); err != nil {
-		logger.Error("Failed to send initial heartbeat", "error", err)
-		return err
-	}
-
-	go s.sendHeartbeats(transport)
-	<-c.Request().Context().Done()
-	s.sessionManager.ClearTransport(sessionID)
-	return nil
+	logger.Info("Streamable HTTP GET request is not supported", "remote_addr", c.RealIP())
+	return c.JSON(http.StatusMethodNotAllowed, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "SSE stream via GET is not supported; use POST /mcp", nil))
 }
 
 func (s *Server) handleStreamableHTTPDelete(c echo.Context) error {
 	logger.Info("Streamable HTTP DELETE request", "remote_addr", c.RealIP())
-	sessionID := c.Request().Header.Get("Mcp-Session-Id")
+	sessionID := c.Request().Header.Get(headerSessionID)
 	if sessionID == "" {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing Mcp-Session-Id header", nil))
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
 	}
 	if !s.sessionManager.HasSession(sessionID) {
 		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
+	}
+	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
+	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, true) {
+		if requestedProtocolVersion == "" {
+			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
+		}
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
 	}
 	s.sessionManager.RemoveSession(sessionID)
 	return c.NoContent(http.StatusNoContent)
@@ -196,22 +209,15 @@ func parseJSONRPCRequests(body []byte) ([]jsonrpc.Request, []any, bool, error) {
 		return nil, nil, false, fmt.Errorf("empty request body")
 	}
 
-	isBatch := trimmed[0] == '['
-	rawMessages := make([]json.RawMessage, 0)
-
-	if isBatch {
-		if err := json.Unmarshal(trimmed, &rawMessages); err != nil {
-			return nil, nil, true, err
-		}
-		if len(rawMessages) == 0 {
-			return nil, []any{jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)}, true, nil
-		}
-	} else {
-		rawMessages = append(rawMessages, json.RawMessage(trimmed))
+	// Streamable HTTP requires a single JSON-RPC message per HTTP request body.
+	if trimmed[0] == '[' {
+		return nil, []any{jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)}, false, nil
 	}
+	rawMessages := []json.RawMessage{json.RawMessage(trimmed)}
 
 	requests := make([]jsonrpc.Request, 0, len(rawMessages))
 	errors := make([]any, 0)
+	acceptedOneWay := false
 
 	for _, raw := range rawMessages {
 		var envelope map[string]json.RawMessage
@@ -219,10 +225,15 @@ func parseJSONRPCRequests(body []byte) ([]jsonrpc.Request, []any, bool, error) {
 			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 			continue
 		}
+		requestID, hasID, validID := parseIDFromEnvelope(envelope)
+		if !validID {
+			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
 
 		var msg jsonrpc.Request
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			errors = append(errors, jsonrpc.NewErrorResponse(rawIDFromEnvelope(envelope), int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 			continue
 		}
 
@@ -230,29 +241,73 @@ func parseJSONRPCRequests(body []byte) ([]jsonrpc.Request, []any, bool, error) {
 			_, hasResult := envelope["result"]
 			_, hasErr := envelope["error"]
 			if hasResult || hasErr {
+				if msg.JSONRPC != jsonrpc.Version || !hasID || (hasResult && hasErr) {
+					errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+				} else {
+					acceptedOneWay = true
+				}
 				// Client response payloads are accepted as one-way messages.
 				continue
 			}
-			errors = append(errors, jsonrpc.NewErrorResponse(rawIDFromEnvelope(envelope), int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if msg.JSONRPC != jsonrpc.Version {
+			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if rawParams, ok := envelope["params"]; ok && !isValidParamsValue(rawParams) {
+			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if msg.Method == "initialize" && msg.ID == nil {
+			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 			continue
 		}
 
 		requests = append(requests, msg)
 	}
 
-	return requests, errors, isBatch, nil
+	return requests, errors, acceptedOneWay, nil
 }
 
-func rawIDFromEnvelope(envelope map[string]json.RawMessage) any {
+func parseIDFromEnvelope(envelope map[string]json.RawMessage) (any, bool, bool) {
 	rawID, exists := envelope["id"]
-	if !exists || len(rawID) == 0 {
-		return nil
+	if !exists {
+		return nil, false, true
+	}
+	trimmed := bytes.TrimSpace(rawID)
+	if len(trimmed) == 0 {
+		return nil, true, false
 	}
 	var id any
-	if err := json.Unmarshal(rawID, &id); err != nil {
-		return nil
+	if err := json.Unmarshal(trimmed, &id); err != nil {
+		return nil, true, false
 	}
-	return id
+	if !isValidJSONRPCID(id) {
+		return nil, true, false
+	}
+	return id, true, true
+}
+
+func isValidJSONRPCID(id any) bool {
+	switch id.(type) {
+	case nil, string, float64, int, int64, int32, uint, uint64, uint32:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidParamsValue(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	return trimmed[0] == '{' || trimmed[0] == '['
 }
 
 func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, error) {
@@ -261,6 +316,9 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		logger.Debug("Handling initialize message", "request_id", msg.ID)
 		return s.handleInit(msg, sessionID)
 	case "initialized", "notifications/initialized":
+		if msg.ID != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
+		}
 		logger.Debug("Handling initialized notification")
 		if sessionID != "" {
 			s.sessionManager.MarkInitialized(sessionID)
@@ -288,6 +346,9 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		logger.Debug("Handling ping message")
 		return s.handlePing(msg), nil
 	case "tools/progress":
+		if msg.ID != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
+		}
 		logger.Debug("Handling tools/progress notification")
 		return nil, nil
 	default:
@@ -312,6 +373,9 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 	}
 
 	negotiatedVersion := negotiateProtocolVersion(msg.Params)
+	if sessionID != "" {
+		s.sessionManager.SetProtocolVersion(sessionID, negotiatedVersion)
+	}
 	result := map[string]any{
 		"type":            string(mcp.TypeInit),
 		"version":         "0.1.0",
@@ -431,20 +495,6 @@ func (s *Server) handleGodotResource(path string) (any, error) {
 	}
 }
 
-func (s *Server) sendHeartbeats(transport *StreamableHTTPTransport) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		if transport.IsClosed() {
-			return
-		}
-		if err := transport.SendSSE("heartbeat", map[string]string{"timestamp": time.Now().Format(time.RFC3339)}); err != nil {
-			logger.Error("Failed to send heartbeat", "error", err)
-			return
-		}
-	}
-}
-
 func generateSessionID() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -453,21 +503,44 @@ func generateSessionID() (string, error) {
 	return "session_" + hex.EncodeToString(buf), nil
 }
 
+func (s *Server) isProtocolVersionAccepted(sessionID string, requestedVersion string, requireHeader bool) bool {
+	if requestedVersion != "" {
+		if !isSupportedProtocolVersion(requestedVersion) {
+			return false
+		}
+
+		if sessionID != "" {
+			if negotiatedVersion, ok := s.sessionManager.GetProtocolVersion(sessionID); ok && negotiatedVersion != "" && negotiatedVersion != requestedVersion {
+				return false
+			}
+		}
+		return true
+	}
+
+	return !requireHeader
+}
+
+func isSupportedProtocolVersion(version string) bool {
+	if version == "" {
+		return false
+	}
+	if version == mcp.ProtocolVersion {
+		return true
+	}
+	_, ok := supportedProtocolVersions[version]
+	return ok
+}
+
 func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
-	preferred := "2025-03-26"
+	preferred := mcp.ProtocolVersion
 	if err := json.Unmarshal(paramsRaw, &params); err != nil {
 		return preferred
 	}
 
-	supported := map[string]struct{}{
-		"2024-11-05":        {},
-		preferred:           {},
-		mcp.ProtocolVersion: {},
-	}
-	if _, ok := supported[params.ProtocolVersion]; ok {
+	if isSupportedProtocolVersion(params.ProtocolVersion) {
 		return params.ProtocolVersion
 	}
 	return preferred

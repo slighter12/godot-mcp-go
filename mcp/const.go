@@ -2,7 +2,7 @@ package mcp
 
 // Protocol version
 const (
-	ProtocolVersion = "2025-06-14"
+	ProtocolVersion = "2025-11-25"
 )
 
 type MessageType string

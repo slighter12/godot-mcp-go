@@ -18,7 +18,8 @@
       "url": "http://localhost:9080/mcp",
       "headers": {
         "Accept": "application/json, text/event-stream",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-11-25"
       }
     }
   ],
