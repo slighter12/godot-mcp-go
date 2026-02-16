@@ -1,5 +1,7 @@
 @tool
 extends Node
+# NOTE: this node acts as an MCP client.
+# The filename is kept for backward compatibility with existing plugin installs.
 
 signal connected
 signal disconnected
@@ -20,7 +22,7 @@ var pending_messages: Array = []
 var pending_connect_url: String = ""
 
 func _ready():
-    print("MCP Server: Initializing...")
+    print("MCP Client: Initializing...")
     load_settings()
 
     post_http_connection = HTTPRequest.new()
@@ -28,30 +30,30 @@ func _ready():
     post_http_connection.request_completed.connect(_on_post_request_completed)
 
 func load_settings():
-    print("MCP Server: Loading settings...")
+    print("MCP Client: Loading settings...")
     var config = ConfigFile.new()
     var err = config.load("res://addons/godot_mcp/config.cfg")
     if err == OK:
         streamable_http_url = config.get_value("mcp", "streamable_http_url", "http://localhost:9080/mcp")
         var configured_type = config.get_value("mcp", "connection_type", "streamable_http")
         if configured_type != "streamable_http":
-            print("MCP Server: connection_type '%s' is unsupported in the plugin. Using streamable_http." % configured_type)
-        print("MCP Server: Settings loaded - type: streamable_http, url: ", streamable_http_url)
+            print("MCP Client: connection_type '%s' is unsupported in the plugin. Using streamable_http." % configured_type)
+        print("MCP Client: Settings loaded - type: streamable_http, url: ", streamable_http_url)
     else:
-        print("MCP Server: Failed to load settings, using defaults")
+        print("MCP Client: Failed to load settings, using defaults")
 
 func connect_to_server():
-    print("MCP Server: Attempting to connect...")
+    print("MCP Client: Attempting to connect...")
     connect_streamable_http(streamable_http_url)
 
 func connect_streamable_http(url: String):
     if is_connecting:
         pending_connect_url = url
-        print("MCP Server: Connection attempt in progress, queued reconnect to ", url)
+        print("MCP Client: Connection attempt in progress, queued reconnect to ", url)
         return
     if request_in_flight:
         pending_connect_url = url
-        print("MCP Server: Request in flight, queued reconnect to ", url)
+        print("MCP Client: Request in flight, queued reconnect to ", url)
         return
 
     if is_connected:
@@ -62,7 +64,7 @@ func connect_streamable_http(url: String):
     session_id = ""
     negotiated_protocol_version = DEFAULT_PROTOCOL_VERSION
     _drop_pending_messages("reconnecting to a new MCP session")
-    print("MCP Server: Connecting to Streamable HTTP (POST-only) at ", url)
+    print("MCP Client: Connecting to Streamable HTTP (POST-only) at ", url)
 
     var init_message = {
         "jsonrpc": "2.0",
@@ -104,7 +106,7 @@ func _on_post_request_completed(result: int, response_code: int, headers: Packed
     _flush_pending_messages()
 
 func _handle_initialize_response(response_code: int, headers: PackedStringArray, body: PackedByteArray):
-    print("MCP Server: Initialize response received - code: ", response_code)
+    print("MCP Client: Initialize response received - code: ", response_code)
     if response_code != 200:
         _fail_connect("Streamable HTTP initialize failed with status: " + str(response_code))
         return
@@ -141,17 +143,17 @@ func _handle_initialize_response(response_code: int, headers: PackedStringArray,
 
     session_id = _extract_session_id(headers)
     if session_id == "":
-        print("MCP Server: Initialize response has no MCP-Session-Id (stateless mode)")
+        print("MCP Client: Initialize response has no MCP-Session-Id (stateless mode)")
     else:
-        print("MCP Server: Session ID received: ", session_id)
+        print("MCP Client: Session ID received: ", session_id)
 
-    print("MCP Server: Initialization successful")
+    print("MCP Client: Initialization successful")
     is_connecting = false
     is_connected = true
     emit_signal("connected")
 
 func _handle_post_response(response_code: int, headers: PackedStringArray, body: PackedByteArray):
-    print("MCP Server: Streamable HTTP response received - code: ", response_code)
+    print("MCP Client: Streamable HTTP response received - code: ", response_code)
 
     var latest_session_id = _extract_session_id(headers)
     if latest_session_id != "":
@@ -187,7 +189,7 @@ func send_message(message: Dictionary) -> bool:
     return _send_raw_message(message)
 
 func _send_raw_message(message: Dictionary) -> bool:
-    print("MCP Server: Sending message: ", message)
+    print("MCP Client: Sending message: ", message)
     if not post_http_connection:
         emit_signal("error", "Streamable HTTP connection is not initialized")
         return false
@@ -316,7 +318,7 @@ func _fail_connect(message: String):
     _mark_disconnected()
     request_in_flight = false
     _drop_pending_messages("MCP initialization failed")
-    print("MCP Server: ", message)
+    print("MCP Client: ", message)
     emit_signal("error", message)
 
 func disconnect_from_server():

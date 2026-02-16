@@ -24,12 +24,6 @@ func main() {
 		log.Fatalf("Failed to load configuration: %+v", err)
 	}
 
-	// Check for debug mode
-	if os.Getenv("MCP_DEBUG") == "true" {
-		cfg.Server.Debug = true
-		log.Println("Debug mode enabled via MCP_DEBUG environment variable")
-	}
-
 	// Initialize logger
 	if err := logger.Init(logger.GetLevelFromString(cfg.Logging.Level), logger.Format(cfg.Logging.Format), cfg.Logging.Path); err != nil {
 		log.Fatalf("Failed to initialize logger: %+v", err)

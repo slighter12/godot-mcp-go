@@ -4,7 +4,7 @@ signal tool_called(tool_name: String, arguments: Dictionary)
 signal tool_result(tool_name: String, result: Dictionary)
 signal tool_error(tool_name: String, error: String)
 
-var mcp_server: Node
+var mcp_client: Node
 var tools: Dictionary = {}
 var client_id: String = ""
 var request_counter: int = 0
@@ -14,22 +14,28 @@ var tools_request_in_progress: bool = false
 var tools_refresh_buffer: Dictionary = {}
 
 func _ready():
-    if mcp_server == null:
-        mcp_server = get_parent().get_node_or_null("mcp_server")
-    if mcp_server == null:
-        push_error("MCP Interface: mcp_server node not found")
+    if mcp_client == null:
+        mcp_client = get_parent().get_node_or_null("mcp_client")
+    if mcp_client == null:
+        mcp_client = get_parent().get_node_or_null("mcp_server")
+    if mcp_client == null:
+        push_error("MCP Interface: MCP client node not found")
         return
 
-    mcp_server.connected.connect(_on_connected)
-    mcp_server.disconnected.connect(_on_disconnected)
-    mcp_server.error.connect(_on_error)
+    mcp_client.connected.connect(_on_connected)
+    mcp_client.disconnected.connect(_on_disconnected)
+    mcp_client.error.connect(_on_error)
 
     var rng = RandomNumberGenerator.new()
     rng.randomize()
     client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
 
+func set_mcp_client(client: Node):
+    mcp_client = client
+
 func set_mcp_server(server: Node):
-    mcp_server = server
+    # Backward compatibility for older plugin wiring.
+    set_mcp_client(server)
 
 func _on_connected():
     tools.clear()
@@ -70,7 +76,7 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
         }
     }
 
-    if not mcp_server.send_message(tool_call_request):
+    if not mcp_client.send_message(tool_call_request):
         pending_requests.erase(request_id)
         emit_signal("tool_error", tool_name, "Failed to send tools/call request")
         return
@@ -196,7 +202,7 @@ func _send_initialized_notification():
             "clientId": client_id
         }
     }
-    if not mcp_server.send_message(initialized_notification):
+    if not mcp_client.send_message(initialized_notification):
         handle_error({"message": "Failed to send initialized notification"})
 
 func _request_tools_list(cursor: String):
@@ -219,7 +225,7 @@ func _request_tools_list(cursor: String):
         "method": "tools/list",
         "params": params
     }
-    if not mcp_server.send_message(request):
+    if not mcp_client.send_message(request):
         pending_requests.erase(request_id)
         tools_request_in_progress = false
         tools_refresh_buffer.clear()
