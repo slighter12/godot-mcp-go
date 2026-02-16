@@ -15,12 +15,13 @@ import (
 
 // Config represents the MCP server configuration
 type Config struct {
-	Name        string      `json:"name"`
-	Version     string      `json:"version"`
-	Description string      `json:"description"`
-	Server      Server      `json:"server"`
-	Transports  []Transport `json:"transports"`
-	Logging     Logging     `json:"logging"`
+	Name          string        `json:"name"`
+	Version       string        `json:"version"`
+	Description   string        `json:"description"`
+	Server        Server        `json:"server"`
+	Transports    []Transport   `json:"transports"`
+	Logging       Logging       `json:"logging"`
+	PromptCatalog PromptCatalog `json:"prompt_catalog"`
 }
 
 // Server represents server configuration
@@ -43,6 +44,12 @@ type Logging struct {
 	Level  string `json:"level"`
 	Format string `json:"format"`
 	Path   string `json:"path"`
+}
+
+// PromptCatalog represents prompt catalog runtime configuration.
+type PromptCatalog struct {
+	Enabled bool     `json:"enabled"`
+	Paths   []string `json:"paths"`
 }
 
 // NewConfig creates a new Config with default values
@@ -80,6 +87,10 @@ func NewConfig() *Config {
 			Level:  "info",
 			Format: "json",
 			Path:   filepath.Join(home, ".godot-mcp", "logs", "mcp.log"),
+		},
+		PromptCatalog: PromptCatalog{
+			Enabled: true,
+			Paths:   []string{},
 		},
 	}
 }
@@ -162,6 +173,18 @@ func applyEnvOverrides(cfg *Config) {
 	if logPath := os.Getenv("MCP_LOG_PATH"); logPath != "" {
 		cfg.Logging.Path = logPath
 	}
+
+	if promptCatalogEnabled := os.Getenv("MCP_PROMPT_CATALOG_ENABLED"); promptCatalogEnabled != "" {
+		if parsed, err := strconv.ParseBool(promptCatalogEnabled); err == nil {
+			cfg.PromptCatalog.Enabled = parsed
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_ENABLED value %q: %v", promptCatalogEnabled, err)
+		}
+	}
+
+	if promptCatalogPaths := os.Getenv("MCP_PROMPT_CATALOG_PATHS"); promptCatalogPaths != "" {
+		cfg.PromptCatalog.Paths = parseCSV(promptCatalogPaths)
+	}
 }
 
 // Normalize canonicalizes config values so downstream validation and runtime
@@ -171,6 +194,7 @@ func (c *Config) Normalize() {
 	c.Logging.Level = strings.ToLower(strings.TrimSpace(c.Logging.Level))
 	c.Logging.Format = strings.ToLower(strings.TrimSpace(c.Logging.Format))
 	c.Logging.Path = strings.TrimSpace(c.Logging.Path)
+	c.PromptCatalog.Paths = normalizePaths(c.PromptCatalog.Paths)
 	for i := range c.Transports {
 		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
 		c.Transports[i].URL = strings.TrimSpace(c.Transports[i].URL)
@@ -209,6 +233,14 @@ func (c *Config) Validate() error {
 
 	if c.Logging.Path == "" {
 		return errors.New("log path cannot be empty")
+	}
+
+	if c.PromptCatalog.Enabled {
+		for _, catalogPath := range c.PromptCatalog.Paths {
+			if strings.TrimSpace(catalogPath) == "" {
+				return errors.New("prompt catalog path cannot be empty")
+			}
+		}
 	}
 
 	// Validate transports
@@ -294,4 +326,33 @@ func EnsureDefaultConfig(path string) error {
 // Deprecated: use ResolveConfigPath and EnsureDefaultConfig.
 func GetConfigPath() (string, error) {
 	return ResolveConfigPath()
+}
+
+func parseCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func normalizePaths(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		trimmed := strings.TrimSpace(path)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }

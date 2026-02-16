@@ -27,5 +27,9 @@
     "level": "debug",
     "format": "json",
     "path": "logs/mcp.log"
+  },
+  "prompt_catalog": {
+    "enabled": true,
+    "paths": []
   }
 }

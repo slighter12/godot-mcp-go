@@ -14,12 +14,14 @@ import (
 	"github.com/slighter12/godot-mcp-go/config"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/stdio"
 )
 
 type Server struct {
 	registry       *mcp.Registry
+	promptCatalog  *promptcatalog.Registry
 	toolManager    *tools.Manager
 	sessionManager *SessionManager
 	config         *config.Config
@@ -37,6 +39,7 @@ func NewServer(cfg *config.Config) *Server {
 }
 
 func (s *Server) Start() error {
+	s.initializePromptCatalog()
 	s.toolManager.RegisterDefaultTools()
 	if err := s.registry.RegisterServer("default", s.toolManager.GetTools()); err != nil {
 		logger.Error("Failed to register default server", "error", err)
@@ -91,6 +94,7 @@ func (s *Server) startCleanupGoroutine() {
 func (s *Server) startStdioServer() error {
 	logger.Info("Starting MCP server in stdio mode", "config", s.config)
 	server := stdio.NewStdioServer(s.toolManager)
+	server.AttachPromptCatalog(s.promptCatalog)
 	return server.Start()
 }
 
@@ -153,9 +157,34 @@ func (s *Server) isAllowedOrigin(origin string) bool {
 func (s *Server) GetRegistry() *mcp.Registry {
 	return s.registry
 }
+
+func (s *Server) initializePromptCatalog() {
+	s.promptCatalog = promptcatalog.NewRegistry(s.config.PromptCatalog.Enabled)
+	if !s.promptCatalog.Enabled() {
+		logger.Info("Prompt catalog runtime disabled")
+		return
+	}
+
+	if err := s.promptCatalog.LoadFromPaths(s.config.PromptCatalog.Paths); err != nil {
+		logger.Warn("Prompt catalog loaded with warnings", "error", err)
+	}
+
+	logger.Info("Prompt catalog runtime initialized",
+		"enabled", s.promptCatalog.Enabled(),
+		"paths", len(s.config.PromptCatalog.Paths),
+		"prompts", s.promptCatalog.PromptCount(),
+		"load_errors", len(s.promptCatalog.LoadErrors()),
+	)
+}
+
 func (s *Server) GetToolManager() *tools.Manager {
 	return s.toolManager
 }
+
+func (s *Server) GetPromptCatalog() *promptcatalog.Registry {
+	return s.promptCatalog
+}
+
 func (s *Server) GetSessionManager() *SessionManager {
 	return s.sessionManager
 }

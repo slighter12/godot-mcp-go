@@ -14,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
@@ -219,7 +220,7 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
-		return shared.DispatchStandardMethod(msg, s.toolManager, s.handleGodotResource), nil
+		return shared.DispatchStandardMethod(msg, s.toolManager, s.promptCatalog, s.handleGodotResource), nil
 	}
 }
 
@@ -245,7 +246,7 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 		"server_id":       "default",
 		"tools":           tools,
 		"protocolVersion": negotiatedVersion,
-		"capabilities":    shared.ServerCapabilities(),
+		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled()),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
@@ -266,6 +267,8 @@ func (s *Server) handleGodotResource(path string) (any, error) {
 		return map[string]any{"type": "scene", "path": "current"}, nil
 	case "godot://project/info":
 		return map[string]any{"name": "godot-mcp", "version": "0.1.0", "type": "godot"}, nil
+	case "godot://policy/godot-checks":
+		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}

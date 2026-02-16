@@ -10,6 +10,7 @@ import (
 
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
 )
 
@@ -84,43 +85,113 @@ func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 	})
 }
 
-func BuildPromptsListResponse(msg jsonrpc.Request) *jsonrpc.Response {
-	prompts := []map[string]any{}
+func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
+	if catalog == nil || !catalog.Enabled() {
+		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
+			"feature": "prompt_catalog",
+		})
+	}
+
+	if catalog.PromptCount() == 0 {
+		loadErrors := catalog.LoadErrors()
+		if len(loadErrors) > 0 {
+			return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", map[string]any{
+				"feature": "prompt_catalog",
+				"details": strings.Join(loadErrors, "; "),
+			})
+		}
+	}
+
+	prompts := catalog.ListPrompts()
 	start, err := ParseCursor(msg.Params, len(prompts))
 	if err != nil {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 	}
-	if start != 0 {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid cursor value", nil)
+	end := min(start+pageSize, len(prompts))
+
+	list := make([]map[string]any, 0, end-start)
+	for _, prompt := range prompts[start:end] {
+		list = append(list, map[string]any{
+			"name":        prompt.Name,
+			"description": prompt.Description,
+		})
 	}
-	return jsonrpc.NewResponse(msg.ID, map[string]any{
-		"prompts": prompts,
-	})
+
+	result := map[string]any{
+		"prompts": list,
+	}
+	if end < len(prompts) {
+		result["nextCursor"] = strconv.Itoa(end)
+	}
+	return jsonrpc.NewResponse(msg.ID, result)
 }
 
-func BuildPromptsGetResponse(msg jsonrpc.Request) *jsonrpc.Response {
+func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
+	if catalog == nil || !catalog.Enabled() {
+		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
+			"feature": "prompt_catalog",
+		})
+	}
+
+	if catalog.PromptCount() == 0 {
+		loadErrors := catalog.LoadErrors()
+		if len(loadErrors) > 0 {
+			return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", map[string]any{
+				"feature": "prompt_catalog",
+				"details": strings.Join(loadErrors, "; "),
+			})
+		}
+	}
+
 	var params struct {
-		Name string `json:"name"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid prompts/get payload", nil)
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Invalid prompts/get payload", "invalid_params", map[string]any{
+			"field":   "params",
+			"problem": "malformed_payload",
+		})
 	}
+	params.Name = strings.TrimSpace(params.Name)
 	if params.Name == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Prompt name is required", nil)
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt name is required", "invalid_params", map[string]any{
+			"field":   "name",
+			"problem": "missing",
+		})
 	}
-	return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Prompt not found", map[string]any{
-		"name": params.Name,
+
+	prompt, found := catalog.GetPrompt(params.Name)
+	if !found {
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Unknown prompt name", "invalid_params", map[string]any{
+			"field":   "name",
+			"problem": "unknown_prompt",
+			"value":   params.Name,
+		})
+	}
+
+	renderedPrompt := renderPromptTemplate(prompt.Template, params.Arguments)
+	return jsonrpc.NewResponse(msg.ID, map[string]any{
+		"name":        prompt.Name,
+		"description": prompt.Description,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": renderedPrompt,
+				},
+			},
+		},
 	})
 }
 
 func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
-	return jsonrpc.NewResponse(msg.ID, &mcp.PongMessage{
-		Type: string(mcp.TypePong),
-	})
+	return jsonrpc.NewResponse(msg.ID, map[string]any{})
 }
 
 // DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
-func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) any {
+func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error)) any {
 	switch msg.Method {
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
@@ -129,9 +200,9 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, rea
 	case "resources/read":
 		return BuildResourcesReadResponse(msg, readResource)
 	case "prompts/list":
-		return BuildPromptsListResponse(msg)
+		return BuildPromptsListResponse(msg, catalog)
 	case "prompts/get":
-		return BuildPromptsGetResponse(msg)
+		return BuildPromptsGetResponse(msg, catalog)
 	case "tools/call":
 		return BuildToolCallResponse(msg, toolManager, readResource)
 	case "ping":
@@ -149,6 +220,29 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, rea
 		}
 		return nil
 	}
+}
+
+func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra map[string]any) *jsonrpc.Response {
+	data := map[string]any{
+		"kind": kind,
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	return jsonrpc.NewErrorResponse(id, int(code), message, data)
+}
+
+func renderPromptTemplate(template string, arguments map[string]any) string {
+	if len(arguments) == 0 {
+		return template
+	}
+
+	rendered := template
+	for key, value := range arguments {
+		placeholder := "{{" + key + "}}"
+		rendered = strings.ReplaceAll(rendered, placeholder, fmt.Sprint(value))
+	}
+	return rendered
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
@@ -220,12 +314,15 @@ func ToolContentFromResult(result any) []map[string]any {
 	return []map[string]any{{"type": "text", "text": string(resultJSON)}}
 }
 
-func ServerCapabilities() map[string]any {
-	return map[string]any{
+func ServerCapabilities(promptCatalogEnabled bool) map[string]any {
+	capabilities := map[string]any{
 		"tools":     map[string]any{},
 		"resources": map[string]any{},
-		"prompts":   map[string]any{},
 	}
+	if promptCatalogEnabled {
+		capabilities["prompts"] = map[string]any{}
+	}
+	return capabilities
 }
 
 func ParseCursor(paramsRaw json.RawMessage, total int) (int, error) {
@@ -268,6 +365,11 @@ func defaultResources() []map[string]any {
 		{
 			"uri":      "godot://script/current",
 			"name":     "Current Script",
+			"mimeType": "application/json",
+		},
+		{
+			"uri":      "godot://policy/godot-checks",
+			"name":     "Godot Policy Checks",
 			"mimeType": "application/json",
 		},
 	}
