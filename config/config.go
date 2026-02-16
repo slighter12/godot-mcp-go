@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
 )
@@ -104,6 +106,8 @@ func LoadConfig(path string) (*Config, error) {
 	if portStr := os.Getenv("MCP_PORT"); portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.Server.Port = port
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PORT value %q: %v", portStr, err)
 		}
 	}
 
@@ -169,9 +173,11 @@ func (c *Config) Validate() error {
 		"warn":  true,
 		"error": true,
 	}
-	if !validLogLevels[c.Logging.Level] {
+	logLevel := strings.ToLower(strings.TrimSpace(c.Logging.Level))
+	if !validLogLevels[logLevel] {
 		return errors.New("invalid log level")
 	}
+	c.Logging.Level = logLevel
 
 	validLogFormats := map[string]bool{
 		"json": true,

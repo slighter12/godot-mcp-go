@@ -1,7 +1,6 @@
 package stdio
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +46,7 @@ func (s *StdioServer) Start() error {
 			continue
 		}
 
-		requests, prebuiltResponses, acceptedOneWay, parseErr := parseJSONRPCMessages(raw)
+		requests, prebuiltResponses, acceptedOneWay, parseErr := shared.ParseJSONRPCFrame(raw)
 		if parseErr != nil {
 			logger.Error("Error parsing stdio message", "error", parseErr)
 			if encodeErr := encoder.Encode(jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil)); encodeErr != nil {
@@ -199,111 +198,4 @@ func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
 		return params.ProtocolVersion
 	}
 	return preferred
-}
-
-func parseJSONRPCMessages(raw json.RawMessage) ([]jsonrpc.Request, []any, bool, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return nil, nil, false, fmt.Errorf("empty message")
-	}
-
-	// stdio transport processes one JSON-RPC message per frame.
-	if trimmed[0] == '[' {
-		return nil, []any{jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)}, false, nil
-	}
-	rawMessages := []json.RawMessage{json.RawMessage(trimmed)}
-
-	requests := make([]jsonrpc.Request, 0, len(rawMessages))
-	errors := make([]any, 0)
-	acceptedOneWay := false
-	for _, rawMsg := range rawMessages {
-		var envelope map[string]json.RawMessage
-		if err := json.Unmarshal(rawMsg, &envelope); err != nil {
-			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		requestID, hasID, validID := parseIDFromEnvelope(envelope)
-		if !validID {
-			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		var msg jsonrpc.Request
-		if err := json.Unmarshal(rawMsg, &msg); err != nil {
-			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		if msg.Method == "" {
-			_, hasResult := envelope["result"]
-			_, hasErr := envelope["error"]
-			if hasResult || hasErr {
-				if msg.JSONRPC != jsonrpc.Version || !hasID || (hasResult && hasErr) {
-					errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-				} else {
-					acceptedOneWay = true
-				}
-				continue
-			}
-			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		if msg.JSONRPC != jsonrpc.Version {
-			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		if rawParams, ok := envelope["params"]; ok && !isValidParamsValue(rawParams) {
-			errors = append(errors, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		if msg.Method == "initialize" && msg.ID == nil {
-			errors = append(errors, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-			continue
-		}
-
-		requests = append(requests, msg)
-	}
-
-	return requests, errors, acceptedOneWay, nil
-}
-
-func parseIDFromEnvelope(envelope map[string]json.RawMessage) (any, bool, bool) {
-	rawID, exists := envelope["id"]
-	if !exists {
-		return nil, false, true
-	}
-	trimmed := bytes.TrimSpace(rawID)
-	if len(trimmed) == 0 {
-		return nil, true, false
-	}
-
-	var id any
-	if err := json.Unmarshal(trimmed, &id); err != nil {
-		return nil, true, false
-	}
-	if !isValidJSONRPCID(id) {
-		return nil, true, false
-	}
-	return id, true, true
-}
-
-func isValidJSONRPCID(id any) bool {
-	switch id.(type) {
-	case nil, string, float64, int, int64, int32, uint, uint64, uint32:
-		return true
-	default:
-		return false
-	}
-}
-
-func isValidParamsValue(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return false
-	}
-	return trimmed[0] == '{' || trimmed[0] == '['
 }

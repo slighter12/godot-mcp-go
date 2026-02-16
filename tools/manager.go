@@ -198,7 +198,7 @@ func (t *LegacyTool) Execute(args json.RawMessage) ([]byte, error) {
 
 // ListScenesTool implements the listScenes tool
 func ListScenesTool(args map[string]any) (any, error) {
-	projectRoot := resolveProjectRootFromEnvOrCWD()
+	projectRoot := types.ResolveProjectRootFromEnvOrCWD()
 	var scenes []string
 	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -213,38 +213,6 @@ func ListScenesTool(args map[string]any) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"scenes": scenes}, nil
-}
-
-func resolveProjectRootFromEnvOrCWD() string {
-	envRoot := strings.TrimSpace(os.Getenv("GODOT_PROJECT_ROOT"))
-	if envRoot != "" {
-		if stat, err := os.Stat(envRoot); err == nil && stat.IsDir() {
-			return envRoot
-		}
-	}
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return "."
-	}
-	return findProjectRootFromDir(wd)
-}
-
-func findProjectRootFromDir(startDir string) string {
-	dir := startDir
-	for {
-		projectFile := filepath.Join(dir, "project.godot")
-		if stat, err := os.Stat(projectFile); err == nil && !stat.IsDir() {
-			return dir
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	return startDir
 }
 
 // getToolDescription returns the description for a given tool

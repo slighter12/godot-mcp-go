@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -270,4 +271,113 @@ func defaultResources() []map[string]any {
 			"mimeType": "application/json",
 		},
 	}
+}
+
+// ParseJSONRPCFrame validates and parses one JSON-RPC message frame.
+// Both stdio and streamable HTTP currently require a single message per frame.
+func ParseJSONRPCFrame(frame []byte) ([]jsonrpc.Request, []any, bool, error) {
+	trimmed := bytes.TrimSpace(frame)
+	if len(trimmed) == 0 {
+		return nil, nil, false, fmt.Errorf("empty message")
+	}
+
+	if trimmed[0] == '[' {
+		return nil, []any{jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)}, false, nil
+	}
+
+	rawMessages := []json.RawMessage{json.RawMessage(trimmed)}
+	requests := make([]jsonrpc.Request, 0, len(rawMessages))
+	prebuiltResponses := make([]any, 0)
+	acceptedOneWay := false
+
+	for _, rawMsg := range rawMessages {
+		var envelope map[string]json.RawMessage
+		if err := json.Unmarshal(rawMsg, &envelope); err != nil {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		requestID, hasID, validID := parseIDFromEnvelope(envelope)
+		if !validID {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		var msg jsonrpc.Request
+		if err := json.Unmarshal(rawMsg, &msg); err != nil {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if msg.Method == "" {
+			_, hasResult := envelope["result"]
+			_, hasErr := envelope["error"]
+			if hasResult || hasErr {
+				if msg.JSONRPC != jsonrpc.Version || !hasID || (hasResult && hasErr) {
+					prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+				} else {
+					acceptedOneWay = true
+				}
+				continue
+			}
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if msg.JSONRPC != jsonrpc.Version {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if rawParams, ok := envelope["params"]; ok && !isValidParamsValue(rawParams) {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		if msg.Method == "initialize" && msg.ID == nil {
+			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+			continue
+		}
+
+		requests = append(requests, msg)
+	}
+
+	return requests, prebuiltResponses, acceptedOneWay, nil
+}
+
+func parseIDFromEnvelope(envelope map[string]json.RawMessage) (any, bool, bool) {
+	rawID, exists := envelope["id"]
+	if !exists {
+		return nil, false, true
+	}
+	trimmed := bytes.TrimSpace(rawID)
+	if len(trimmed) == 0 {
+		return nil, true, false
+	}
+
+	var id any
+	if err := json.Unmarshal(trimmed, &id); err != nil {
+		return nil, true, false
+	}
+	if !isValidJSONRPCID(id) {
+		return nil, true, false
+	}
+	return id, true, true
+}
+
+func isValidJSONRPCID(id any) bool {
+	switch id.(type) {
+	case nil, string, float64, int, int64, int32, uint, uint64, uint32:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidParamsValue(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	return trimmed[0] == '{' || trimmed[0] == '['
 }
