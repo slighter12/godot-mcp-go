@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -113,6 +114,75 @@ func TestBuildPromptsGetResponse_RenderTemplate(t *testing.T) {
 	}
 	if content["text"] != "Review res://Main.tscn" {
 		t.Fatalf("expected rendered prompt text, got %v", content["text"])
+	}
+}
+
+func TestBuildPromptsGetResponse_NoRecursivePlaceholderExpansion(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "chain-render",
+		Description: "desc",
+		Template:    "A={{a}};B={{b}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name": "chain-render",
+		"arguments": map[string]any{
+			"a": "{{b}}",
+			"b": "SAFE",
+		},
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	messages, ok := result["messages"].([]map[string]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message, got %T %v", result["messages"], result["messages"])
+	}
+	content, ok := messages[0]["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected message content map, got %T", messages[0]["content"])
+	}
+	if content["text"] != "A={{b}};B=SAFE" {
+		t.Fatalf("expected one-pass rendering without recursive expansion, got %v", content["text"])
+	}
+}
+
+func TestBuildPromptsGetResponse_RenderNonStringArgumentsAsJSON(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "meta",
+		Description: "desc",
+		Template:    "Meta={{meta}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name": "meta",
+		"arguments": map[string]any{
+			"meta": map[string]any{"path": "res://Main.tscn", "line": float64(12)},
+		},
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	messages, ok := result["messages"].([]map[string]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message, got %T %v", result["messages"], result["messages"])
+	}
+	content, ok := messages[0]["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected message content map, got %T", messages[0]["content"])
+	}
+	text, ok := content["text"].(string)
+	if !ok {
+		t.Fatalf("expected rendered content text to be string, got %T", content["text"])
+	}
+	if !strings.Contains(text, "\"path\":\"res://Main.tscn\"") || !strings.Contains(text, "\"line\":12") {
+		t.Fatalf("expected JSON-rendered map argument, got %v", text)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 )
 
 const pageSize = 50
+
+var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
 func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Response {
 	sortedTools := append([]mcp.Tool(nil), tools...)
@@ -233,16 +236,44 @@ func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra m
 }
 
 func renderPromptTemplate(template string, arguments map[string]any) string {
-	if len(arguments) == 0 {
+	if template == "" || len(arguments) == 0 {
 		return template
 	}
 
-	rendered := template
+	normalizedArgs := make(map[string]string, len(arguments))
 	for key, value := range arguments {
-		placeholder := "{{" + key + "}}"
-		rendered = strings.ReplaceAll(rendered, placeholder, fmt.Sprint(value))
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(value)
 	}
-	return rendered
+	if len(normalizedArgs) == 0 {
+		return template
+	}
+
+	return promptPlaceholderPattern.ReplaceAllStringFunc(template, func(match string) string {
+		parts := promptPlaceholderPattern.FindStringSubmatch(match)
+		if len(parts) != 2 {
+			return match
+		}
+		if value, ok := normalizedArgs[parts[1]]; ok {
+			return value
+		}
+		return match
+	})
+}
+
+func normalizePromptArgumentValue(value any) string {
+	if text, ok := value.(string); ok {
+		return strings.ReplaceAll(text, "\x00", "")
+	}
+
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return strings.ReplaceAll(fmt.Sprint(value), "\x00", "")
+	}
+	return strings.ReplaceAll(string(raw), "\x00", "")
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
