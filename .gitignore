@@ -7,6 +7,8 @@
 *.dll
 *.so
 *.dylib
+# go build output
+godot-mcp-go
 
 # Test binary, built with `go test -c`
 *.test
@@ -23,3 +25,6 @@ go.work.sum
 
 # env file
 .env
+
+# logs
+logs/

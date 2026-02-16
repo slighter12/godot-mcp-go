@@ -1,0 +1,69 @@
+package http
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+)
+
+// StreamableHTTPTransport provides optional SSE writer utilities.
+// The current request handling path in router.go is still response-based.
+type StreamableHTTPTransport struct {
+	writer  http.ResponseWriter
+	flusher http.Flusher
+	mu      sync.Mutex
+	closed  bool
+}
+
+// NewStreamableHTTPTransport creates a new Streamable HTTP transport
+func NewStreamableHTTPTransport(w http.ResponseWriter, f http.Flusher) *StreamableHTTPTransport {
+	return &StreamableHTTPTransport{
+		writer:  w,
+		flusher: f,
+	}
+}
+
+// SendSSE sends a message through SSE stream (for server-to-client communication)
+func (t *StreamableHTTPTransport) SendSSE(event string, data any) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.closed {
+		return fmt.Errorf("transport is closed")
+	}
+
+	// Marshal the data to JSON
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("failed to marshal SSE data: %w", err)
+	}
+
+	// Format as SSE event
+	sseMessage := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(dataJSON))
+	_, err = t.writer.Write([]byte(sseMessage))
+	if err != nil {
+		return fmt.Errorf("failed to write SSE message: %w", err)
+	}
+
+	t.flusher.Flush()
+	return nil
+}
+
+// Close closes the Streamable HTTP transport
+func (t *StreamableHTTPTransport) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if !t.closed {
+		t.closed = true
+	}
+	return nil
+}
+
+// IsClosed returns true if the transport is closed
+func (t *StreamableHTTPTransport) IsClosed() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.closed
+}

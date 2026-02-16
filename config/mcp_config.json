@@ -1,0 +1,31 @@
+{
+  "name": "godot-mcp-go",
+  "version": "0.1.0",
+  "description": "Go-based Model Context Protocol server for Godot",
+  "server": {
+    "host": "localhost",
+    "port": 9080,
+    "debug": false
+  },
+  "transports": [
+    {
+      "type": "stdio",
+      "enabled": true
+    },
+    {
+      "type": "streamable_http",
+      "enabled": true,
+      "url": "http://localhost:9080/mcp",
+      "headers": {
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2025-11-25"
+      }
+    }
+  ],
+  "logging": {
+    "level": "debug",
+    "format": "json",
+    "path": "logs/mcp.log"
+  }
+}
