@@ -2,14 +2,21 @@ package shared
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/slighter12/godot-mcp-go/logger"
+	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
+	"github.com/slighter12/godot-mcp-go/tools"
 )
+
+var initSharedTestLogger sync.Once
 
 func TestBuildPromptsListResponse_NotSupported(t *testing.T) {
 	req := mustRequest(t, "prompts/list", map[string]any{})
@@ -51,6 +58,14 @@ func TestBuildPromptsListResponse_NotAvailable(t *testing.T) {
 		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrServerError), resp.Error.Code)
 	}
 	assertErrorKindFeature(t, resp.Error.Data, "not_available", "prompt_catalog")
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if _, exists := data["details"]; exists {
+		t.Fatal("did not expect raw details in client-facing error data")
+	}
+	count, ok := data["loadErrorCount"].(int)
+	if !ok || count < 1 {
+		t.Fatalf("expected positive loadErrorCount, got %T %v", data["loadErrorCount"], data["loadErrorCount"])
+	}
 }
 
 func TestBuildPromptsListResponse_Pagination(t *testing.T) {
@@ -112,7 +127,7 @@ func TestBuildPromptsGetResponse_RenderTemplate(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected message content map, got %T", messages[0]["content"])
 	}
-	if content["text"] != "Review res://Main.tscn" {
+	if content["text"] != "Review <user_input name=\"scene_path\">\nres://Main.tscn\n</user_input>" {
 		t.Fatalf("expected rendered prompt text, got %v", content["text"])
 	}
 }
@@ -145,7 +160,7 @@ func TestBuildPromptsGetResponse_NoRecursivePlaceholderExpansion(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected message content map, got %T", messages[0]["content"])
 	}
-	if content["text"] != "A={{b}};B=SAFE" {
+	if content["text"] != "A=<user_input name=\"a\">\n{{b}}\n</user_input>;B=<user_input name=\"b\">\nSAFE\n</user_input>" {
 		t.Fatalf("expected one-pass rendering without recursive expansion, got %v", content["text"])
 	}
 }
@@ -181,8 +196,40 @@ func TestBuildPromptsGetResponse_RenderNonStringArgumentsAsJSON(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected rendered content text to be string, got %T", content["text"])
 	}
+	if !strings.Contains(text, "<user_input name=\"meta\">") {
+		t.Fatalf("expected wrapped user input boundary, got %v", text)
+	}
 	if !strings.Contains(text, "\"path\":\"res://Main.tscn\"") || !strings.Contains(text, "\"line\":12") {
 		t.Fatalf("expected JSON-rendered map argument, got %v", text)
+	}
+}
+
+func TestBuildPromptsGetResponse_NotAvailable(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	missing := filepath.Join(t.TempDir(), "missing", "SKILL.md")
+	if err := catalog.LoadFromPaths([]string{missing}); err == nil {
+		t.Fatal("expected loading error")
+	}
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name": "scene-review",
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrServerError) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrServerError), resp.Error.Code)
+	}
+	assertErrorKindFeature(t, resp.Error.Data, "not_available", "prompt_catalog")
+
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if _, exists := data["details"]; exists {
+		t.Fatal("did not expect raw details in client-facing error data")
+	}
+	count, ok := data["loadErrorCount"].(int)
+	if !ok || count < 1 {
+		t.Fatalf("expected positive loadErrorCount, got %T %v", data["loadErrorCount"], data["loadErrorCount"])
 	}
 }
 
@@ -244,6 +291,73 @@ func TestBuildPingResponse_EmptyResultObject(t *testing.T) {
 	}
 }
 
+func TestBuildToolCallResponse_SanitizesExecutionError(t *testing.T) {
+	initSharedTestLogger.Do(func() {
+		_ = logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON)
+	})
+
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&failingTool{
+		name: "failing-tool",
+		err:  errors.New("walk /Users/slighter12/private/game: permission denied"),
+	}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
+		"name":      "failing-tool",
+		"arguments": map[string]any{},
+	}), manager, nil)
+
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected tool result response, got error %+v", resp.Error)
+	}
+
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+
+	contentRaw, ok := result["content"].([]map[string]any)
+	if !ok || len(contentRaw) != 1 {
+		t.Fatalf("expected one content entry, got %T %v", result["content"], result["content"])
+	}
+
+	text, ok := contentRaw[0]["text"].(string)
+	if !ok {
+		t.Fatalf("expected text content string, got %T", contentRaw[0]["text"])
+	}
+	if text != toolExecutionErrorMessage {
+		t.Fatalf("expected %q, got %q", toolExecutionErrorMessage, text)
+	}
+	if strings.Contains(text, "/Users/slighter12/private/game") {
+		t.Fatalf("expected sanitized error message, got %q", text)
+	}
+}
+
+func TestBuildToolCallResponse_ToolNotFoundStillReturnsInvalidParams(t *testing.T) {
+	initSharedTestLogger.Do(func() {
+		_ = logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON)
+	})
+
+	manager := tools.NewManager()
+
+	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
+		"name":      "missing-tool",
+		"arguments": map[string]any{},
+	}), manager, nil)
+
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected JSON-RPC error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+}
+
 func mustRequest(t *testing.T, method string, params map[string]any) jsonrpc.Request {
 	t.Helper()
 	raw, err := json.Marshal(params)
@@ -285,14 +399,37 @@ func mustPromptList(t *testing.T, result map[string]any) []map[string]any {
 
 func assertErrorKindFeature(t *testing.T, data any, expectedKind string, expectedFeature string) {
 	t.Helper()
-	m, ok := data.(map[string]any)
-	if !ok {
-		t.Fatalf("expected error data map, got %T", data)
-	}
+	m := mustErrorDataMap(t, data)
 	if m["kind"] != expectedKind {
 		t.Fatalf("expected kind %q, got %v", expectedKind, m["kind"])
 	}
 	if expectedFeature != "" && m["feature"] != expectedFeature {
 		t.Fatalf("expected feature %q, got %v", expectedFeature, m["feature"])
 	}
+}
+
+func mustErrorDataMap(t *testing.T, data any) map[string]any {
+	t.Helper()
+	m, ok := data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected error data map, got %T", data)
+	}
+	return m
+}
+
+type failingTool struct {
+	name string
+	err  error
+}
+
+func (t *failingTool) Name() string { return t.name }
+
+func (t *failingTool) Description() string { return "failing tool for tests" }
+
+func (t *failingTool) InputSchema() mcp.InputSchema {
+	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}}
+}
+
+func (t *failingTool) Execute(args json.RawMessage) ([]byte, error) {
+	return nil, t.err
 }

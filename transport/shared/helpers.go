@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 const pageSize = 50
 const maxRenderedPromptBytes = 128 * 1024
+const toolExecutionErrorMessage = "Tool execution failed"
 
 var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
@@ -96,14 +98,8 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 		})
 	}
 
-	if catalog.PromptCount() == 0 {
-		loadErrors := catalog.LoadErrors()
-		if len(loadErrors) > 0 {
-			return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", map[string]any{
-				"feature": "prompt_catalog",
-				"details": strings.Join(loadErrors, "; "),
-			})
-		}
+	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
+		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
 	}
 
 	prompts := catalog.ListPrompts()
@@ -137,14 +133,8 @@ func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registr
 		})
 	}
 
-	if catalog.PromptCount() == 0 {
-		loadErrors := catalog.LoadErrors()
-		if len(loadErrors) > 0 {
-			return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", map[string]any{
-				"feature": "prompt_catalog",
-				"details": strings.Join(loadErrors, "; "),
-			})
-		}
+	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
+		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
 	}
 
 	var params struct {
@@ -237,10 +227,24 @@ func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra m
 	data := map[string]any{
 		"kind": kind,
 	}
-	for key, value := range extra {
-		data[key] = value
-	}
+	maps.Copy(data, extra)
 	return jsonrpc.NewErrorResponse(id, int(code), message, data)
+}
+
+func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]any, bool) {
+	if catalog == nil || catalog.PromptCount() > 0 {
+		return nil, false
+	}
+
+	loadErrors := catalog.LoadErrors()
+	if len(loadErrors) == 0 {
+		return nil, false
+	}
+
+	return map[string]any{
+		"feature":        "prompt_catalog",
+		"loadErrorCount": len(loadErrors),
+	}, true
 }
 
 func renderPromptTemplate(template string, arguments map[string]any) (string, error) {
@@ -283,7 +287,8 @@ func renderPromptTemplate(template string, arguments map[string]any) (string, er
 
 		key := template[keyStart:keyEnd]
 		if value, ok := normalizedArgs[key]; ok {
-			if err := appendBounded(&b, value); err != nil {
+			seg := wrapPromptArgumentValue(key, value)
+			if err := appendBounded(&b, seg); err != nil {
 				return "", err
 			}
 		} else {
@@ -311,6 +316,10 @@ func normalizePromptArgumentValue(value any) string {
 		return strings.ReplaceAll(fmt.Sprint(value), "\x00", "")
 	}
 	return strings.ReplaceAll(string(raw), "\x00", "")
+}
+
+func wrapPromptArgumentValue(key, value string) string {
+	return fmt.Sprintf("<user_input name=%q>\n%s\n</user_input>", key, value)
 }
 
 func appendBounded(builder *strings.Builder, segment string) error {
@@ -360,12 +369,7 @@ func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, read
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(msg.ID, map[string]any{
-			"type":    string(mcp.TypeResult),
-			"tool":    toolName,
-			"content": []map[string]any{{"type": "text", "text": err.Error()}},
-			"isError": true,
-		})
+		return jsonrpc.NewResponse(msg.ID, buildToolExecutionErrorResult(toolName))
 	}
 
 	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
@@ -379,6 +383,15 @@ func BuildToolSuccessResult(toolName string, result any) map[string]any {
 		"content":           ToolContentFromResult(result),
 		"structuredContent": result,
 		"isError":           false,
+	}
+}
+
+func buildToolExecutionErrorResult(toolName string) map[string]any {
+	return map[string]any{
+		"type":    string(mcp.TypeResult),
+		"tool":    toolName,
+		"content": []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
+		"isError": true,
 	}
 }
 

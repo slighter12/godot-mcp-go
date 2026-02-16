@@ -37,6 +37,32 @@ Review {{scene_path}} with policy rules.
 	}
 }
 
+func TestPromptFromSkillFile_CRLFFrontmatter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	content := "---\r\nname: scene-review\r\ndescription: \"Review scenes\"\r\n---\r\n\r\nReview {{scene_path}}\r\nWith checks.\r\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	prompt, err := PromptFromSkillFile(path)
+	if err != nil {
+		t.Fatalf("PromptFromSkillFile: %v", err)
+	}
+	if prompt.Name != "scene-review" {
+		t.Fatalf("expected name scene-review, got %q", prompt.Name)
+	}
+	if prompt.Description != "Review scenes" {
+		t.Fatalf("expected description Review scenes, got %q", prompt.Description)
+	}
+	if strings.Contains(prompt.Template, "\r") {
+		t.Fatalf("expected normalized template line endings, got %q", prompt.Template)
+	}
+	if prompt.Template != "Review {{scene_path}}\nWith checks." {
+		t.Fatalf("unexpected template content: %q", prompt.Template)
+	}
+}
+
 func TestLoadFromPaths_Recursive(t *testing.T) {
 	root := t.TempDir()
 	primary := filepath.Join(root, "A", "SKILL.md")

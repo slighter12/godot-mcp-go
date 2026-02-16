@@ -161,11 +161,11 @@ func (r *Registry) LoadFromPaths(paths []string) error {
 		}
 		key := promptKey(prompt.Name)
 		if key == "" {
-			r.recordError(fmt.Errorf("invalid prompt name from %s", filePath))
+			r.recordError(fmt.Errorf("invalid prompt name"))
 			continue
 		}
-		if existing, ok := r.lookupPromptByKey(key); ok {
-			r.recordError(fmt.Errorf("duplicate prompt name %q in %s (already defined in %s)", prompt.Name, prompt.SourcePath, existing.SourcePath))
+		if _, ok := r.lookupPromptByKey(key); ok {
+			r.recordError(fmt.Errorf("duplicate prompt name %q", prompt.Name))
 			continue
 		}
 		r.RegisterPrompt(prompt)
@@ -272,11 +272,12 @@ func PromptFromSkillFile(path string) (Prompt, error) {
 
 func parseFrontmatterAndBody(raw string) (map[string]string, string) {
 	trimmed := strings.TrimPrefix(raw, "\ufeff")
-	if !strings.HasPrefix(trimmed, "---") {
+	normalized := normalizeLineEndings(trimmed)
+	if !strings.HasPrefix(normalized, "---") {
 		return map[string]string{}, raw
 	}
 
-	lines := strings.Split(trimmed, "\n")
+	lines := strings.Split(normalized, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
 		return map[string]string{}, raw
 	}
@@ -310,6 +311,11 @@ func parseFrontmatterAndBody(raw string) (map[string]string, string) {
 
 	body := strings.Join(lines[end+1:], "\n")
 	return frontmatter, body
+}
+
+func normalizeLineEndings(input string) string {
+	input = strings.ReplaceAll(input, "\r\n", "\n")
+	return strings.ReplaceAll(input, "\r", "\n")
 }
 
 func firstNonEmpty(values ...string) string {

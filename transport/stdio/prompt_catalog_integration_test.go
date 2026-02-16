@@ -88,7 +88,7 @@ func TestStdioPromptsFlow(t *testing.T) {
 		t.Fatalf("expected one message, got %T %v", getResult["messages"], getResult["messages"])
 	}
 	content := mustMap(t, messages[0]["content"])
-	if content["text"] != "Review res://Main.tscn" {
+	if content["text"] != "Review <user_input name=\"scene_path\">\nres://Main.tscn\n</user_input>" {
 		t.Fatalf("expected rendered prompt, got %v", content["text"])
 	}
 }

@@ -126,7 +126,7 @@ func TestStreamableHTTPPromptsFlow(t *testing.T) {
 	}
 	message := mustMap(t, messagesRaw[0])
 	content := mustMap(t, message["content"])
-	if content["text"] != "Review res://Main.tscn" {
+	if content["text"] != "Review <user_input name=\"scene_path\">\nres://Main.tscn\n</user_input>" {
 		t.Fatalf("expected rendered prompt text, got %v", content["text"])
 	}
 }
