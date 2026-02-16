@@ -235,14 +235,6 @@ func (c *Config) Validate() error {
 		return errors.New("log path cannot be empty")
 	}
 
-	if c.PromptCatalog.Enabled {
-		for _, catalogPath := range c.PromptCatalog.Paths {
-			if strings.TrimSpace(catalogPath) == "" {
-				return errors.New("prompt catalog path cannot be empty")
-			}
-		}
-	}
-
 	// Validate transports
 	if len(c.Transports) == 0 {
 		return errors.New("at least one transport must be enabled")

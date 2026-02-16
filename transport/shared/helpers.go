@@ -16,6 +16,7 @@ import (
 )
 
 const pageSize = 50
+const maxRenderedPromptBytes = 128 * 1024
 
 var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
@@ -173,7 +174,14 @@ func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registr
 		})
 	}
 
-	renderedPrompt := renderPromptTemplate(prompt.Template, params.Arguments)
+	renderedPrompt, renderErr := renderPromptTemplate(prompt.Template, params.Arguments)
+	if renderErr != nil {
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt arguments produced oversized output", "invalid_params", map[string]any{
+			"field":    "arguments",
+			"problem":  "rendered_prompt_too_large",
+			"maxBytes": maxRenderedPromptBytes,
+		})
+	}
 	return jsonrpc.NewResponse(msg.ID, map[string]any{
 		"name":        prompt.Name,
 		"description": prompt.Description,
@@ -235,9 +243,9 @@ func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra m
 	return jsonrpc.NewErrorResponse(id, int(code), message, data)
 }
 
-func renderPromptTemplate(template string, arguments map[string]any) string {
+func renderPromptTemplate(template string, arguments map[string]any) (string, error) {
 	if template == "" || len(arguments) == 0 {
-		return template
+		return template, nil
 	}
 
 	normalizedArgs := make(map[string]string, len(arguments))
@@ -249,19 +257,48 @@ func renderPromptTemplate(template string, arguments map[string]any) string {
 		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(value)
 	}
 	if len(normalizedArgs) == 0 {
-		return template
+		return template, nil
 	}
 
-	return promptPlaceholderPattern.ReplaceAllStringFunc(template, func(match string) string {
-		parts := promptPlaceholderPattern.FindStringSubmatch(match)
-		if len(parts) != 2 {
-			return match
+	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
+	if len(matches) == 0 {
+		return template, nil
+	}
+
+	var b strings.Builder
+	b.Grow(len(template))
+	last := 0
+
+	for _, match := range matches {
+		if len(match) < 4 {
+			continue
 		}
-		if value, ok := normalizedArgs[parts[1]]; ok {
-			return value
+		start, end := match[0], match[1]
+		keyStart, keyEnd := match[2], match[3]
+
+		segment := template[last:start]
+		if err := appendBounded(&b, segment); err != nil {
+			return "", err
 		}
-		return match
-	})
+
+		key := template[keyStart:keyEnd]
+		if value, ok := normalizedArgs[key]; ok {
+			if err := appendBounded(&b, value); err != nil {
+				return "", err
+			}
+		} else {
+			if err := appendBounded(&b, template[start:end]); err != nil {
+				return "", err
+			}
+		}
+
+		last = end
+	}
+
+	if err := appendBounded(&b, template[last:]); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 func normalizePromptArgumentValue(value any) string {
@@ -274,6 +311,14 @@ func normalizePromptArgumentValue(value any) string {
 		return strings.ReplaceAll(fmt.Sprint(value), "\x00", "")
 	}
 	return strings.ReplaceAll(string(raw), "\x00", "")
+}
+
+func appendBounded(builder *strings.Builder, segment string) error {
+	if builder.Len()+len(segment) > maxRenderedPromptBytes {
+		return fmt.Errorf("rendered prompt exceeds %d bytes", maxRenderedPromptBytes)
+	}
+	builder.WriteString(segment)
+	return nil
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {

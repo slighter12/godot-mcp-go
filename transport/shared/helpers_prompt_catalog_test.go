@@ -186,6 +186,39 @@ func TestBuildPromptsGetResponse_RenderNonStringArgumentsAsJSON(t *testing.T) {
 	}
 }
 
+func TestBuildPromptsGetResponse_RenderedPromptTooLarge(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "oversized",
+		Description: "desc",
+		Template:    "Payload={{payload}}",
+	})
+
+	oversized := strings.Repeat("a", maxRenderedPromptBytes)
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name":      "oversized",
+		"arguments": map[string]any{"payload": oversized},
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+
+	m, ok := resp.Error.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("expected error data map, got %T", resp.Error.Data)
+	}
+	if m["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", m["kind"])
+	}
+	if m["problem"] != "rendered_prompt_too_large" {
+		t.Fatalf("expected rendered_prompt_too_large, got %v", m["problem"])
+	}
+}
+
 func TestBuildPromptsGetResponse_UnknownPrompt(t *testing.T) {
 	catalog := promptcatalog.NewRegistry(true)
 	req := mustRequest(t, "prompts/get", map[string]any{"name": "missing"})
