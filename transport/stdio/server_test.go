@@ -109,11 +109,31 @@ func TestMessageValidation(t *testing.T) {
 		Method: "invalid_type",
 	}
 	response, err := server.handleMessage(invalidTypeMsg)
-	if err == nil {
-		t.Error("handleMessage should return error for invalid message type")
+	if err != nil {
+		t.Errorf("handleMessage returned unexpected error for invalid notification method: %v", err)
 	}
 	if response != nil {
-		t.Error("handleMessage should return nil response for invalid message type")
+		t.Error("handleMessage should return nil response for unknown notification method")
+	}
+
+	// Unknown request method with id should return method-not-found error response.
+	unknownRequestMsg := jsonrpc.Request{
+		ID:     "req-1",
+		Method: "invalid_type",
+	}
+	response, err = server.handleMessage(unknownRequestMsg)
+	if err != nil {
+		t.Errorf("handleMessage returned unexpected error for unknown request method: %v", err)
+	}
+	rpcUnknownResp, ok := response.(*jsonrpc.Response)
+	if !ok {
+		t.Fatal("unknown request method should return jsonrpc.Response")
+	}
+	if rpcUnknownResp.Error == nil {
+		t.Fatal("unknown request method should return JSON-RPC error response")
+	}
+	if rpcUnknownResp.Error.Code != int(jsonrpc.ErrMethodNotFound) {
+		t.Errorf("expected method-not-found error code, got %d", rpcUnknownResp.Error.Code)
 	}
 
 	// Test invalid payload format

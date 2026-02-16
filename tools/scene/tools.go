@@ -20,8 +20,9 @@ func (t *ListProjectScenesTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Project Scenes"}
 }
 func (t *ListProjectScenesTool) Execute(args json.RawMessage) ([]byte, error) {
+	projectRoot := resolveProjectRoot()
 	var scenes []string
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -35,6 +36,38 @@ func (t *ListProjectScenesTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	result := map[string]any{"scenes": scenes}
 	return json.Marshal(result)
+}
+
+func resolveProjectRoot() string {
+	envRoot := strings.TrimSpace(os.Getenv("GODOT_PROJECT_ROOT"))
+	if envRoot != "" {
+		if stat, err := os.Stat(envRoot); err == nil && stat.IsDir() {
+			return envRoot
+		}
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return findProjectRoot(wd)
+}
+
+func findProjectRoot(startDir string) string {
+	dir := startDir
+	for {
+		projectFile := filepath.Join(dir, "project.godot")
+		if stat, err := os.Stat(projectFile); err == nil && !stat.IsDir() {
+			return dir
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return startDir
 }
 
 type ReadSceneTool struct{}

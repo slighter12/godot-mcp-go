@@ -133,41 +133,9 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 		}
 		logger.Debug("Handling notifications/initialized notification")
 		return nil, nil
-	case "tools/list":
-		logger.Debug("Handling tools/list message")
-		return s.handleToolsList(msg), nil
-	case "resources/list":
-		logger.Debug("Handling resources/list message")
-		return s.handleResourcesList(msg), nil
-	case "resources/read":
-		logger.Debug("Handling resources/read message")
-		return s.handleResourcesRead(msg), nil
-	case "prompts/list":
-		logger.Debug("Handling prompts/list message")
-		return s.handlePromptsList(msg), nil
-	case "prompts/get":
-		logger.Debug("Handling prompts/get message")
-		return s.handlePromptsGet(msg), nil
-	case "tools/call":
-		logger.Debug("Handling tool call message")
-		return s.handleToolCall(msg)
-	case "ping":
-		logger.Debug("Handling ping message")
-		return s.handlePing(msg), nil
-	case "tools/progress":
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
-		}
-		logger.Debug("Handling tool progress message")
-		return nil, nil // Progress messages are one-way
 	default:
-		logger.Debug("Received unknown message type", "method", msg.Method)
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
-				"method": msg.Method,
-			}), nil
-		}
-		return nil, fmt.Errorf("unknown message type: %s", msg.Method)
+		logger.Debug("Handling standard/unknown stdio message", "method", msg.Method)
+		return shared.DispatchStandardMethod(msg, s.toolManager, readGodotResource), nil
 	}
 }
 
@@ -195,68 +163,6 @@ func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error)
 	}
 
 	return jsonrpc.NewResponse(msg.ID, response), nil
-}
-
-func (s *StdioServer) handleToolsList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildToolsListResponse(msg, s.toolManager.GetTools())
-}
-
-func (s *StdioServer) handleToolCall(msg jsonrpc.Request) (any, error) {
-	var toolCall struct {
-		Name      string         `json:"name"`
-		Tool      string         `json:"tool"`
-		Arguments map[string]any `json:"arguments"`
-	}
-	if err := json.Unmarshal(msg.Params, &toolCall); err != nil {
-		logger.Error("Failed to unmarshal stdio tool call", "error", err)
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil), nil
-	}
-
-	toolName := toolCall.Name
-	if toolName == "" {
-		toolName = toolCall.Tool
-	}
-	if toolName == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil), nil
-	}
-
-	logger.Debug("Calling tool via stdio", "tool", toolName, "arguments", toolCall.Arguments)
-	result, err := s.toolManager.CallTool(toolName, toolCall.Arguments)
-	if err != nil {
-		logger.Error("Stdio tool call failed", "tool", toolName, "error", err)
-		if tools.IsToolNotFound(err) {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil), nil
-		}
-		return jsonrpc.NewResponse(msg.ID, map[string]any{
-			"type":    string(mcp.TypeResult),
-			"tool":    toolName,
-			"content": []map[string]any{{"type": "text", "text": err.Error()}},
-			"isError": true,
-		}), nil
-	}
-
-	logger.Debug("Stdio tool call successful", "tool", toolName, "result", result)
-	return jsonrpc.NewResponse(msg.ID, shared.BuildToolSuccessResult(toolName, result)), nil
-}
-
-func (s *StdioServer) handleResourcesList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildResourcesListResponse(msg)
-}
-
-func (s *StdioServer) handleResourcesRead(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildResourcesReadResponse(msg, readGodotResource)
-}
-
-func (s *StdioServer) handlePromptsList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPromptsListResponse(msg)
-}
-
-func (s *StdioServer) handlePromptsGet(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPromptsGetResponse(msg)
-}
-
-func (s *StdioServer) handlePing(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPingResponse(msg)
 }
 
 func readGodotResource(path string) (any, error) {

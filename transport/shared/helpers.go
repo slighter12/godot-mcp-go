@@ -9,6 +9,7 @@ import (
 
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/tools"
 )
 
 const pageSize = 50
@@ -115,6 +116,88 @@ func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
 	return jsonrpc.NewResponse(msg.ID, &mcp.PongMessage{
 		Type: string(mcp.TypePong),
 	})
+}
+
+// DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
+func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) any {
+	switch msg.Method {
+	case "tools/list":
+		return BuildToolsListResponse(msg, toolManager.GetTools())
+	case "resources/list":
+		return BuildResourcesListResponse(msg)
+	case "resources/read":
+		return BuildResourcesReadResponse(msg, readResource)
+	case "prompts/list":
+		return BuildPromptsListResponse(msg)
+	case "prompts/get":
+		return BuildPromptsGetResponse(msg)
+	case "tools/call":
+		return BuildToolCallResponse(msg, toolManager, readResource)
+	case "ping":
+		return BuildPingResponse(msg)
+	case "tools/progress":
+		if msg.ID != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)
+		}
+		return nil
+	default:
+		if msg.ID != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
+				"method": msg.Method,
+			})
+		}
+		return nil
+	}
+}
+
+func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
+	var toolCall struct {
+		Name      string         `json:"name"`
+		Tool      string         `json:"tool"`
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(msg.Params, &toolCall); err != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
+	}
+
+	toolName := strings.TrimSpace(toolCall.Name)
+	if toolName == "" {
+		toolName = strings.TrimSpace(toolCall.Tool)
+	}
+	if toolName == "" {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
+	}
+
+	arguments := toolCall.Arguments
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+
+	if strings.HasPrefix(toolName, "godot://") {
+		if readResource == nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource handler is not configured", nil)
+		}
+		result, err := readResource(toolName)
+		if err != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
+		}
+		return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
+	}
+
+	result, err := toolManager.CallTool(toolName, arguments)
+	if err != nil {
+		if tools.IsToolNotFound(err) {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
+		}
+		return jsonrpc.NewResponse(msg.ID, map[string]any{
+			"type":    string(mcp.TypeResult),
+			"tool":    toolName,
+			"content": []map[string]any{{"type": "text", "text": err.Error()}},
+			"isError": true,
+		})
+	}
+
+	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
 }
 
 func BuildToolSuccessResult(toolName string, result any) map[string]any {

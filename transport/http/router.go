@@ -15,7 +15,6 @@ import (
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
-	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
@@ -324,39 +323,9 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 			s.sessionManager.MarkInitialized(sessionID)
 		}
 		return nil, nil
-	case "tools/list":
-		logger.Debug("Handling tools/list message")
-		return s.handleToolsList(msg), nil
-	case "resources/list":
-		logger.Debug("Handling resources/list message")
-		return s.handleResourcesList(msg), nil
-	case "resources/read":
-		logger.Debug("Handling resources/read message")
-		return s.handleResourcesRead(msg), nil
-	case "prompts/list":
-		logger.Debug("Handling prompts/list message")
-		return s.handlePromptsList(msg), nil
-	case "prompts/get":
-		logger.Debug("Handling prompts/get message")
-		return s.handlePromptsGet(msg), nil
-	case "tools/call":
-		logger.Debug("Handling tools/call message")
-		return s.handleToolCall(msg), nil
-	case "ping":
-		logger.Debug("Handling ping message")
-		return s.handlePing(msg), nil
-	case "tools/progress":
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
-		}
-		logger.Debug("Handling tools/progress notification")
-		return nil, nil
 	default:
-		logger.Debug("Received unknown message type", "method", msg.Method)
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{"method": msg.Method}), nil
-		}
-		return nil, nil
+		logger.Debug("Handling standard/unknown message", "method", msg.Method)
+		return shared.DispatchStandardMethod(msg, s.toolManager, s.handleGodotResource), nil
 	}
 }
 
@@ -393,93 +362,6 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 	}
 
 	return jsonrpc.NewResponse(msg.ID, result), nil
-}
-
-func (s *Server) handleToolsList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildToolsListResponse(msg, s.toolManager.GetTools())
-}
-
-func (s *Server) handleToolCall(msg jsonrpc.Request) *jsonrpc.Response {
-	var toolCall struct {
-		Name      string         `json:"name"`
-		Tool      string         `json:"tool"`
-		Arguments map[string]any `json:"arguments"`
-	}
-	if err := json.Unmarshal(msg.Params, &toolCall); err != nil {
-		logger.Error("Failed to unmarshal tool call", "error", err)
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
-	}
-
-	toolName := strings.TrimSpace(toolCall.Name)
-	if toolName == "" {
-		toolName = strings.TrimSpace(toolCall.Tool)
-	}
-	if toolName == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
-	}
-
-	arguments := toolCall.Arguments
-	if arguments == nil {
-		arguments = map[string]any{}
-	}
-
-	logger.Debug("Calling tool", "tool", toolName, "arguments", arguments)
-	if strings.HasPrefix(toolName, "godot://") {
-		result, err := s.handleGodotResource(toolName)
-		if err != nil {
-			logger.Error("Resource read failed", "resource", toolName, "error", err)
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-		}
-		return jsonrpc.NewResponse(msg.ID, shared.BuildToolSuccessResult(toolName, result))
-	}
-
-	argsJSON, err := json.Marshal(arguments)
-	if err != nil {
-		logger.Error("Failed to marshal tool arguments", "error", err)
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Failed to marshal tool arguments", nil)
-	}
-
-	resultJSON, err := s.toolManager.ExecuteTool(toolName, argsJSON)
-	if err != nil {
-		logger.Error("Tool execution failed", "tool", toolName, "error", err)
-		if tools.IsToolNotFound(err) {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-		}
-		return jsonrpc.NewResponse(msg.ID, map[string]any{
-			"type":    string(mcp.TypeResult),
-			"tool":    toolName,
-			"content": []map[string]any{{"type": "text", "text": err.Error()}},
-			"isError": true,
-		})
-	}
-
-	var result any
-	if err := json.Unmarshal(resultJSON, &result); err != nil {
-		logger.Error("Failed to unmarshal tool result", "error", err)
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInternalError), "Failed to unmarshal tool result", nil)
-	}
-
-	return jsonrpc.NewResponse(msg.ID, shared.BuildToolSuccessResult(toolName, result))
-}
-
-func (s *Server) handleResourcesList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildResourcesListResponse(msg)
-}
-
-func (s *Server) handleResourcesRead(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildResourcesReadResponse(msg, s.handleGodotResource)
-}
-
-func (s *Server) handlePromptsList(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPromptsListResponse(msg)
-}
-
-func (s *Server) handlePromptsGet(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPromptsGetResponse(msg)
-}
-
-func (s *Server) handlePing(msg jsonrpc.Request) *jsonrpc.Response {
-	return shared.BuildPingResponse(msg)
 }
 
 func (s *Server) handleGodotResource(path string) (any, error) {
