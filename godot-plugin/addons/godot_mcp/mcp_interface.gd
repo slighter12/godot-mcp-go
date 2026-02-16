@@ -197,7 +197,7 @@ func handle_error(payload: Dictionary):
 func _send_initialized_notification():
     var initialized_notification = {
         "jsonrpc": "2.0",
-        "method": "initialized",
+        "method": "notifications/initialized",
         "params": {
             "clientId": client_id
         }

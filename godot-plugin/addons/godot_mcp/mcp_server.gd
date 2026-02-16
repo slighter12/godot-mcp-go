@@ -154,12 +154,18 @@ func _handle_initialize_response(response_code: int, headers: PackedStringArray,
 
 func _handle_post_response(response_code: int, headers: PackedStringArray, body: PackedByteArray):
     print("MCP Client: Streamable HTTP response received - code: ", response_code)
+    var had_session = session_id != ""
 
     var latest_session_id = _extract_session_id(headers)
     if latest_session_id != "":
         session_id = latest_session_id
 
     if response_code != 200 and response_code != 202:
+        if response_code == 404 and had_session:
+            print("MCP Client: Session not found (404), reinitializing Streamable HTTP session")
+            session_id = ""
+            connect_streamable_http(streamable_http_url)
+            return
         _mark_disconnected()
         emit_signal("error", "Streamable HTTP request failed with status: " + str(response_code))
         return
