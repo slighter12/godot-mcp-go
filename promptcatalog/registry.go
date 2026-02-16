@@ -138,7 +138,11 @@ func (r *Registry) LoadFromPaths(paths []string) error {
 	files := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, rawPath := range paths {
-		for _, filePath := range discoverSkillFiles(rawPath) {
+		discovered, discoverErr := discoverSkillFiles(rawPath)
+		if discoverErr != nil {
+			r.recordError(discoverErr)
+		}
+		for _, filePath := range discovered {
 			if _, ok := seen[filePath]; ok {
 				continue
 			}
@@ -184,16 +188,16 @@ func (r *Registry) reset() {
 	r.loadErrors = nil
 }
 
-func discoverSkillFiles(rawPath string) []string {
+func discoverSkillFiles(rawPath string) ([]string, error) {
 	path := strings.TrimSpace(rawPath)
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 
 	path = expandUser(path)
 	info, err := os.Stat(path)
 	if err != nil {
-		return []string{filepath.Clean(path)}
+		return nil, fmt.Errorf("stat skill path %s: %w", filepath.Clean(path), err)
 	}
 
 	results := make([]string, 0)
@@ -201,12 +205,12 @@ func discoverSkillFiles(rawPath string) []string {
 		if strings.EqualFold(filepath.Base(path), "SKILL.md") {
 			results = append(results, filepath.Clean(path))
 		}
-		return results
+		return results, nil
 	}
 
-	_ = filepath.WalkDir(path, func(current string, d os.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(path, func(current string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return nil
+			return walkErr
 		}
 		if d.IsDir() {
 			return nil
@@ -216,8 +220,10 @@ func discoverSkillFiles(rawPath string) []string {
 		}
 		return nil
 	})
-
-	return results
+	if walkErr != nil {
+		return results, fmt.Errorf("walk skill path %s: %w", filepath.Clean(path), walkErr)
+	}
+	return results, nil
 }
 
 func expandUser(path string) string {

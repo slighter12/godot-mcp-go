@@ -3,6 +3,8 @@ package promptcatalog
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -175,5 +177,47 @@ func TestLoadFromPaths_ReplacesPreviousState(t *testing.T) {
 	}
 	if got := len(reg.LoadErrors()); got != 0 {
 		t.Fatalf("expected load errors to be reset after successful reload, got %d", got)
+	}
+}
+
+func TestLoadFromPaths_RecordsWalkErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-based walk error test is platform-specific")
+	}
+
+	root := t.TempDir()
+	skillPath := filepath.Join(root, "A_skill", "SKILL.md")
+	blockedDir := filepath.Join(root, "Z_blocked")
+
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(skillPath, []byte("---\nname: alpha\ndescription: alpha\n---\nalpha template\n"), 0644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(blockedDir, "nested"), 0755); err != nil {
+		t.Fatalf("mkdir blocked dir: %v", err)
+	}
+	if err := os.Chmod(blockedDir, 0); err != nil {
+		t.Skipf("chmod not supported in this environment: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(blockedDir, 0755)
+	}()
+
+	reg := NewRegistry(true)
+	err := reg.LoadFromPaths([]string{root})
+	if err == nil {
+		t.Fatal("expected load error from walk failure")
+	}
+	if !strings.Contains(err.Error(), "walk skill path") {
+		t.Fatalf("expected walk error details, got %v", err)
+	}
+	if reg.PromptCount() != 1 {
+		t.Fatalf("expected prompt discovered before walk error, got %d", reg.PromptCount())
+	}
+	if _, ok := reg.GetPrompt("alpha"); !ok {
+		t.Fatal("expected discovered prompt alpha")
 	}
 }
