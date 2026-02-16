@@ -226,7 +226,7 @@ MCP_DEBUG=true go run main.go
 
 ### Project Structure
 
-```
+```text
 godot-mcp-go/
 ├── config/          # Configuration management
 ├── logger/          # Logging system

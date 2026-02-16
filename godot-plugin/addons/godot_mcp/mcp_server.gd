@@ -78,6 +78,9 @@ func _on_streamable_http_request_completed(result: int, response_code: int, head
 
     print("MCP Server: Streamable HTTP response received - code: ", response_code)
 
+    # This sample currently expects request/response calls to return HTTP 200 with JSON.
+    # MCP notifications may legally return HTTP 202 (Accepted) without a response body,
+    # but that notification-only flow is intentionally not handled in this reference.
     if response_code != 200:
         is_connecting = false
         print("MCP Server: Streamable HTTP request failed with status: ", response_code)

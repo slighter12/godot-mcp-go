@@ -30,10 +30,7 @@ func _on_connected():
     # Send initialized notification after initialize response is received.
     var initialized_notification = {
         "jsonrpc": "2.0",
-        "method": "initialized",
-        "params": {
-            "client_id": client_id
-        }
+        "method": "initialized"
     }
     mcp_server.send_message(initialized_notification)
 
@@ -63,6 +60,7 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
     emit_signal("tool_called", tool_name, arguments)
 
 func handle_message(message: Dictionary):
+    # This reference implementation only accepts JSON-RPC responses.
     if message.has("error"):
         var err_obj = message.get("error", {})
         if err_obj is Dictionary:
@@ -78,22 +76,16 @@ func handle_message(message: Dictionary):
                 handle_init(result)
                 return
             if result.has("tool") or result.has("isError"):
-                handle_tool_result(result)
+                if result.get("isError", false):
+                    var tool_name = result.get("tool", "")
+                    var err_msg = _extract_tool_error_message(result)
+                    emit_signal("tool_error", tool_name, err_msg)
+                    handle_error({"message": err_msg})
+                else:
+                    handle_tool_result(result)
                 return
 
-    # Legacy message handling fallback.
-    var message_type = message.get("type", "")
-    var payload = message.get("payload", {})
-    
-    match message_type:
-        "init":
-            handle_init(payload)
-        "tool_result":
-            handle_tool_result(payload)
-        "error":
-            handle_error(payload)
-        _:
-            print("Unknown message type: ", message_type)
+    print("Unknown JSON-RPC message shape: ", message)
 
 func handle_init(payload: Dictionary):
     # Refresh tool list.
@@ -113,3 +105,11 @@ func handle_error(payload: Dictionary):
 func _next_request_id() -> String:
     request_counter += 1
     return "godot-%s-%d" % [client_id, request_counter]
+
+func _extract_tool_error_message(result: Dictionary) -> String:
+    var content = result.get("content", [])
+    if content is Array and content.size() > 0 and content[0] is Dictionary:
+        var first = content[0]
+        if first.get("type", "") == "text" and first.has("text"):
+            return str(first["text"])
+    return str(result.get("error", "Tool execution failed"))
