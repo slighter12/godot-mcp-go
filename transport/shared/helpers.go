@@ -4,16 +4,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
 )
 
 const pageSize = 50
+const maxRenderedPromptBytes = 128 * 1024
+const toolExecutionErrorMessage = "Tool execution failed"
+
+var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
 func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Response {
 	sortedTools := append([]mcp.Tool(nil), tools...)
@@ -84,43 +91,108 @@ func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 	})
 }
 
-func BuildPromptsListResponse(msg jsonrpc.Request) *jsonrpc.Response {
-	prompts := []map[string]any{}
+func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
+	if catalog == nil || !catalog.Enabled() {
+		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
+			"feature": "prompt_catalog",
+		})
+	}
+
+	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
+		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
+	}
+
+	prompts := catalog.ListPrompts()
 	start, err := ParseCursor(msg.Params, len(prompts))
 	if err != nil {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 	}
-	if start != 0 {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid cursor value", nil)
+	end := min(start+pageSize, len(prompts))
+
+	list := make([]map[string]any, 0, end-start)
+	for _, prompt := range prompts[start:end] {
+		list = append(list, map[string]any{
+			"name":        prompt.Name,
+			"description": prompt.Description,
+		})
 	}
-	return jsonrpc.NewResponse(msg.ID, map[string]any{
-		"prompts": prompts,
-	})
+
+	result := map[string]any{
+		"prompts": list,
+	}
+	if end < len(prompts) {
+		result["nextCursor"] = strconv.Itoa(end)
+	}
+	return jsonrpc.NewResponse(msg.ID, result)
 }
 
-func BuildPromptsGetResponse(msg jsonrpc.Request) *jsonrpc.Response {
+func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
+	if catalog == nil || !catalog.Enabled() {
+		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
+			"feature": "prompt_catalog",
+		})
+	}
+
+	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
+		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
+	}
+
 	var params struct {
-		Name string `json:"name"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid prompts/get payload", nil)
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Invalid prompts/get payload", "invalid_params", map[string]any{
+			"field":   "params",
+			"problem": "malformed_payload",
+		})
 	}
+	params.Name = strings.TrimSpace(params.Name)
 	if params.Name == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Prompt name is required", nil)
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt name is required", "invalid_params", map[string]any{
+			"field":   "name",
+			"problem": "missing",
+		})
 	}
-	return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Prompt not found", map[string]any{
-		"name": params.Name,
+
+	prompt, found := catalog.GetPrompt(params.Name)
+	if !found {
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Unknown prompt name", "invalid_params", map[string]any{
+			"field":   "name",
+			"problem": "unknown_prompt",
+			"value":   params.Name,
+		})
+	}
+
+	renderedPrompt, renderErr := renderPromptTemplate(prompt.Template, params.Arguments)
+	if renderErr != nil {
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt arguments produced oversized output", "invalid_params", map[string]any{
+			"field":    "arguments",
+			"problem":  "rendered_prompt_too_large",
+			"maxBytes": maxRenderedPromptBytes,
+		})
+	}
+	return jsonrpc.NewResponse(msg.ID, map[string]any{
+		"name":        prompt.Name,
+		"description": prompt.Description,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": map[string]any{
+					"type": "text",
+					"text": renderedPrompt,
+				},
+			},
+		},
 	})
 }
 
 func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
-	return jsonrpc.NewResponse(msg.ID, &mcp.PongMessage{
-		Type: string(mcp.TypePong),
-	})
+	return jsonrpc.NewResponse(msg.ID, map[string]any{})
 }
 
 // DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
-func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) any {
+func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error)) any {
 	switch msg.Method {
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
@@ -129,9 +201,9 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, rea
 	case "resources/read":
 		return BuildResourcesReadResponse(msg, readResource)
 	case "prompts/list":
-		return BuildPromptsListResponse(msg)
+		return BuildPromptsListResponse(msg, catalog)
 	case "prompts/get":
-		return BuildPromptsGetResponse(msg)
+		return BuildPromptsGetResponse(msg, catalog)
 	case "tools/call":
 		return BuildToolCallResponse(msg, toolManager, readResource)
 	case "ping":
@@ -149,6 +221,118 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, rea
 		}
 		return nil
 	}
+}
+
+func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra map[string]any) *jsonrpc.Response {
+	data := map[string]any{
+		"kind": kind,
+	}
+	maps.Copy(data, extra)
+	return jsonrpc.NewErrorResponse(id, int(code), message, data)
+}
+
+func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]any, bool) {
+	if catalog == nil || catalog.PromptCount() > 0 {
+		return nil, false
+	}
+
+	loadErrors := catalog.LoadErrors()
+	if len(loadErrors) == 0 {
+		return nil, false
+	}
+
+	return map[string]any{
+		"feature":        "prompt_catalog",
+		"loadErrorCount": len(loadErrors),
+	}, true
+}
+
+func renderPromptTemplate(template string, arguments map[string]any) (string, error) {
+	if template == "" || len(arguments) == 0 {
+		return template, nil
+	}
+
+	normalizedArgs := make(map[string]string, len(arguments))
+	for key, value := range arguments {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(value)
+	}
+	if len(normalizedArgs) == 0 {
+		return template, nil
+	}
+
+	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
+	if len(matches) == 0 {
+		return template, nil
+	}
+
+	var b strings.Builder
+	b.Grow(len(template))
+	last := 0
+
+	for _, match := range matches {
+		if len(match) < 4 {
+			continue
+		}
+		start, end := match[0], match[1]
+		keyStart, keyEnd := match[2], match[3]
+
+		segment := template[last:start]
+		if err := appendBounded(&b, segment); err != nil {
+			return "", err
+		}
+
+		key := template[keyStart:keyEnd]
+		if value, ok := normalizedArgs[key]; ok {
+			seg := wrapPromptArgumentValue(key, value)
+			if err := appendBounded(&b, seg); err != nil {
+				return "", err
+			}
+		} else {
+			if err := appendBounded(&b, template[start:end]); err != nil {
+				return "", err
+			}
+		}
+
+		last = end
+	}
+
+	if err := appendBounded(&b, template[last:]); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+func normalizePromptArgumentValue(value any) string {
+	if text, ok := value.(string); ok {
+		value = strings.ReplaceAll(text, "\x00", "")
+	}
+
+	raw, err := json.Marshal(value)
+	if err != nil {
+		// Preserve structural boundary by forcing fallback through JSON string encoding.
+		fallback, marshalErr := json.Marshal(strings.ReplaceAll(fmt.Sprint(value), "\x00", ""))
+		if marshalErr != nil {
+			return "\"\""
+		}
+		return string(fallback)
+	}
+	return string(raw)
+}
+
+func wrapPromptArgumentValue(key, value string) string {
+	return fmt.Sprintf("<user_input name=%q format=\"json\">\n%s\n</user_input>", key, value)
+}
+
+func appendBounded(builder *strings.Builder, segment string) error {
+	if builder.Len()+len(segment) > maxRenderedPromptBytes {
+		return fmt.Errorf("rendered prompt exceeds %d bytes", maxRenderedPromptBytes)
+	}
+	builder.WriteString(segment)
+	return nil
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
@@ -190,12 +374,7 @@ func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, read
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(msg.ID, map[string]any{
-			"type":    string(mcp.TypeResult),
-			"tool":    toolName,
-			"content": []map[string]any{{"type": "text", "text": err.Error()}},
-			"isError": true,
-		})
+		return jsonrpc.NewResponse(msg.ID, buildToolExecutionErrorResult(toolName))
 	}
 
 	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
@@ -212,6 +391,15 @@ func BuildToolSuccessResult(toolName string, result any) map[string]any {
 	}
 }
 
+func buildToolExecutionErrorResult(toolName string) map[string]any {
+	return map[string]any{
+		"type":    string(mcp.TypeResult),
+		"tool":    toolName,
+		"content": []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
+		"isError": true,
+	}
+}
+
 func ToolContentFromResult(result any) []map[string]any {
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -220,12 +408,15 @@ func ToolContentFromResult(result any) []map[string]any {
 	return []map[string]any{{"type": "text", "text": string(resultJSON)}}
 }
 
-func ServerCapabilities() map[string]any {
-	return map[string]any{
+func ServerCapabilities(promptCatalogEnabled bool) map[string]any {
+	capabilities := map[string]any{
 		"tools":     map[string]any{},
 		"resources": map[string]any{},
-		"prompts":   map[string]any{},
 	}
+	if promptCatalogEnabled {
+		capabilities["prompts"] = map[string]any{}
+	}
+	return capabilities
 }
 
 func ParseCursor(paramsRaw json.RawMessage, total int) (int, error) {
@@ -268,6 +459,11 @@ func defaultResources() []map[string]any {
 		{
 			"uri":      "godot://script/current",
 			"name":     "Current Script",
+			"mimeType": "application/json",
+		},
+		{
+			"uri":      "godot://policy/godot-checks",
+			"name":     "Godot Policy Checks",
 			"mimeType": "application/json",
 		},
 	}

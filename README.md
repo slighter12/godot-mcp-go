@@ -145,6 +145,10 @@ The server can be configured through `config/mcp_config.json`:
     "level": "debug",
     "format": "json",
     "path": "logs/mcp.log"
+  },
+  "prompt_catalog": {
+    "enabled": true,
+    "paths": []
   }
 }
 ```
@@ -165,6 +169,8 @@ If the resolved file does not exist, the server creates a default config file at
 - `MCP_HOST`: Override server host
 - `MCP_LOG_LEVEL`: Override log level
 - `MCP_LOG_PATH`: Override log path
+- `MCP_PROMPT_CATALOG_ENABLED`: Enable/disable prompt catalog endpoints
+- `MCP_PROMPT_CATALOG_PATHS`: Comma-separated paths scanned for `SKILL.md`
 
 ## Available Tools
 
@@ -237,8 +243,10 @@ MCP_DEBUG=true go run main.go
 ```text
 godot-mcp-go/
 ├── config/          # Configuration management
+├── docs/            # Planning and architecture documents
 ├── logger/          # Logging system
 ├── mcp/             # MCP protocol implementation
+├── promptcatalog/   # Prompt catalog discovery and policy metadata
 ├── tools/           # Tool system implementation
 │   ├── node/        # Node-related tools
 │   ├── script/      # Script-related tools
@@ -252,6 +260,18 @@ godot-mcp-go/
 ├── godot-plugin/    # Godot plugin
 └── main.go          # Application entry point
 ```
+
+### Planning Docs
+
+- `docs/DEVELOPMENT.md`: Repository-level roadmap and milestone ownership
+- `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`: Prompt catalog runtime contract and delivery phases
+
+### Referenced Skill Sources
+
+- [SkillsMP: godot-gdscript-patterns](https://skillsmp.com/skills/wshobson-agents-plugins-game-development-skills-godot-gdscript-patterns-skill-md)
+- [wshobson/agents: godot-gdscript-patterns SKILL.md](https://raw.githubusercontent.com/wshobson/agents/main/plugins/game-development/skills/godot-gdscript-patterns/SKILL.md)
+- [jwynia/agent-skills: godot-best-practices SKILL.md](https://raw.githubusercontent.com/jwynia/agent-skills/main/skills/tech/game-development/godot/godot-best-practices/SKILL.md)
+- [bfollington/terma: godot SKILL.md](https://raw.githubusercontent.com/bfollington/terma/main/plugins/tsal/skills/godot/SKILL.md)
 
 ## License
 

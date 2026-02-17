@@ -9,13 +9,15 @@ import (
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
 // StdioServer handles MCP communication over stdio
 type StdioServer struct {
-	toolManager *tools.Manager
+	toolManager   *tools.Manager
+	promptCatalog *promptcatalog.Registry
 }
 
 // NewStdioServer creates a new stdio server
@@ -23,6 +25,11 @@ func NewStdioServer(toolManager *tools.Manager) *StdioServer {
 	return &StdioServer{
 		toolManager: toolManager,
 	}
+}
+
+// AttachPromptCatalog injects prompt metadata into stdio transport.
+func (s *StdioServer) AttachPromptCatalog(registry *promptcatalog.Registry) {
+	s.promptCatalog = registry
 }
 
 // Start starts the stdio server
@@ -134,7 +141,7 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown stdio message", "method", msg.Method)
-		return shared.DispatchStandardMethod(msg, s.toolManager, readGodotResource), nil
+		return shared.DispatchStandardMethod(msg, s.toolManager, s.promptCatalog, readGodotResource), nil
 	}
 }
 
@@ -151,7 +158,7 @@ func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error)
 		"server_id":       "default",
 		"tools":           s.toolManager.GetTools(),
 		"protocolVersion": negotiateProtocolVersion(msg.Params),
-		"capabilities":    shared.ServerCapabilities(),
+		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled()),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
@@ -172,6 +179,8 @@ func readGodotResource(path string) (any, error) {
 		return map[string]any{"type": "scene", "path": "current"}, nil
 	case "godot://project/info":
 		return map[string]any{"name": "godot-mcp", "version": "0.1.0", "type": "godot"}, nil
+	case "godot://policy/godot-checks":
+		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}
