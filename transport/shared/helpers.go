@@ -308,18 +308,23 @@ func renderPromptTemplate(template string, arguments map[string]any) (string, er
 
 func normalizePromptArgumentValue(value any) string {
 	if text, ok := value.(string); ok {
-		return strings.ReplaceAll(text, "\x00", "")
+		value = strings.ReplaceAll(text, "\x00", "")
 	}
 
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return strings.ReplaceAll(fmt.Sprint(value), "\x00", "")
+		// Preserve structural boundary by forcing fallback through JSON string encoding.
+		fallback, marshalErr := json.Marshal(strings.ReplaceAll(fmt.Sprint(value), "\x00", ""))
+		if marshalErr != nil {
+			return "\"\""
+		}
+		return string(fallback)
 	}
-	return strings.ReplaceAll(string(raw), "\x00", "")
+	return string(raw)
 }
 
 func wrapPromptArgumentValue(key, value string) string {
-	return fmt.Sprintf("<user_input name=%q>\n%s\n</user_input>", key, value)
+	return fmt.Sprintf("<user_input name=%q format=\"json\">\n%s\n</user_input>", key, value)
 }
 
 func appendBounded(builder *strings.Builder, segment string) error {

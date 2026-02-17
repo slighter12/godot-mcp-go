@@ -52,8 +52,7 @@ func (r *Registry) RegisterPrompt(prompt Prompt) {
 	}
 
 	prompt.Name = name
-	prompt.Description = strings.TrimSpace(prompt.Description)
-	prompt.Template = strings.TrimSpace(prompt.Template)
+	prompt = normalizePrompt(prompt)
 	key := promptKey(prompt.Name)
 
 	r.mu.Lock()
@@ -119,28 +118,19 @@ func (r *Registry) LoadErrors() []string {
 	return out
 }
 
-func (r *Registry) recordError(err error) {
-	if r == nil || err == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.loadErrors = append(r.loadErrors, err.Error())
-}
-
 // LoadFromPaths discovers SKILL.md files and registers prompt metadata.
 func (r *Registry) LoadFromPaths(paths []string) error {
 	if !r.Enabled() {
 		return nil
 	}
-	r.reset()
 
 	files := make([]string, 0)
 	seen := make(map[string]struct{})
+	loadErrors := make([]string, 0)
 	for _, rawPath := range paths {
 		discovered, discoverErr := discoverSkillFiles(rawPath)
 		if discoverErr != nil {
-			r.recordError(discoverErr)
+			loadErrors = append(loadErrors, discoverErr.Error())
 		}
 		for _, filePath := range discovered {
 			if _, ok := seen[filePath]; ok {
@@ -152,40 +142,35 @@ func (r *Registry) LoadFromPaths(paths []string) error {
 	}
 
 	sort.Strings(files)
+	nextPrompts := make(map[string]Prompt)
 
 	for _, filePath := range files {
 		prompt, err := PromptFromSkillFile(filePath)
 		if err != nil {
-			r.recordError(err)
+			loadErrors = append(loadErrors, err.Error())
 			continue
 		}
 		key := promptKey(prompt.Name)
 		if key == "" {
-			r.recordError(fmt.Errorf("invalid prompt name"))
+			loadErrors = append(loadErrors, "invalid prompt name")
 			continue
 		}
-		if _, ok := r.lookupPromptByKey(key); ok {
-			r.recordError(fmt.Errorf("duplicate prompt name %q", prompt.Name))
+		if _, ok := nextPrompts[key]; ok {
+			loadErrors = append(loadErrors, fmt.Sprintf("duplicate prompt name %q", prompt.Name))
 			continue
 		}
-		r.RegisterPrompt(prompt)
+		nextPrompts[key] = normalizePrompt(prompt)
 	}
 
-	errorsFound := r.LoadErrors()
-	if len(errorsFound) == 0 {
+	r.mu.Lock()
+	r.prompts = nextPrompts
+	r.loadErrors = append([]string(nil), loadErrors...)
+	r.mu.Unlock()
+
+	if len(loadErrors) == 0 {
 		return nil
 	}
-	return errors.New(strings.Join(errorsFound, "; "))
-}
-
-func (r *Registry) reset() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.prompts = make(map[string]Prompt)
-	r.loadErrors = nil
+	return errors.New(strings.Join(loadErrors, "; "))
 }
 
 func discoverSkillFiles(rawPath string) ([]string, error) {
@@ -336,13 +321,9 @@ func promptKey(name string) string {
 	return strings.ToLower(trimmed)
 }
 
-func (r *Registry) lookupPromptByKey(key string) (Prompt, bool) {
-	if r == nil || key == "" {
-		return Prompt{}, false
-	}
-
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	prompt, ok := r.prompts[key]
-	return prompt, ok
+func normalizePrompt(prompt Prompt) Prompt {
+	prompt.Name = strings.TrimSpace(prompt.Name)
+	prompt.Description = strings.TrimSpace(prompt.Description)
+	prompt.Template = strings.TrimSpace(prompt.Template)
+	return prompt
 }
