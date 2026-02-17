@@ -18,17 +18,27 @@ import (
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
 const promptCatalogLoadConsistencyMaxAttempts = 3
 
+type promptCatalogReloadOutcome struct {
+	result map[string]any
+	notify bool
+}
+
 func (s *Server) registerRuntimeTools() error {
 	return s.toolManager.RegisterTool(utility.NewReloadPromptCatalogTool(s.reloadPromptCatalog))
 }
 
 func (s *Server) reloadPromptCatalog() map[string]any {
 	s.promptCatalogReloadMu.Lock()
-	defer s.promptCatalogReloadMu.Unlock()
-	return s.reloadPromptCatalogLocked()
+	outcome := s.reloadPromptCatalogLocked()
+	s.promptCatalogReloadMu.Unlock()
+
+	if outcome.notify {
+		outcome.result["notifiedSessions"] = s.BroadcastPromptListChanged()
+	}
+	return outcome.result
 }
 
-func (s *Server) reloadPromptCatalogLocked() map[string]any {
+func (s *Server) reloadPromptCatalogLocked() promptCatalogReloadOutcome {
 	result := map[string]any{
 		"changed":        false,
 		"promptCount":    0,
@@ -38,7 +48,7 @@ func (s *Server) reloadPromptCatalogLocked() map[string]any {
 
 	if s.promptCatalog == nil || !s.promptCatalog.Enabled() {
 		s.promptCatalogFileFingerprint = ""
-		return result
+		return promptCatalogReloadOutcome{result: result}
 	}
 
 	beforePrompts := s.promptCatalog.ListPrompts()
@@ -74,11 +84,10 @@ func (s *Server) reloadPromptCatalogLocked() map[string]any {
 	}
 	s.logPromptCatalogSnapshotWarningsLocked(sourceFingerprintWarnings)
 
-	if changed {
-		notified := s.BroadcastPromptListChanged()
-		result["notifiedSessions"] = notified
+	return promptCatalogReloadOutcome{
+		result: result,
+		notify: changed,
 	}
-	return result
 }
 
 func (s *Server) startPromptCatalogAutoReload() {
@@ -157,14 +166,20 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 	sourceFingerprint, warnings := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
 
 	s.promptCatalogReloadMu.Lock()
-	defer s.promptCatalogReloadMu.Unlock()
 	s.logPromptCatalogSnapshotWarningsLocked(warnings)
 
 	if sourceFingerprint == s.promptCatalogFileFingerprint {
+		s.promptCatalogReloadMu.Unlock()
 		return nil, false
 	}
 
-	return s.reloadPromptCatalogLocked(), true
+	outcome := s.reloadPromptCatalogLocked()
+	s.promptCatalogReloadMu.Unlock()
+
+	if outcome.notify {
+		outcome.result["notifiedSessions"] = s.BroadcastPromptListChanged()
+	}
+	return outcome.result, true
 }
 
 func (s *Server) loadPromptCatalogWithStableSnapshot() (string, []string, error) {

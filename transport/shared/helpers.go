@@ -333,28 +333,24 @@ func validateStrictPromptArguments(id any, promptArguments []promptcatalog.Promp
 		return nil
 	}
 
-	requiredKeys := make([]string, 0, len(promptArguments))
-	seenRequiredKeys := make(map[string]struct{}, len(promptArguments))
-	for _, arg := range promptArguments {
-		name := strings.TrimSpace(arg.Name)
+	requiredSet := make(map[string]struct{}, len(promptArguments))
+	missing := make([]string, 0)
+	for _, promptArg := range promptArguments {
+		name := strings.TrimSpace(promptArg.Name)
 		if name == "" {
 			continue
 		}
-		if _, ok := seenRequiredKeys[name]; ok {
+		if _, exists := requiredSet[name]; exists {
 			continue
 		}
-		seenRequiredKeys[name] = struct{}{}
-		requiredKeys = append(requiredKeys, name)
-	}
-	sort.Strings(requiredKeys)
-
-	missing := make([]string, 0)
-	for _, key := range requiredKeys {
-		if _, ok := arguments[key]; !ok {
-			missing = append(missing, key)
+		requiredSet[name] = struct{}{}
+		// Strict mode currently treats all placeholders as required.
+		if _, ok := arguments[name]; !ok {
+			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		return semanticError(id, jsonrpc.ErrInvalidParams, "Missing required prompt arguments", "invalid_params", map[string]any{
 			"field":   "arguments",
 			"problem": "missing_required_arguments",
@@ -366,10 +362,6 @@ func validateStrictPromptArguments(id any, promptArguments []promptcatalog.Promp
 		return nil
 	}
 
-	requiredSet := make(map[string]struct{}, len(requiredKeys))
-	for _, key := range requiredKeys {
-		requiredSet[key] = struct{}{}
-	}
 	unknown := make([]string, 0)
 	for key := range arguments {
 		if _, ok := requiredSet[key]; !ok {
