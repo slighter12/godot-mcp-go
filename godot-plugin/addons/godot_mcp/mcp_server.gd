@@ -360,10 +360,6 @@ func _open_sse_stream_connection() -> void:
     var use_tls: bool = bool(endpoint.get("use_tls", false))
     sse_request_path = str(endpoint.get("path", "/mcp"))
 
-    if host == "" or port <= 0:
-        _handle_sse_disconnect("Invalid Streamable HTTP endpoint for SSE: " + streamable_http_url)
-        return
-
     if sse_http_connection:
         sse_http_connection.close()
 
