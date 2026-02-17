@@ -594,9 +594,6 @@ func _parse_http_endpoint(url: String) -> Dictionary:
     if host == "" or port <= 0 or port > 65535:
         return {}
 
-    if not path.begins_with("/"):
-        path = "/" + path
-
     return {
         "host": host,
         "port": port,
