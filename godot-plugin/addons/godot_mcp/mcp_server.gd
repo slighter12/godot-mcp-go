@@ -535,6 +535,9 @@ func _dispatch_sse_event(event_name: String, data_lines: Array[String]) -> void:
     _emit_jsonrpc_payload(payload)
 
 func _parse_http_endpoint(url: String) -> Dictionary:
+    # Lightweight parser for HTTPClient.connect_to_host/request usage.
+    # Supported: http/https, host[:port], bracketed IPv6, path/query.
+    # Not supported: userinfo, fragments, or non-HTTP schemes.
     var trimmed_url = url.strip_edges()
     if trimmed_url == "":
         return {}
@@ -563,6 +566,8 @@ func _parse_http_endpoint(url: String) -> Dictionary:
             path = "/" + remainder.substr(query_index)
 
     if host_port == "":
+        return {}
+    if host_port.find("@") != -1:
         return {}
 
     var host = host_port

@@ -299,27 +299,17 @@ func renderPromptTemplate(template string, arguments map[string]string) (string,
 	}
 	sort.Strings(rawKeys)
 
-	keys := make([]string, 0, len(rawKeys))
-	argumentValues := make(map[string]string, len(rawKeys))
+	normalizedArgs := make(map[string]string, len(rawKeys))
 	for _, key := range rawKeys {
 		trimmedKey := strings.TrimSpace(key)
 		if trimmedKey == "" {
 			continue
 		}
-		if _, exists := argumentValues[trimmedKey]; !exists {
-			keys = append(keys, trimmedKey)
-		}
-		argumentValues[trimmedKey] = normalizePromptArgumentValue(arguments[key])
+		// Deterministic overwrite: later keys in sorted order win for the same trimmed key.
+		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(arguments[key])
 	}
-	if len(keys) == 0 {
+	if len(normalizedArgs) == 0 {
 		return template, nil
-	}
-	sort.Strings(keys)
-
-	normalizedArgs := make(map[string]string, len(keys))
-	for _, key := range keys {
-		value := argumentValues[key]
-		normalizedArgs[key] = value
 	}
 
 	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
