@@ -17,6 +17,11 @@ import (
 
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
 
+type promptCatalogSourceSnapshot struct {
+	fingerprint string
+	warnings    []string
+}
+
 func (s *Server) registerRuntimeTools() error {
 	return s.toolManager.RegisterTool(utility.NewReloadPromptCatalogTool(s.reloadPromptCatalog))
 }
@@ -24,10 +29,10 @@ func (s *Server) registerRuntimeTools() error {
 func (s *Server) reloadPromptCatalog() map[string]any {
 	s.promptCatalogReloadMu.Lock()
 	defer s.promptCatalogReloadMu.Unlock()
-	return s.reloadPromptCatalogLocked()
+	return s.reloadPromptCatalogLocked(nil)
 }
 
-func (s *Server) reloadPromptCatalogLocked() map[string]any {
+func (s *Server) reloadPromptCatalogLocked(snapshot *promptCatalogSourceSnapshot) map[string]any {
 	result := map[string]any{
 		"changed":        false,
 		"promptCount":    0,
@@ -48,7 +53,15 @@ func (s *Server) reloadPromptCatalogLocked() map[string]any {
 	afterPrompts := s.promptCatalog.ListPrompts()
 	afterFingerprint := promptListFingerprint(afterPrompts)
 	loadErrors := s.promptCatalog.LoadErrors()
-	sourceFingerprint, sourceFingerprintWarnings := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+
+	sourceFingerprint := ""
+	sourceFingerprintWarnings := []string(nil)
+	if snapshot == nil {
+		sourceFingerprint, sourceFingerprintWarnings = promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+	} else {
+		sourceFingerprint = snapshot.fingerprint
+		sourceFingerprintWarnings = append([]string(nil), snapshot.warnings...)
+	}
 	s.promptCatalogFileFingerprint = sourceFingerprint
 	changed := beforeFingerprint != afterFingerprint
 
@@ -164,7 +177,10 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 		return nil, false
 	}
 
-	return s.reloadPromptCatalogLocked(), true
+	return s.reloadPromptCatalogLocked(&promptCatalogSourceSnapshot{
+		fingerprint: sourceFingerprint,
+		warnings:    warnings,
+	}), true
 }
 
 func (s *Server) logPromptCatalogSnapshotWarningsLocked(warnings []string) {

@@ -336,11 +336,14 @@ func (c *Config) Validate() error {
 		"strict": true,
 	}
 	if !validRenderingModes[c.PromptCatalog.Rendering.Mode] {
-		return errors.New("invalid prompt catalog rendering mode")
+		return fmt.Errorf("invalid prompt catalog rendering mode %q: expected one of [legacy strict]", c.PromptCatalog.Rendering.Mode)
 	}
 
 	if c.PromptCatalog.AutoReload.IntervalSeconds < 2 || c.PromptCatalog.AutoReload.IntervalSeconds > 300 {
-		return errors.New("invalid prompt catalog auto reload interval seconds")
+		return fmt.Errorf(
+			"invalid prompt catalog auto reload interval seconds %d: expected range 2..300",
+			c.PromptCatalog.AutoReload.IntervalSeconds,
+		)
 	}
 
 	return nil
