@@ -48,8 +48,23 @@ type Logging struct {
 
 // PromptCatalog represents prompt catalog runtime configuration.
 type PromptCatalog struct {
-	Enabled bool     `json:"enabled"`
-	Paths   []string `json:"paths"`
+	Enabled      bool                    `json:"enabled"`
+	Paths        []string                `json:"paths"`
+	AllowedRoots []string                `json:"allowed_roots"`
+	AutoReload   PromptCatalogAutoReload `json:"auto_reload"`
+	Rendering    PromptCatalogRendering  `json:"rendering"`
+}
+
+// PromptCatalogAutoReload controls polling-based prompt catalog reload behavior.
+type PromptCatalogAutoReload struct {
+	Enabled         bool `json:"enabled"`
+	IntervalSeconds int  `json:"interval_seconds"`
+}
+
+// PromptCatalogRendering controls prompt template rendering validation behavior.
+type PromptCatalogRendering struct {
+	Mode                   string `json:"mode"`
+	RejectUnknownArguments bool   `json:"reject_unknown_arguments"`
 }
 
 // NewConfig creates a new Config with default values
@@ -89,8 +104,17 @@ func NewConfig() *Config {
 			Path:   filepath.Join(home, ".godot-mcp", "logs", "mcp.log"),
 		},
 		PromptCatalog: PromptCatalog{
-			Enabled: true,
-			Paths:   []string{},
+			Enabled:      true,
+			Paths:        []string{},
+			AllowedRoots: []string{},
+			AutoReload: PromptCatalogAutoReload{
+				Enabled:         false,
+				IntervalSeconds: 5,
+			},
+			Rendering: PromptCatalogRendering{
+				Mode:                   "legacy",
+				RejectUnknownArguments: false,
+			},
 		},
 	}
 }
@@ -127,6 +151,14 @@ func LoadConfig(path string) (*Config, error) {
 
 // SaveConfig saves the configuration to a file
 func SaveConfig(cfg *Config, path string) error {
+	if cfg == nil {
+		return errors.New("config cannot be nil")
+	}
+	cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %v", err)
@@ -185,6 +217,38 @@ func applyEnvOverrides(cfg *Config) {
 	if promptCatalogPaths := os.Getenv("MCP_PROMPT_CATALOG_PATHS"); promptCatalogPaths != "" {
 		cfg.PromptCatalog.Paths = parseCSV(promptCatalogPaths)
 	}
+
+	if promptCatalogAllowedRoots := os.Getenv("MCP_PROMPT_CATALOG_ALLOWED_ROOTS"); promptCatalogAllowedRoots != "" {
+		cfg.PromptCatalog.AllowedRoots = parseCSV(promptCatalogAllowedRoots)
+	}
+
+	if autoReloadEnabled := os.Getenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED"); autoReloadEnabled != "" {
+		if parsed, err := strconv.ParseBool(autoReloadEnabled); err == nil {
+			cfg.PromptCatalog.AutoReload.Enabled = parsed
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED value %q: %v", autoReloadEnabled, err)
+		}
+	}
+
+	if autoReloadInterval := os.Getenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS"); autoReloadInterval != "" {
+		if parsed, err := strconv.Atoi(autoReloadInterval); err == nil {
+			cfg.PromptCatalog.AutoReload.IntervalSeconds = parsed
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS value %q: %v", autoReloadInterval, err)
+		}
+	}
+
+	if renderingMode := os.Getenv("MCP_PROMPT_CATALOG_RENDERING_MODE"); renderingMode != "" {
+		cfg.PromptCatalog.Rendering.Mode = renderingMode
+	}
+
+	if rejectUnknownArgs := os.Getenv("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS"); rejectUnknownArgs != "" {
+		if parsed, err := strconv.ParseBool(rejectUnknownArgs); err == nil {
+			cfg.PromptCatalog.Rendering.RejectUnknownArguments = parsed
+		} else {
+			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS value %q: %v", rejectUnknownArgs, err)
+		}
+	}
 }
 
 // Normalize canonicalizes config values so downstream validation and runtime
@@ -195,6 +259,14 @@ func (c *Config) Normalize() {
 	c.Logging.Format = strings.ToLower(strings.TrimSpace(c.Logging.Format))
 	c.Logging.Path = strings.TrimSpace(c.Logging.Path)
 	c.PromptCatalog.Paths = normalizePaths(c.PromptCatalog.Paths)
+	c.PromptCatalog.AllowedRoots = normalizePaths(c.PromptCatalog.AllowedRoots)
+	c.PromptCatalog.Rendering.Mode = strings.ToLower(strings.TrimSpace(c.PromptCatalog.Rendering.Mode))
+	if c.PromptCatalog.Rendering.Mode == "" {
+		c.PromptCatalog.Rendering.Mode = "legacy"
+	}
+	if c.PromptCatalog.AutoReload.IntervalSeconds == 0 {
+		c.PromptCatalog.AutoReload.IntervalSeconds = 5
+	}
 	for i := range c.Transports {
 		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
 		c.Transports[i].URL = strings.TrimSpace(c.Transports[i].URL)
@@ -257,6 +329,18 @@ func (c *Config) Validate() error {
 
 	if enabledTransports == 0 {
 		return errors.New("at least one transport must be enabled")
+	}
+
+	validRenderingModes := map[string]bool{
+		"legacy": true,
+		"strict": true,
+	}
+	if !validRenderingModes[c.PromptCatalog.Rendering.Mode] {
+		return errors.New("invalid prompt catalog rendering mode")
+	}
+
+	if c.PromptCatalog.AutoReload.IntervalSeconds < 2 || c.PromptCatalog.AutoReload.IntervalSeconds > 300 {
+		return errors.New("invalid prompt catalog auto reload interval seconds")
 	}
 
 	return nil

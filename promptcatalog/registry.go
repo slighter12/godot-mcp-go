@@ -1,8 +1,12 @@
 package promptcatalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +29,14 @@ type Prompt struct {
 type PromptArgument struct {
 	Name     string
 	Required bool
+}
+
+// SkillFileSnapshot captures one SKILL.md file's identity for deterministic change detection.
+type SkillFileSnapshot struct {
+	Path            string
+	Size            int64
+	ModTimeUnixNano int64
+	ContentSHA256   string
 }
 
 var promptArgumentPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
@@ -131,28 +143,16 @@ func (r *Registry) LoadErrors() []string {
 
 // LoadFromPaths discovers SKILL.md files and registers prompt metadata.
 func (r *Registry) LoadFromPaths(paths []string) error {
+	return r.LoadFromPathsWithAllowedRoots(paths, nil)
+}
+
+// LoadFromPathsWithAllowedRoots discovers SKILL.md files, enforces root policy, and registers prompt metadata.
+func (r *Registry) LoadFromPathsWithAllowedRoots(paths []string, allowedRoots []string) error {
 	if !r.Enabled() {
 		return nil
 	}
 
-	files := make([]string, 0)
-	seen := make(map[string]struct{})
-	loadErrors := make([]string, 0)
-	for _, rawPath := range paths {
-		discovered, discoverErr := discoverSkillFiles(rawPath)
-		if discoverErr != nil {
-			loadErrors = append(loadErrors, discoverErr.Error())
-		}
-		for _, filePath := range discovered {
-			if _, ok := seen[filePath]; ok {
-				continue
-			}
-			seen[filePath] = struct{}{}
-			files = append(files, filePath)
-		}
-	}
-
-	sort.Strings(files)
+	files, loadErrors := discoverSkillFilesWithPolicy(paths, allowedRoots)
 	nextPrompts := make(map[string]Prompt)
 
 	for _, filePath := range files {
@@ -182,6 +182,138 @@ func (r *Registry) LoadFromPaths(paths []string) error {
 		return nil
 	}
 	return errors.New(strings.Join(loadErrors, "; "))
+}
+
+// CollectSkillFileSnapshots returns deterministic SKILL.md file snapshots after allow-root filtering.
+func CollectSkillFileSnapshots(paths []string, allowedRoots []string) ([]SkillFileSnapshot, []string) {
+	files, loadErrors := discoverSkillFilesWithPolicy(paths, allowedRoots)
+	snapshots := make([]SkillFileSnapshot, 0, len(files))
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil {
+			loadErrors = append(loadErrors, fmt.Sprintf("stat skill file %s: %v", path, err))
+			continue
+		}
+		contentHash, hashErr := fileSHA256(path)
+		if hashErr != nil {
+			loadErrors = append(loadErrors, fmt.Sprintf("hash skill file %s: %v", path, hashErr))
+		}
+		snapshots = append(snapshots, SkillFileSnapshot{
+			Path:            canonicalPathForBoundary(path),
+			Size:            info.Size(),
+			ModTimeUnixNano: info.ModTime().UnixNano(),
+			ContentSHA256:   contentHash,
+		})
+	}
+
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].Path < snapshots[j].Path
+	})
+	return snapshots, loadErrors
+}
+
+// SnapshotFingerprint returns a stable JSON digest from SKILL.md snapshots.
+func SnapshotFingerprint(paths []string, allowedRoots []string) (string, []string) {
+	snapshots, loadErrors := CollectSkillFileSnapshots(paths, allowedRoots)
+	data, err := json.Marshal(snapshots)
+	if err != nil {
+		loadErrors = append(loadErrors, fmt.Sprintf("marshal skill file snapshots: %v", err))
+		return "", loadErrors
+	}
+	return string(data), loadErrors
+}
+
+func discoverSkillFilesWithPolicy(paths []string, allowedRoots []string) ([]string, []string) {
+	files := make([]string, 0)
+	seen := make(map[string]struct{})
+	loadErrors := make([]string, 0)
+
+	roots := normalizePolicyRoots(allowedRoots)
+	if len(roots) == 0 {
+		roots = normalizePolicyRoots(paths)
+	}
+
+	for _, rawPath := range paths {
+		discovered, discoverErr := discoverSkillFiles(rawPath)
+		if discoverErr != nil {
+			loadErrors = append(loadErrors, discoverErr.Error())
+		}
+		for _, filePath := range discovered {
+			canonicalFilePath := canonicalPathForBoundary(filePath)
+			if len(roots) > 0 && !isPathWithinAllowedRoots(canonicalFilePath, roots) {
+				loadErrors = append(loadErrors, fmt.Sprintf("skill file %s is outside prompt catalog allowed roots", canonicalFilePath))
+				continue
+			}
+			if _, ok := seen[canonicalFilePath]; ok {
+				continue
+			}
+			seen[canonicalFilePath] = struct{}{}
+			files = append(files, canonicalFilePath)
+		}
+	}
+
+	sort.Strings(files)
+	return files, loadErrors
+}
+
+func normalizePolicyRoots(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		canonical := canonicalPathForBoundary(expandUser(trimmed))
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func canonicalPathForBoundary(path string) string {
+	cleaned := filepath.Clean(path)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		cleaned = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		cleaned = resolved
+	}
+	return filepath.Clean(cleaned)
+}
+
+func isPathWithinAllowedRoots(path string, roots []string) bool {
+	for _, root := range roots {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			continue
+		}
+		if rel == "." || rel == "" {
+			return true
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func discoverSkillFiles(rawPath string) ([]string, error) {

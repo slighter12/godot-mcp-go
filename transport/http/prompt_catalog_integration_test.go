@@ -193,6 +193,55 @@ func TestStreamableHTTPPromptsGetRejectsNonStringArguments(t *testing.T) {
 	}
 }
 
+func TestStreamableHTTPPromptsGetStrictModeRejectsMissingArguments(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.config.PromptCatalog.Rendering.Mode = "strict"
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}} and {{line}}",
+	})
+
+	initBody := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-11-25",
+		},
+	}
+	_, sessionID, status := postMCP(t, server, initBody, "", "")
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+	if sessionID == "" {
+		t.Fatal("expected session id in initialize response header")
+	}
+
+	getBody := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "prompts/get",
+		"params": map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+		},
+	}
+	getResp, _, status := postMCP(t, server, getBody, sessionID, "2025-11-25")
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	}
+	errObj := mustMap(t, getResp["error"])
+	code, ok := errObj["code"].(float64)
+	if !ok || int(code) != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected invalid params code %d, got %v", int(jsonrpc.ErrInvalidParams), errObj["code"])
+	}
+	data := mustMap(t, errObj["data"])
+	if data["problem"] != "missing_required_arguments" {
+		t.Fatalf("expected missing_required_arguments, got %v", data["problem"])
+	}
+}
+
 func TestStreamableHTTPPromptsNotSupportedWhenCatalogDisabled(t *testing.T) {
 	server := newTestHTTPServer(t, false)
 

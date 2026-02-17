@@ -30,6 +30,15 @@
   },
   "prompt_catalog": {
     "enabled": true,
-    "paths": []
+    "paths": [],
+    "allowed_roots": [],
+    "auto_reload": {
+      "enabled": false,
+      "interval_seconds": 5
+    },
+    "rendering": {
+      "mode": "legacy",
+      "reject_unknown_arguments": false
+    }
   }
 }

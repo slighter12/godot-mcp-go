@@ -16,20 +16,27 @@ import (
 
 // StdioServer handles MCP communication over stdio
 type StdioServer struct {
-	toolManager   *tools.Manager
-	promptCatalog *promptcatalog.Registry
+	toolManager         *tools.Manager
+	promptCatalog       *promptcatalog.Registry
+	promptRenderOptions shared.PromptRenderOptions
 }
 
 // NewStdioServer creates a new stdio server
 func NewStdioServer(toolManager *tools.Manager) *StdioServer {
 	return &StdioServer{
-		toolManager: toolManager,
+		toolManager:         toolManager,
+		promptRenderOptions: shared.DefaultPromptRenderOptions(),
 	}
 }
 
 // AttachPromptCatalog injects prompt metadata into stdio transport.
 func (s *StdioServer) AttachPromptCatalog(registry *promptcatalog.Registry) {
 	s.promptCatalog = registry
+}
+
+// AttachPromptRenderOptions applies runtime prompt rendering validation settings.
+func (s *StdioServer) AttachPromptRenderOptions(options shared.PromptRenderOptions) {
+	s.promptRenderOptions = options
 }
 
 // Start starts the stdio server
@@ -141,7 +148,7 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown stdio message", "method", msg.Method)
-		return shared.DispatchStandardMethod(msg, s.toolManager, s.promptCatalog, readGodotResource), nil
+		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions), nil
 	}
 }
 

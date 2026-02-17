@@ -7,6 +7,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
+	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
 func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
@@ -161,6 +162,44 @@ func TestStdioPromptsNotSupportedWhenCatalogDisabled(t *testing.T) {
 		t.Fatalf("prompts/get failed: %v", err)
 	}
 	assertNotSupportedError(t, getRespAny)
+}
+
+func TestStdioPromptsGetStrictModeRejectsMissingArguments(t *testing.T) {
+	server := newTestStdioServer(true)
+	server.AttachPromptRenderOptions(shared.PromptRenderOptions{
+		Mode: shared.PromptRenderingModeStrict,
+	})
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}} and {{line}}",
+	})
+
+	getRespAny, err := server.handleMessage(jsonrpc.Request{
+		ID:     2,
+		Method: "prompts/get",
+		Params: mustRaw(t, map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("prompts/get failed: %v", err)
+	}
+	getResp, ok := getRespAny.(*jsonrpc.Response)
+	if !ok {
+		t.Fatalf("expected jsonrpc response, got %T", getRespAny)
+	}
+	if getResp.Error == nil {
+		t.Fatalf("expected strict mode invalid params error")
+	}
+	if getResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrInvalidParams), getResp.Error.Code)
+	}
+	data := mustMap(t, getResp.Error.Data)
+	if data["problem"] != "missing_required_arguments" {
+		t.Fatalf("expected missing_required_arguments, got %v", data["problem"])
+	}
 }
 
 func newTestStdioServer(promptCatalogEnabled bool) *StdioServer {

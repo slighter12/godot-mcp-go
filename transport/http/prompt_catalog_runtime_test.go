@@ -3,8 +3,10 @@ package http
 import (
 	"errors"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 )
@@ -122,6 +124,145 @@ func TestSendJSONRPCNotificationToSession_DoesNotClearReplacedTransport(t *testi
 	}
 	if current != replacement {
 		t.Fatalf("expected replacement transport, got %p", current)
+	}
+}
+
+func TestReloadPromptCatalogIfSourcesChanged_AddModifyDelete(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	root := t.TempDir()
+	server.config.PromptCatalog.Paths = []string{root}
+	server.config.PromptCatalog.AllowedRoots = []string{root}
+
+	initial := server.reloadPromptCatalog()
+	if initial["status"] != "ok" {
+		t.Fatalf("expected status ok, got %v", initial["status"])
+	}
+
+	if result, reloaded := server.reloadPromptCatalogIfSourcesChanged(); reloaded {
+		t.Fatalf("did not expect reload without source changes, got %#v", result)
+	}
+
+	skill := filepath.Join(root, "scene-review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	contentV1 := "---\nname: scene-review\ndescription: Prompt v1\n---\nReview {{scene_path}}\n"
+	if err := os.WriteFile(skill, []byte(contentV1), 0644); err != nil {
+		t.Fatalf("write skill v1: %v", err)
+	}
+
+	addResult, reloaded := server.reloadPromptCatalogIfSourcesChanged()
+	if !reloaded {
+		t.Fatalf("expected reload after adding skill file")
+	}
+	if addResult["changed"] != true {
+		t.Fatalf("expected changed=true after add, got %v", addResult["changed"])
+	}
+
+	if result, reloaded := server.reloadPromptCatalogIfSourcesChanged(); reloaded {
+		t.Fatalf("did not expect second reload without changes, got %#v", result)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	contentV2 := "---\nname: scene-review\ndescription: Prompt v2\n---\nReview {{scene_path}}\n"
+	if err := os.WriteFile(skill, []byte(contentV2), 0644); err != nil {
+		t.Fatalf("write skill v2: %v", err)
+	}
+	modifyResult, reloaded := server.reloadPromptCatalogIfSourcesChanged()
+	if !reloaded {
+		t.Fatalf("expected reload after modifying skill file")
+	}
+	if modifyResult["changed"] != true {
+		t.Fatalf("expected changed=true after modify, got %v", modifyResult["changed"])
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	if err := os.Remove(skill); err != nil {
+		t.Fatalf("remove skill file: %v", err)
+	}
+	deleteResult, reloaded := server.reloadPromptCatalogIfSourcesChanged()
+	if !reloaded {
+		t.Fatalf("expected reload after deleting skill file")
+	}
+	if deleteResult["changed"] != true {
+		t.Fatalf("expected changed=true after delete, got %v", deleteResult["changed"])
+	}
+	if deleteResult["promptCount"] != 0 {
+		t.Fatalf("expected promptCount=0 after delete, got %v", deleteResult["promptCount"])
+	}
+}
+
+func TestPromptCatalogAutoReloadLifecycle_StopClearsRunner(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.config.PromptCatalog.AutoReload.Enabled = true
+	server.config.PromptCatalog.AutoReload.IntervalSeconds = 2
+
+	server.startPromptCatalogAutoReload()
+
+	server.promptCatalogAutoReloadMu.Lock()
+	cancel := server.promptCatalogAutoReloadCancel
+	done := server.promptCatalogAutoReloadDone
+	server.promptCatalogAutoReloadMu.Unlock()
+	if cancel == nil || done == nil {
+		t.Fatal("expected auto-reload runner to be initialized")
+	}
+
+	server.stopPromptCatalogAutoReload()
+	server.stopPromptCatalogAutoReload()
+
+	server.promptCatalogAutoReloadMu.Lock()
+	cancel = server.promptCatalogAutoReloadCancel
+	done = server.promptCatalogAutoReloadDone
+	server.promptCatalogAutoReloadMu.Unlock()
+	if cancel != nil || done != nil {
+		t.Fatal("expected auto-reload runner to be fully cleared after stop")
+	}
+}
+
+func TestLogPromptCatalogSnapshotWarningsLocked_DeduplicatesAndRecovers(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	warnings := []string{"  path not found  ", "permission denied"}
+
+	server.promptCatalogReloadMu.Lock()
+	server.logPromptCatalogSnapshotWarningsLocked(warnings)
+	firstFingerprint := server.promptCatalogSnapshotWarningFingerprint
+	firstLogged := server.promptCatalogSnapshotWarningLastLogged
+	server.promptCatalogReloadMu.Unlock()
+	if firstFingerprint == "" {
+		t.Fatal("expected warning fingerprint after first warning emission")
+	}
+	if firstLogged.IsZero() {
+		t.Fatal("expected non-zero last-logged timestamp")
+	}
+
+	server.promptCatalogReloadMu.Lock()
+	server.logPromptCatalogSnapshotWarningsLocked([]string{"permission denied", "path not found"})
+	secondLogged := server.promptCatalogSnapshotWarningLastLogged
+	server.promptCatalogReloadMu.Unlock()
+	if !secondLogged.Equal(firstLogged) {
+		t.Fatalf("expected duplicate warning set to be suppressed, first=%v second=%v", firstLogged, secondLogged)
+	}
+
+	server.promptCatalogReloadMu.Lock()
+	server.promptCatalogSnapshotWarningLastLogged = time.Now().Add(-snapshotWarningHeartbeatInterval - time.Second)
+	previous := server.promptCatalogSnapshotWarningLastLogged
+	server.logPromptCatalogSnapshotWarningsLocked([]string{"permission denied", "path not found"})
+	thirdLogged := server.promptCatalogSnapshotWarningLastLogged
+	server.promptCatalogReloadMu.Unlock()
+	if !thirdLogged.After(previous) {
+		t.Fatalf("expected warning heartbeat to refresh timestamp, previous=%v third=%v", previous, thirdLogged)
+	}
+
+	server.promptCatalogReloadMu.Lock()
+	server.logPromptCatalogSnapshotWarningsLocked(nil)
+	clearedFingerprint := server.promptCatalogSnapshotWarningFingerprint
+	clearedLogged := server.promptCatalogSnapshotWarningLastLogged
+	server.promptCatalogReloadMu.Unlock()
+	if clearedFingerprint != "" {
+		t.Fatalf("expected cleared warning fingerprint, got %q", clearedFingerprint)
+	}
+	if !clearedLogged.IsZero() {
+		t.Fatalf("expected cleared warning timestamp, got %v", clearedLogged)
 	}
 }
 
