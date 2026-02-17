@@ -28,3 +28,6 @@ go.work.sum
 
 # logs
 logs/
+
+# macOS Finder metadata
+.DS_Store
