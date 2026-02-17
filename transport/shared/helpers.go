@@ -3,6 +3,7 @@ package shared
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"regexp"
@@ -21,6 +22,11 @@ const maxRenderedPromptBytes = 128 * 1024
 const toolExecutionErrorMessage = "Tool execution failed"
 
 var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
+
+type promptsGetParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
 
 func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Response {
 	sortedTools := append([]mcp.Tool(nil), tools...)
@@ -105,16 +111,33 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 	prompts := catalog.ListPrompts()
 	start, err := ParseCursor(msg.Params, len(prompts))
 	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
+		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Invalid cursor value", "invalid_params", map[string]any{
+			"field":   "cursor",
+			"problem": "invalid_cursor",
+		})
 	}
 	end := min(start+pageSize, len(prompts))
 
 	list := make([]map[string]any, 0, end-start)
 	for _, prompt := range prompts[start:end] {
-		list = append(list, map[string]any{
+		item := map[string]any{
 			"name":        prompt.Name,
 			"description": prompt.Description,
-		})
+		}
+		if prompt.Title != "" {
+			item["title"] = prompt.Title
+		}
+		if len(prompt.Arguments) > 0 {
+			args := make([]map[string]any, 0, len(prompt.Arguments))
+			for _, argument := range prompt.Arguments {
+				args = append(args, map[string]any{
+					"name":     argument.Name,
+					"required": argument.Required,
+				})
+			}
+			item["arguments"] = args
+		}
+		list = append(list, item)
 	}
 
 	result := map[string]any{
@@ -137,15 +160,9 @@ func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registr
 		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
 	}
 
-	var params struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments,omitempty"`
-	}
+	var params promptsGetParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Invalid prompts/get payload", "invalid_params", map[string]any{
-			"field":   "params",
-			"problem": "malformed_payload",
-		})
+		return buildPromptsGetPayloadError(msg.ID, err)
 	}
 	params.Name = strings.TrimSpace(params.Name)
 	if params.Name == "" {
@@ -184,6 +201,30 @@ func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registr
 				},
 			},
 		},
+	})
+}
+
+func buildPromptsGetPayloadError(id any, err error) *jsonrpc.Response {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		field := strings.TrimSpace(typeErr.Field)
+		if strings.HasPrefix(field, "arguments") {
+			return semanticError(id, jsonrpc.ErrInvalidParams, "Prompt arguments must be an object of string values", "invalid_params", map[string]any{
+				"field":   "arguments",
+				"problem": "invalid_type",
+			})
+		}
+		if strings.HasPrefix(field, "name") {
+			return semanticError(id, jsonrpc.ErrInvalidParams, "Prompt name must be a string", "invalid_params", map[string]any{
+				"field":   "name",
+				"problem": "invalid_type",
+			})
+		}
+	}
+
+	return semanticError(id, jsonrpc.ErrInvalidParams, "Invalid prompts/get payload", "invalid_params", map[string]any{
+		"field":   "params",
+		"problem": "malformed_payload",
 	})
 }
 
@@ -247,21 +288,38 @@ func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]a
 	}, true
 }
 
-func renderPromptTemplate(template string, arguments map[string]any) (string, error) {
+func renderPromptTemplate(template string, arguments map[string]string) (string, error) {
 	if template == "" || len(arguments) == 0 {
 		return template, nil
 	}
 
-	normalizedArgs := make(map[string]string, len(arguments))
-	for key, value := range arguments {
+	rawKeys := make([]string, 0, len(arguments))
+	for key := range arguments {
+		rawKeys = append(rawKeys, key)
+	}
+	sort.Strings(rawKeys)
+
+	keys := make([]string, 0, len(rawKeys))
+	argumentValues := make(map[string]string, len(rawKeys))
+	for _, key := range rawKeys {
 		trimmedKey := strings.TrimSpace(key)
 		if trimmedKey == "" {
 			continue
 		}
-		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(value)
+		if _, exists := argumentValues[trimmedKey]; !exists {
+			keys = append(keys, trimmedKey)
+		}
+		argumentValues[trimmedKey] = normalizePromptArgumentValue(arguments[key])
 	}
-	if len(normalizedArgs) == 0 {
+	if len(keys) == 0 {
 		return template, nil
+	}
+	sort.Strings(keys)
+
+	normalizedArgs := make(map[string]string, len(keys))
+	for _, key := range keys {
+		value := argumentValues[key]
+		normalizedArgs[key] = value
 	}
 
 	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
@@ -292,6 +350,7 @@ func renderPromptTemplate(template string, arguments map[string]any) (string, er
 				return "", err
 			}
 		} else {
+			// Strict mode: placeholder keys are matched exactly (case-sensitive).
 			if err := appendBounded(&b, template[start:end]); err != nil {
 				return "", err
 			}
@@ -306,19 +365,11 @@ func renderPromptTemplate(template string, arguments map[string]any) (string, er
 	return b.String(), nil
 }
 
-func normalizePromptArgumentValue(value any) string {
-	if text, ok := value.(string); ok {
-		value = strings.ReplaceAll(text, "\x00", "")
-	}
-
+func normalizePromptArgumentValue(value string) string {
+	value = strings.ReplaceAll(value, "\x00", "")
 	raw, err := json.Marshal(value)
 	if err != nil {
-		// Preserve structural boundary by forcing fallback through JSON string encoding.
-		fallback, marshalErr := json.Marshal(strings.ReplaceAll(fmt.Sprint(value), "\x00", ""))
-		if marshalErr != nil {
-			return "\"\""
-		}
-		return string(fallback)
+		return "\"\""
 	}
 	return string(raw)
 }
@@ -408,13 +459,15 @@ func ToolContentFromResult(result any) []map[string]any {
 	return []map[string]any{{"type": "text", "text": string(resultJSON)}}
 }
 
-func ServerCapabilities(promptCatalogEnabled bool) map[string]any {
+func ServerCapabilities(promptCatalogEnabled bool, promptListChanged bool) map[string]any {
 	capabilities := map[string]any{
 		"tools":     map[string]any{},
 		"resources": map[string]any{},
 	}
 	if promptCatalogEnabled {
-		capabilities["prompts"] = map[string]any{}
+		capabilities["prompts"] = map[string]any{
+			"listChanged": promptListChanged,
+		}
 	}
 	return capabilities
 }

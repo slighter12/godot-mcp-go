@@ -31,12 +31,18 @@ func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
 			}
 			result := mustMap(t, resp.Result)
 			capabilities := mustMap(t, result["capabilities"])
-			_, hasPrompts := capabilities["prompts"]
+			promptsCapabilityRaw, hasPrompts := capabilities["prompts"]
 			if tc.enabled && !hasPrompts {
 				t.Fatal("expected prompts capability when prompt catalog is enabled")
 			}
 			if !tc.enabled && hasPrompts {
 				t.Fatal("did not expect prompts capability when prompt catalog is disabled")
+			}
+			if tc.enabled {
+				promptsCapability := mustMap(t, promptsCapabilityRaw)
+				if promptsCapability["listChanged"] != false {
+					t.Fatalf("expected prompts.listChanged=false, got %v", promptsCapability["listChanged"])
+				}
 			}
 		})
 	}
@@ -90,6 +96,44 @@ func TestStdioPromptsFlow(t *testing.T) {
 	content := mustMap(t, messages[0]["content"])
 	if content["text"] != "Review <user_input name=\"scene_path\" format=\"json\">\n\"res://Main.tscn\"\n</user_input>" {
 		t.Fatalf("expected rendered prompt, got %v", content["text"])
+	}
+}
+
+func TestStdioPromptsGetRejectsNonStringArguments(t *testing.T) {
+	server := newTestStdioServer(true)
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}}",
+	})
+
+	getRespAny, err := server.handleMessage(jsonrpc.Request{
+		ID:     2,
+		Method: "prompts/get",
+		Params: mustRaw(t, map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{"scene_path": float64(42)},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("prompts/get failed: %v", err)
+	}
+	getResp, ok := getRespAny.(*jsonrpc.Response)
+	if !ok {
+		t.Fatalf("expected jsonrpc response, got %T", getRespAny)
+	}
+	if getResp.Error == nil {
+		t.Fatalf("expected invalid params error, got result %#v", getResp.Result)
+	}
+	if getResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrInvalidParams), getResp.Error.Code)
+	}
+	data := mustMap(t, getResp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
+	}
+	if data["field"] != "arguments" {
+		t.Fatalf("expected field arguments, got %v", data["field"])
 	}
 }
 

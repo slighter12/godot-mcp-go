@@ -96,7 +96,7 @@ This resource is metadata only. It is not the execution engine for policy enforc
 
 ## Outstanding Gaps (Prompt Catalog Scope)
 
-- Runtime hot-reload lifecycle is undefined (current behavior is startup load only).
+- Runtime hot-reload lifecycle is manual (`reload-prompt-catalog` tool); file-watch auto-reload is not defined.
 - Template rendering currently supports simple placeholder replacement only.
 - Prompt catalog path governance and allow-list policy are not defined.
 
@@ -119,12 +119,24 @@ This resource is metadata only. It is not the execution engine for policy enforc
 - Collision policy for duplicate prompt names
 - Deterministic lookup for case-insensitive names
 - Capability reporting aligned to enabled/disabled state
+- Prompt metadata enrichment (`title`, template-derived `arguments`)
+- Prompt capability flag `prompts.listChanged` (transport-specific)
 
 ### Phase 4: Verification
 
 - Unit tests for registry and prompt handlers
 - HTTP smoke checks with prompt catalog enabled/disabled variants
 - Inspector compatibility checks for prompt methods
+- Streamable HTTP SSE checks for `notifications/prompts/list_changed`
+
+## Current Runtime Notes (2025-11-25)
+
+- Streamable HTTP integration targets MCP protocol version `2025-11-25`.
+- Clients should send `MCP-Protocol-Version: 2025-11-25` on Streamable HTTP requests; missing header is treated as invalid when no negotiated session version exists.
+- Streamable HTTP supports optional SSE channel through `GET /mcp` for server-to-client notifications.
+- Prompt catalog reload is exposed via `tools/call` using `reload-prompt-catalog`.
+- `reload-prompt-catalog` emits `notifications/prompts/list_changed` only when prompt list visible metadata changed.
+- stdio transport does not emit prompt list changed notifications in this phase (`prompts.listChanged=false`).
 
 ## Manual Verification Checklist
 

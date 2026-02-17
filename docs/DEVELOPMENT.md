@@ -40,6 +40,7 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 
 - [x] Base JSON-RPC envelope handling
 - [x] Session negotiation and protocol version checks
+- [x] Streamable HTTP policy documented: target protocol `2025-11-25` and explicit `MCP-Protocol-Version` usage
 - [ ] Performance benchmarks under concurrent requests
 - [ ] Concurrent connection stress tests
 
@@ -52,10 +53,10 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 
 ### Track C: Prompt Catalog Runtime
 
-- [ ] Prompt catalog discovery and registration
-- [ ] Prompt lookup (`prompts/list`, `prompts/get`) backed by runtime data
-- [ ] Prompt-to-tool routing with validated arguments
-- [ ] Prompt catalog compatibility tests (Inspector + HTTP smoke)
+- [x] Prompt catalog discovery and registration
+- [x] Prompt lookup (`prompts/list`, `prompts/get`) backed by runtime data
+- [x] Prompt-to-tool routing with validated arguments
+- [x] Prompt catalog compatibility tests (Inspector + HTTP smoke)
 
 Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`.
 

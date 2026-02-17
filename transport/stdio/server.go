@@ -158,7 +158,7 @@ func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error)
 		"server_id":       "default",
 		"tools":           s.toolManager.GetTools(),
 		"protocolVersion": negotiateProtocolVersion(msg.Params),
-		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled()),
+		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled(), false),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",

@@ -41,6 +41,10 @@ func NewServer(cfg *config.Config) *Server {
 func (s *Server) Start() error {
 	s.initializePromptCatalog()
 	s.toolManager.RegisterDefaultTools()
+	if err := s.registerRuntimeTools(); err != nil {
+		logger.Error("Failed to register runtime tools", "error", err)
+		return err
+	}
 	if err := s.registry.RegisterServer("default", s.toolManager.GetTools()); err != nil {
 		logger.Error("Failed to register default server", "error", err)
 		return err

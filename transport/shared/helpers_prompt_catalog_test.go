@@ -31,12 +31,20 @@ func TestBuildPromptsListResponse_NotSupported(t *testing.T) {
 }
 
 func TestServerCapabilities_PromptsCapabilityToggle(t *testing.T) {
-	withPrompts := ServerCapabilities(true)
-	if _, ok := withPrompts["prompts"]; !ok {
+	withPrompts := ServerCapabilities(true, true)
+	promptsCap, ok := withPrompts["prompts"]
+	if !ok {
 		t.Fatal("expected prompts capability when prompt catalog is enabled")
 	}
+	promptsCapMap, ok := promptsCap.(map[string]any)
+	if !ok {
+		t.Fatalf("expected prompts capability map, got %T", promptsCap)
+	}
+	if promptsCapMap["listChanged"] != true {
+		t.Fatalf("expected listChanged=true, got %v", promptsCapMap["listChanged"])
+	}
 
-	withoutPrompts := ServerCapabilities(false)
+	withoutPrompts := ServerCapabilities(false, false)
 	if _, ok := withoutPrompts["prompts"]; ok {
 		t.Fatal("did not expect prompts capability when prompt catalog is disabled")
 	}
@@ -73,8 +81,12 @@ func TestBuildPromptsListResponse_Pagination(t *testing.T) {
 	for i := range pageSize + 1 {
 		catalog.RegisterPrompt(promptcatalog.Prompt{
 			Name:        fmt.Sprintf("prompt-%02d", i),
+			Title:       "Prompt Title",
 			Description: "desc",
-			Template:    "body",
+			Arguments: []promptcatalog.PromptArgument{
+				{Name: "arg", Required: false},
+			},
+			Template: "body",
 		})
 	}
 
@@ -87,6 +99,17 @@ func TestBuildPromptsListResponse_Pagination(t *testing.T) {
 	if firstResult["nextCursor"] != fmt.Sprintf("%d", pageSize) {
 		t.Fatalf("expected nextCursor=%d, got %v", pageSize, firstResult["nextCursor"])
 	}
+	firstPrompt := firstPrompts[0]
+	if firstPrompt["title"] != "Prompt Title" {
+		t.Fatalf("expected title Prompt Title, got %v", firstPrompt["title"])
+	}
+	argsRaw, ok := firstPrompt["arguments"].([]map[string]any)
+	if !ok || len(argsRaw) != 1 {
+		t.Fatalf("expected one prompt argument, got %T %v", firstPrompt["arguments"], firstPrompt["arguments"])
+	}
+	if argsRaw[0]["name"] != "arg" {
+		t.Fatalf("expected argument name arg, got %v", argsRaw[0]["name"])
+	}
 
 	second := BuildPromptsListResponse(mustRequest(t, "prompts/list", map[string]any{"cursor": fmt.Sprintf("%d", pageSize)}), catalog)
 	secondResult := mustResultMap(t, second)
@@ -96,6 +119,26 @@ func TestBuildPromptsListResponse_Pagination(t *testing.T) {
 	}
 	if _, hasNext := secondResult["nextCursor"]; hasNext {
 		t.Fatal("did not expect nextCursor on last page")
+	}
+}
+
+func TestBuildPromptsListResponse_InvalidCursorHasSemanticError(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{Name: "prompt-1", Description: "desc", Template: "body"})
+
+	resp := BuildPromptsListResponse(mustRequest(t, "prompts/list", map[string]any{"cursor": "bad"}), catalog)
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
+	}
+	if data["field"] != "cursor" {
+		t.Fatalf("expected field cursor, got %v", data["field"])
 	}
 }
 
@@ -129,6 +172,37 @@ func TestBuildPromptsGetResponse_RenderTemplate(t *testing.T) {
 	}
 	if content["text"] != "Review <user_input name=\"scene_path\" format=\"json\">\n\"res://Main.tscn\"\n</user_input>" {
 		t.Fatalf("expected rendered prompt text, got %v", content["text"])
+	}
+}
+
+func TestBuildPromptsGetResponse_RenderTemplate_StrictCaseSensitiveMatch(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{Line}} then {{line}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"line": "42"},
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	messages, ok := result["messages"].([]map[string]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message, got %T %v", result["messages"], result["messages"])
+	}
+	content, ok := messages[0]["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected message content map, got %T", messages[0]["content"])
+	}
+	expected := "Review {{Line}} then <user_input name=\"line\" format=\"json\">\n\"42\"\n</user_input>"
+	if content["text"] != expected {
+		t.Fatalf("expected rendered prompt text %q, got %v", expected, content["text"])
 	}
 }
 
@@ -210,7 +284,7 @@ func TestBuildPromptsGetResponse_EscapesWrapperControlTokens(t *testing.T) {
 	}
 }
 
-func TestBuildPromptsGetResponse_RenderNonStringArgumentsAsJSON(t *testing.T) {
+func TestBuildPromptsGetResponse_RejectsNonStringArgumentValues(t *testing.T) {
 	catalog := promptcatalog.NewRegistry(true)
 	catalog.RegisterPrompt(promptcatalog.Prompt{
 		Name:        "meta",
@@ -225,27 +299,46 @@ func TestBuildPromptsGetResponse_RenderNonStringArgumentsAsJSON(t *testing.T) {
 		},
 	})
 	resp := BuildPromptsGetResponse(req, catalog)
-	if resp == nil || resp.Error != nil {
-		t.Fatalf("expected success response, got %+v", resp)
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected error response, got %+v", resp)
 	}
-	result := mustResultMap(t, resp)
-	messages, ok := result["messages"].([]map[string]any)
-	if !ok || len(messages) != 1 {
-		t.Fatalf("expected one message, got %T %v", result["messages"], result["messages"])
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
 	}
-	content, ok := messages[0]["content"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected message content map, got %T", messages[0]["content"])
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
 	}
-	text, ok := content["text"].(string)
-	if !ok {
-		t.Fatalf("expected rendered content text to be string, got %T", content["text"])
+	if data["field"] != "arguments" {
+		t.Fatalf("expected field arguments, got %v", data["field"])
 	}
-	if !strings.Contains(text, "<user_input name=\"meta\" format=\"json\">") {
-		t.Fatalf("expected wrapped user input boundary, got %v", text)
+}
+
+func TestBuildPromptsGetResponse_RejectsMalformedArgumentsPayload(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "meta",
+		Description: "desc",
+		Template:    "Meta={{meta}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name":      "meta",
+		"arguments": []any{"not-an-object"},
+	})
+	resp := BuildPromptsGetResponse(req, catalog)
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected error response, got %+v", resp)
 	}
-	if !strings.Contains(text, "\"path\":\"res://Main.tscn\"") || !strings.Contains(text, "\"line\":12") {
-		t.Fatalf("expected JSON-rendered map argument, got %v", text)
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
+	}
+	if data["field"] != "arguments" {
+		t.Fatalf("expected field arguments, got %v", data["field"])
 	}
 }
 

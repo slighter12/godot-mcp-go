@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,10 +14,20 @@ import (
 // Prompt represents one prompt exposed through MCP prompt endpoints.
 type Prompt struct {
 	Name        string
+	Title       string
 	Description string
+	Arguments   []PromptArgument
 	Template    string
 	SourcePath  string
 }
+
+// PromptArgument describes one named template argument.
+type PromptArgument struct {
+	Name     string
+	Required bool
+}
+
+var promptArgumentPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
 // Registry stores prompts discovered from skill files.
 type Registry struct {
@@ -237,6 +248,7 @@ func PromptFromSkillFile(path string) (Prompt, error) {
 
 	frontmatter, body := parseFrontmatterAndBody(string(content))
 	name := firstNonEmpty(frontmatter["name"], filepath.Base(filepath.Dir(path)))
+	title := strings.TrimSpace(frontmatter["title"])
 	description := strings.TrimSpace(frontmatter["description"])
 	if description == "" {
 		description = fmt.Sprintf("Prompt loaded from %s", filepath.Base(filepath.Dir(path)))
@@ -249,7 +261,9 @@ func PromptFromSkillFile(path string) (Prompt, error) {
 
 	return Prompt{
 		Name:        name,
+		Title:       title,
 		Description: description,
+		Arguments:   extractPromptArguments(template),
 		Template:    template,
 		SourcePath:  filepath.Clean(path),
 	}, nil
@@ -323,7 +337,60 @@ func promptKey(name string) string {
 
 func normalizePrompt(prompt Prompt) Prompt {
 	prompt.Name = strings.TrimSpace(prompt.Name)
+	prompt.Title = strings.TrimSpace(prompt.Title)
 	prompt.Description = strings.TrimSpace(prompt.Description)
 	prompt.Template = strings.TrimSpace(prompt.Template)
+	prompt.Arguments = normalizePromptArguments(prompt.Arguments)
 	return prompt
+}
+
+func normalizePromptArguments(args []PromptArgument) []PromptArgument {
+	if len(args) == 0 {
+		return nil
+	}
+
+	normalized := make([]PromptArgument, 0, len(args))
+	seen := make(map[string]struct{}, len(args))
+	for _, arg := range args {
+		name := strings.TrimSpace(arg.Name)
+		if name == "" {
+			continue
+		}
+		// MCP prompt argument names are case-sensitive in strict mode.
+		// Only exact duplicates are collapsed.
+		key := name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, PromptArgument{
+			Name:     name,
+			Required: arg.Required,
+		})
+	}
+
+	sort.Slice(normalized, func(i, j int) bool {
+		return normalized[i].Name < normalized[j].Name
+	})
+	return normalized
+}
+
+func extractPromptArguments(template string) []PromptArgument {
+	matches := promptArgumentPattern.FindAllStringSubmatch(template, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	args := make([]PromptArgument, 0, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		key := strings.TrimSpace(match[1])
+		if key == "" {
+			continue
+		}
+		args = append(args, PromptArgument{Name: key, Required: false})
+	}
+	return normalizePromptArguments(args)
 }
