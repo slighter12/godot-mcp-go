@@ -13,6 +13,12 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp"
 )
 
+const (
+	defaultPromptCatalogAutoReloadIntervalSeconds = 5
+	minPromptCatalogAutoReloadIntervalSeconds     = 2
+	maxPromptCatalogAutoReloadIntervalSeconds     = 300
+)
+
 // Config represents the MCP server configuration
 type Config struct {
 	Name          string        `json:"name"`
@@ -109,7 +115,7 @@ func NewConfig() *Config {
 			AllowedRoots: []string{},
 			AutoReload: PromptCatalogAutoReload{
 				Enabled:         false,
-				IntervalSeconds: 5,
+				IntervalSeconds: defaultPromptCatalogAutoReloadIntervalSeconds,
 			},
 			Rendering: PromptCatalogRendering{
 				Mode:                   "legacy",
@@ -265,7 +271,7 @@ func (c *Config) Normalize() {
 		c.PromptCatalog.Rendering.Mode = "legacy"
 	}
 	if c.PromptCatalog.AutoReload.IntervalSeconds == 0 {
-		c.PromptCatalog.AutoReload.IntervalSeconds = 5
+		c.PromptCatalog.AutoReload.IntervalSeconds = defaultPromptCatalogAutoReloadIntervalSeconds
 	}
 	for i := range c.Transports {
 		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
@@ -339,10 +345,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid prompt catalog rendering mode %q: expected one of [legacy strict]", c.PromptCatalog.Rendering.Mode)
 	}
 
-	if c.PromptCatalog.AutoReload.IntervalSeconds < 2 || c.PromptCatalog.AutoReload.IntervalSeconds > 300 {
+	if c.PromptCatalog.AutoReload.IntervalSeconds < minPromptCatalogAutoReloadIntervalSeconds || c.PromptCatalog.AutoReload.IntervalSeconds > maxPromptCatalogAutoReloadIntervalSeconds {
 		return fmt.Errorf(
-			"invalid prompt catalog auto reload interval seconds %d: expected range 2..300",
+			"invalid prompt catalog auto reload interval seconds: %d (expected range %d..%d)",
 			c.PromptCatalog.AutoReload.IntervalSeconds,
+			minPromptCatalogAutoReloadIntervalSeconds,
+			maxPromptCatalogAutoReloadIntervalSeconds,
 		)
 	}
 
