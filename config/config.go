@@ -184,25 +184,13 @@ func SaveConfig(cfg *Config, path string) error {
 }
 
 func applyEnvOverrides(cfg *Config) {
-	if portStr := os.Getenv("MCP_PORT"); portStr != "" {
-		if port, err := strconv.Atoi(portStr); err == nil {
-			cfg.Server.Port = port
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PORT value %q: %v", portStr, err)
-		}
-	}
+	applyEnvIntOverride("MCP_PORT", &cfg.Server.Port)
 
 	if host := os.Getenv("MCP_HOST"); host != "" {
 		cfg.Server.Host = host
 	}
 
-	if debug := os.Getenv("MCP_DEBUG"); debug != "" {
-		if parsed, err := strconv.ParseBool(debug); err == nil {
-			cfg.Server.Debug = parsed
-		} else {
-			log.Printf("warning: ignoring invalid MCP_DEBUG value %q: %v", debug, err)
-		}
-	}
+	applyEnvBoolOverride("MCP_DEBUG", &cfg.Server.Debug)
 
 	if logLevel := os.Getenv("MCP_LOG_LEVEL"); logLevel != "" {
 		cfg.Logging.Level = logLevel
@@ -212,13 +200,7 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.Logging.Path = logPath
 	}
 
-	if promptCatalogEnabled := os.Getenv("MCP_PROMPT_CATALOG_ENABLED"); promptCatalogEnabled != "" {
-		if parsed, err := strconv.ParseBool(promptCatalogEnabled); err == nil {
-			cfg.PromptCatalog.Enabled = parsed
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_ENABLED value %q: %v", promptCatalogEnabled, err)
-		}
-	}
+	applyEnvBoolOverride("MCP_PROMPT_CATALOG_ENABLED", &cfg.PromptCatalog.Enabled)
 
 	if promptCatalogPaths := os.Getenv("MCP_PROMPT_CATALOG_PATHS"); promptCatalogPaths != "" {
 		cfg.PromptCatalog.Paths = parseCSV(promptCatalogPaths)
@@ -228,33 +210,47 @@ func applyEnvOverrides(cfg *Config) {
 		cfg.PromptCatalog.AllowedRoots = parseCSV(promptCatalogAllowedRoots)
 	}
 
-	if autoReloadEnabled := os.Getenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED"); autoReloadEnabled != "" {
-		if parsed, err := strconv.ParseBool(autoReloadEnabled); err == nil {
-			cfg.PromptCatalog.AutoReload.Enabled = parsed
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED value %q: %v", autoReloadEnabled, err)
-		}
-	}
+	applyEnvBoolOverride("MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED", &cfg.PromptCatalog.AutoReload.Enabled)
 
-	if autoReloadInterval := os.Getenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS"); autoReloadInterval != "" {
-		if parsed, err := strconv.Atoi(autoReloadInterval); err == nil {
-			cfg.PromptCatalog.AutoReload.IntervalSeconds = parsed
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS value %q: %v", autoReloadInterval, err)
-		}
-	}
+	applyEnvIntOverride("MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS", &cfg.PromptCatalog.AutoReload.IntervalSeconds)
 
 	if renderingMode := os.Getenv("MCP_PROMPT_CATALOG_RENDERING_MODE"); renderingMode != "" {
 		cfg.PromptCatalog.Rendering.Mode = renderingMode
 	}
 
-	if rejectUnknownArgs := os.Getenv("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS"); rejectUnknownArgs != "" {
-		if parsed, err := strconv.ParseBool(rejectUnknownArgs); err == nil {
-			cfg.PromptCatalog.Rendering.RejectUnknownArguments = parsed
-		} else {
-			log.Printf("warning: ignoring invalid MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS value %q: %v", rejectUnknownArgs, err)
-		}
+	applyEnvBoolOverride("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS", &cfg.PromptCatalog.Rendering.RejectUnknownArguments)
+}
+
+func applyEnvBoolOverride(name string, target *bool) {
+	if target == nil {
+		return
 	}
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		log.Printf("warning: ignoring invalid %s value %q: %v", name, raw, err)
+		return
+	}
+	*target = parsed
+}
+
+func applyEnvIntOverride(name string, target *int) {
+	if target == nil {
+		return
+	}
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Printf("warning: ignoring invalid %s value %q: %v", name, raw, err)
+		return
+	}
+	*target = parsed
 }
 
 // Normalize canonicalizes config values so downstream validation and runtime

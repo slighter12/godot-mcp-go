@@ -190,10 +190,10 @@ func (s *Server) initializePromptCatalog() {
 		return
 	}
 
-	if err := s.promptCatalog.LoadFromPathsWithAllowedRoots(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots); err != nil {
+	fingerprint, snapshotErrors, err := s.loadPromptCatalogWithStableSnapshot()
+	if err != nil {
 		logger.Warn("Prompt catalog loaded with warnings", "error", err)
 	}
-	fingerprint, snapshotErrors := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
 
 	s.promptCatalogReloadMu.Lock()
 	s.promptCatalogFileFingerprint = fingerprint

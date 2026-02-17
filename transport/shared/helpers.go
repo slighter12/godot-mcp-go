@@ -213,7 +213,7 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 
 	normalizedOptions := normalizePromptRenderOptions(options)
 	normalizedArgs := normalizePromptArguments(params.Arguments)
-	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Template, normalizedArgs, normalizedOptions); strictErr != nil {
+	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Arguments, normalizedArgs, normalizedOptions); strictErr != nil {
 		return strictErr
 	}
 
@@ -328,12 +328,26 @@ func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]a
 	}, true
 }
 
-func validateStrictPromptArguments(id any, template string, arguments map[string]string, options PromptRenderOptions) *jsonrpc.Response {
+func validateStrictPromptArguments(id any, promptArguments []promptcatalog.PromptArgument, arguments map[string]string, options PromptRenderOptions) *jsonrpc.Response {
 	if options.Mode != PromptRenderingModeStrict {
 		return nil
 	}
 
-	requiredKeys := extractTemplatePlaceholderKeys(template)
+	requiredKeys := make([]string, 0, len(promptArguments))
+	seenRequiredKeys := make(map[string]struct{}, len(promptArguments))
+	for _, arg := range promptArguments {
+		name := strings.TrimSpace(arg.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seenRequiredKeys[name]; ok {
+			continue
+		}
+		seenRequiredKeys[name] = struct{}{}
+		requiredKeys = append(requiredKeys, name)
+	}
+	sort.Strings(requiredKeys)
+
 	missing := make([]string, 0)
 	for _, key := range requiredKeys {
 		if _, ok := arguments[key]; !ok {
@@ -373,36 +387,7 @@ func validateStrictPromptArguments(id any, template string, arguments map[string
 	return nil
 }
 
-func extractTemplatePlaceholderKeys(template string) []string {
-	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatch(template, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(matches))
-	seen := make(map[string]struct{}, len(matches))
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-		key := strings.TrimSpace(match[1])
-		if key == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func normalizePromptArguments(arguments map[string]string) map[string]string {
-	if len(arguments) == 0 {
-		return nil
-	}
-
 	rawKeys := make([]string, 0, len(arguments))
 	for key := range arguments {
 		rawKeys = append(rawKeys, key)

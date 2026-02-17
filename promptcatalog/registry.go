@@ -217,7 +217,7 @@ func CollectSkillFileSnapshots(paths []string, allowedRoots []string) ([]SkillFi
 	return snapshots, loadErrors
 }
 
-// SnapshotFingerprint returns a stable JSON digest from SKILL.md snapshots.
+// SnapshotFingerprint returns a stable SHA-256 fingerprint from SKILL.md snapshots.
 func SnapshotFingerprint(paths []string, allowedRoots []string) (string, []string) {
 	snapshots, loadErrors := CollectSkillFileSnapshots(paths, allowedRoots)
 	data, err := json.Marshal(snapshots)
@@ -225,7 +225,8 @@ func SnapshotFingerprint(paths []string, allowedRoots []string) (string, []strin
 		loadErrors = append(loadErrors, fmt.Sprintf("marshal skill file snapshots: %v", err))
 		return "", loadErrors
 	}
-	return string(data), loadErrors
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), loadErrors
 }
 
 func discoverSkillFilesWithPolicy(paths []string, allowedRoots []string) ([]string, []string) {

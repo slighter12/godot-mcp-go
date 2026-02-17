@@ -16,11 +16,7 @@ import (
 )
 
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
-
-type promptCatalogSourceSnapshot struct {
-	fingerprint string
-	warnings    []string
-}
+const promptCatalogLoadConsistencyMaxAttempts = 3
 
 func (s *Server) registerRuntimeTools() error {
 	return s.toolManager.RegisterTool(utility.NewReloadPromptCatalogTool(s.reloadPromptCatalog))
@@ -29,10 +25,10 @@ func (s *Server) registerRuntimeTools() error {
 func (s *Server) reloadPromptCatalog() map[string]any {
 	s.promptCatalogReloadMu.Lock()
 	defer s.promptCatalogReloadMu.Unlock()
-	return s.reloadPromptCatalogLocked(nil)
+	return s.reloadPromptCatalogLocked()
 }
 
-func (s *Server) reloadPromptCatalogLocked(snapshot *promptCatalogSourceSnapshot) map[string]any {
+func (s *Server) reloadPromptCatalogLocked() map[string]any {
 	result := map[string]any{
 		"changed":        false,
 		"promptCount":    0,
@@ -48,20 +44,11 @@ func (s *Server) reloadPromptCatalogLocked(snapshot *promptCatalogSourceSnapshot
 	beforePrompts := s.promptCatalog.ListPrompts()
 	beforeFingerprint := promptListFingerprint(beforePrompts)
 
-	loadErr := s.promptCatalog.LoadFromPathsWithAllowedRoots(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+	sourceFingerprint, sourceFingerprintWarnings, loadErr := s.loadPromptCatalogWithStableSnapshot()
 
 	afterPrompts := s.promptCatalog.ListPrompts()
 	afterFingerprint := promptListFingerprint(afterPrompts)
 	loadErrors := s.promptCatalog.LoadErrors()
-
-	sourceFingerprint := ""
-	sourceFingerprintWarnings := []string(nil)
-	if snapshot == nil {
-		sourceFingerprint, sourceFingerprintWarnings = promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
-	} else {
-		sourceFingerprint = snapshot.fingerprint
-		sourceFingerprintWarnings = append([]string(nil), snapshot.warnings...)
-	}
 	s.promptCatalogFileFingerprint = sourceFingerprint
 	changed := beforeFingerprint != afterFingerprint
 
@@ -177,10 +164,35 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 		return nil, false
 	}
 
-	return s.reloadPromptCatalogLocked(&promptCatalogSourceSnapshot{
-		fingerprint: sourceFingerprint,
-		warnings:    warnings,
-	}), true
+	return s.reloadPromptCatalogLocked(), true
+}
+
+func (s *Server) loadPromptCatalogWithStableSnapshot() (string, []string, error) {
+	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
+		return "", nil, nil
+	}
+
+	combinedWarnings := make([]string, 0)
+	var loadErr error
+	var afterFingerprint string
+	var afterWarnings []string
+
+	for attempt := 0; attempt < promptCatalogLoadConsistencyMaxAttempts; attempt++ {
+		beforeFingerprint, beforeWarnings := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+		combinedWarnings = append(combinedWarnings, beforeWarnings...)
+
+		loadErr = s.promptCatalog.LoadFromPathsWithAllowedRoots(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+
+		afterFingerprint, afterWarnings = promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+		combinedWarnings = append(combinedWarnings, afterWarnings...)
+
+		if beforeFingerprint == afterFingerprint {
+			return afterFingerprint, dedupeSortedWarnings(combinedWarnings), loadErr
+		}
+	}
+
+	combinedWarnings = append(combinedWarnings, fmt.Sprintf("prompt catalog sources changed during reload; reached consistency retry limit (%d)", promptCatalogLoadConsistencyMaxAttempts))
+	return afterFingerprint, dedupeSortedWarnings(combinedWarnings), loadErr
 }
 
 func (s *Server) logPromptCatalogSnapshotWarningsLocked(warnings []string) {
@@ -237,6 +249,32 @@ func summarizeLoadErrors(loadErrors []string, limit int) []string {
 	}
 	out := append([]string(nil), loadErrors[:limit]...)
 	out = append(out, fmt.Sprintf("... %d more warning(s)", len(loadErrors)-limit))
+	return out
+}
+
+func dedupeSortedWarnings(warnings []string) []string {
+	if len(warnings) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(warnings))
+	seen := make(map[string]struct{}, len(warnings))
+	for _, warning := range warnings {
+		trimmed := strings.TrimSpace(warning)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
 	return out
 }
 
