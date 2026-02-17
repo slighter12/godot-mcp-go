@@ -39,7 +39,12 @@ type SkillFileSnapshot struct {
 	ContentSHA256   string
 }
 
-var promptArgumentPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
+var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
+
+// PromptPlaceholderPattern returns the canonical placeholder pattern used across prompt catalog rendering.
+func PromptPlaceholderPattern() *regexp.Regexp {
+	return promptPlaceholderPattern
+}
 
 // Registry stores prompts discovered from skill files.
 type Registry struct {
@@ -508,7 +513,7 @@ func normalizePromptArguments(args []PromptArgument) []PromptArgument {
 }
 
 func extractPromptArguments(template string) []PromptArgument {
-	matches := promptArgumentPattern.FindAllStringSubmatch(template, -1)
+	matches := promptPlaceholderPattern.FindAllStringSubmatch(template, -1)
 	if len(matches) == 0 {
 		return nil
 	}

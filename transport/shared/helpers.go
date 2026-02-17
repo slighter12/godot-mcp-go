@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +19,6 @@ import (
 const pageSize = 50
 const maxRenderedPromptBytes = 128 * 1024
 const toolExecutionErrorMessage = "Tool execution failed"
-
-var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
 
 type promptsGetParams struct {
 	Name      string            `json:"name"`
@@ -377,7 +374,7 @@ func validateStrictPromptArguments(id any, template string, arguments map[string
 }
 
 func extractTemplatePlaceholderKeys(template string) []string {
-	matches := promptPlaceholderPattern.FindAllStringSubmatch(template, -1)
+	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatch(template, -1)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -432,7 +429,7 @@ func renderPromptTemplate(template string, normalizedArgs map[string]string) (st
 		return template, nil
 	}
 
-	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
+	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatchIndex(template, -1)
 	if len(matches) == 0 {
 		return template, nil
 	}
