@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -62,8 +63,6 @@ func (s *Server) handleOptions(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
-	// Current transport mode is "single request -> single HTTP response".
-	// SSE helpers are reserved for future server-push support.
 
 	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
 	defer limitedBody.Close()
@@ -138,7 +137,10 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		}
 	}
 
-	requireProtocolHeader := hasNonInitialize || acceptedOneWay
+	requireProtocolHeader := false
+	if hasNonInitialize || acceptedOneWay {
+		requireProtocolHeader = s.requireProtocolVersionHeader(sessionID)
+	}
 	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
 		if requestedProtocolVersion == "" && requireProtocolHeader {
 			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
@@ -180,8 +182,61 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 }
 
 func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
-	logger.Info("Streamable HTTP GET request is not supported", "remote_addr", c.RealIP())
-	return c.JSON(http.StatusMethodNotAllowed, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "SSE stream via GET is not supported; use POST /mcp", nil))
+	logger.Info("Streamable HTTP GET request", "remote_addr", c.RealIP())
+
+	sessionID := c.Request().Header.Get(headerSessionID)
+	if sessionID == "" {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
+	}
+	if !s.sessionManager.HasSession(sessionID) {
+		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
+	}
+
+	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
+	requireProtocolHeader := s.requireProtocolVersionHeader(sessionID)
+	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
+		if requestedProtocolVersion == "" && requireProtocolHeader {
+			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
+		}
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
+	}
+
+	if !acceptsEventStream(c.Request().Header.Get(echo.HeaderAccept)) {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Accept header must include text/event-stream", nil))
+	}
+
+	flusher, ok := c.Response().Writer.(http.Flusher)
+	if !ok {
+		return c.JSON(http.StatusMethodNotAllowed, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "SSE stream is not available", nil))
+	}
+
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().Header().Set(headerSessionID, sessionID)
+	c.Response().WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	streamCtx, stopStream := context.WithCancel(c.Request().Context())
+	defer stopStream()
+
+	transport := NewStreamableHTTPTransport(c.Response().Writer, flusher, stopStream)
+	if err := transport.SendComment("stream opened"); err != nil {
+		logger.Warn("Failed to write initial SSE comment", "session_id", sessionID, "error", err)
+		return nil
+	}
+
+	// Publish transport only after SSE headers + initial frame are sent.
+	// This prevents concurrent notification writes from racing with stream setup.
+	if !s.sessionManager.SetTransport(sessionID, transport) {
+		transport.Close()
+		logger.Warn("SSE session disappeared before stream binding", "session_id", sessionID)
+		return nil
+	}
+	defer s.sessionManager.ClearTransportIfMatch(sessionID, transport)
+
+	<-streamCtx.Done()
+	return nil
 }
 
 func (s *Server) handleStreamableHTTPDelete(c echo.Context) error {
@@ -194,8 +249,9 @@ func (s *Server) handleStreamableHTTPDelete(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
 	}
 	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, true) {
-		if requestedProtocolVersion == "" {
+	requireProtocolHeader := s.requireProtocolVersionHeader(sessionID)
+	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
+		if requestedProtocolVersion == "" && requireProtocolHeader {
 			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
 		}
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
@@ -246,7 +302,7 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 		"server_id":       "default",
 		"tools":           tools,
 		"protocolVersion": negotiatedVersion,
-		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled()),
+		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled(), true),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
@@ -299,6 +355,17 @@ func (s *Server) isProtocolVersionAccepted(sessionID string, requestedVersion st
 	return !requireHeader
 }
 
+func (s *Server) requireProtocolVersionHeader(sessionID string) bool {
+	if sessionID == "" {
+		return true
+	}
+	negotiatedVersion, ok := s.sessionManager.GetProtocolVersion(sessionID)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(negotiatedVersion) == ""
+}
+
 func isSupportedProtocolVersion(version string) bool {
 	if version == "" {
 		return false
@@ -308,6 +375,16 @@ func isSupportedProtocolVersion(version string) bool {
 	}
 	_, ok := supportedProtocolVersions[version]
 	return ok
+}
+
+func acceptsEventStream(acceptHeader string) bool {
+	for _, part := range strings.Split(acceptHeader, ",") {
+		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		if strings.EqualFold(mime, "text/event-stream") {
+			return true
+		}
+	}
+	return false
 }
 
 func negotiateProtocolVersion(paramsRaw json.RawMessage) string {

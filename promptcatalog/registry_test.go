@@ -37,6 +37,36 @@ Review {{scene_path}} with policy rules.
 	}
 }
 
+func TestPromptFromSkillFile_WithTitleAndArguments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	content := `---
+name: scene-review
+title: Scene Review
+description: "Review scenes"
+---
+
+Review {{scene_path}} with {{Line}} and {{line}}.
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	prompt, err := PromptFromSkillFile(path)
+	if err != nil {
+		t.Fatalf("PromptFromSkillFile: %v", err)
+	}
+	if prompt.Title != "Scene Review" {
+		t.Fatalf("expected title Scene Review, got %q", prompt.Title)
+	}
+	if len(prompt.Arguments) != 3 {
+		t.Fatalf("expected 3 arguments, got %d", len(prompt.Arguments))
+	}
+	if prompt.Arguments[0].Name != "Line" || prompt.Arguments[1].Name != "line" || prompt.Arguments[2].Name != "scene_path" {
+		t.Fatalf("unexpected argument order/content: %+v", prompt.Arguments)
+	}
+}
+
 func TestPromptFromSkillFile_CRLFFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "SKILL.md")
@@ -158,6 +188,30 @@ func TestLoadFromPaths_DuplicatePromptNameCaseInsensitive(t *testing.T) {
 	}
 	if prompt.Description != "first" {
 		t.Fatalf("expected first prompt to win, got %q", prompt.Description)
+	}
+}
+
+func TestRegisterPrompt_NormalizesArgumentsWithCaseSensitivity(t *testing.T) {
+	reg := NewRegistry(true)
+	reg.RegisterPrompt(Prompt{
+		Name: "render",
+		Arguments: []PromptArgument{
+			{Name: "zeta"},
+			{Name: "Alpha"},
+			{Name: "alpha"},
+			{Name: "alpha"},
+		},
+	})
+
+	prompt, ok := reg.GetPrompt("render")
+	if !ok {
+		t.Fatal("expected prompt")
+	}
+	if len(prompt.Arguments) != 3 {
+		t.Fatalf("expected 3 normalized arguments, got %d", len(prompt.Arguments))
+	}
+	if prompt.Arguments[0].Name != "Alpha" || prompt.Arguments[1].Name != "alpha" || prompt.Arguments[2].Name != "zeta" {
+		t.Fatalf("unexpected normalized arguments: %+v", prompt.Arguments)
 	}
 }
 

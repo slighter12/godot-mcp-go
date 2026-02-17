@@ -113,6 +113,24 @@ func (sm *SessionManager) ClearTransport(sessionID string) bool {
 	return true
 }
 
+// ClearTransportIfMatch removes the stream transport only if it matches the target.
+func (sm *SessionManager) ClearTransportIfMatch(sessionID string, target *StreamableHTTPTransport) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	if session.Transport == nil || session.Transport != target {
+		return false
+	}
+	session.Transport.Close()
+	session.Transport = nil
+	session.LastSeen = time.Now()
+	return true
+}
+
 // MarkInitialized marks a session as initialized.
 func (sm *SessionManager) MarkInitialized(sessionID string) bool {
 	sm.mu.Lock()
@@ -151,6 +169,32 @@ func (sm *SessionManager) GetProtocolVersion(sessionID string) (string, bool) {
 		return "", false
 	}
 	return session.ProtocolVer, true
+}
+
+// GetTransport returns one session transport if present.
+func (sm *SessionManager) GetTransport(sessionID string) (*StreamableHTTPTransport, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists || session.Transport == nil {
+		return nil, false
+	}
+	return session.Transport, true
+}
+
+// SessionIDsWithTransport returns current session IDs with bound SSE transport.
+func (sm *SessionManager) SessionIDsWithTransport() []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	ids := make([]string, 0, len(sm.sessions))
+	for id, session := range sm.sessions {
+		if session.Transport != nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // RemoveSession removes a session
