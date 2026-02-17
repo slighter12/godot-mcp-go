@@ -283,7 +283,7 @@ func (c *Config) Normalize() {
 func (c *Config) Validate() error {
 	// Validate server configuration
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return errors.New("invalid port number")
+		return fmt.Errorf("invalid port number: %d (expected range 1..65535)", c.Server.Port)
 	}
 
 	if c.Server.Host == "" {
@@ -298,7 +298,7 @@ func (c *Config) Validate() error {
 		"error": true,
 	}
 	if !validLogLevels[c.Logging.Level] {
-		return errors.New("invalid log level")
+		return fmt.Errorf("invalid log level: %q (expected one of [debug info warn error])", c.Logging.Level)
 	}
 
 	validLogFormats := map[string]bool{
@@ -306,7 +306,7 @@ func (c *Config) Validate() error {
 		"text": true,
 	}
 	if !validLogFormats[c.Logging.Format] {
-		return errors.New("invalid log format")
+		return fmt.Errorf("invalid log format: %q (expected one of [json text])", c.Logging.Format)
 	}
 
 	if c.Logging.Path == "" {
@@ -326,7 +326,7 @@ func (c *Config) Validate() error {
 	enabledTransports := 0
 	for _, t := range c.Transports {
 		if !validTransportTypes[t.Type] {
-			return fmt.Errorf("invalid transport type: %s", t.Type)
+			return fmt.Errorf("invalid transport type: %q (expected one of [stdio streamable_http])", t.Type)
 		}
 		if t.Enabled {
 			enabledTransports++
@@ -342,7 +342,7 @@ func (c *Config) Validate() error {
 		"strict": true,
 	}
 	if !validRenderingModes[c.PromptCatalog.Rendering.Mode] {
-		return fmt.Errorf("invalid prompt catalog rendering mode %q: expected one of [legacy strict]", c.PromptCatalog.Rendering.Mode)
+		return fmt.Errorf("invalid prompt catalog rendering mode: %q (expected one of [legacy strict])", c.PromptCatalog.Rendering.Mode)
 	}
 
 	if c.PromptCatalog.AutoReload.IntervalSeconds < minPromptCatalogAutoReloadIntervalSeconds || c.PromptCatalog.AutoReload.IntervalSeconds > maxPromptCatalogAutoReloadIntervalSeconds {
