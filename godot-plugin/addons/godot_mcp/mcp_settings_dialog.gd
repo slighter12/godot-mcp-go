@@ -5,7 +5,7 @@ signal settings_saved(streamable_http_url: String)
 
 @onready var connection_type = $VBoxContainer/ConnectionType
 @onready var streamable_http_settings = $VBoxContainer/StreamableHTTPSettings
-@onready var streamable_http_url = $VBoxContainer/StreamableHTTPSettings/StreamableHTTPURL
+@onready var streamable_http_url = $VBoxContainer/StreamableHTTPSettings/HBoxContainer/StreamableHTTPURL
 
 func _ready():
     confirmed.connect(_on_ok_pressed)
@@ -23,6 +23,9 @@ func _ready():
     load_settings()
 
 func load_settings():
+    if streamable_http_url == null:
+        push_error("MCP Settings: StreamableHTTPURL node is missing")
+        return
     var config = ConfigFile.new()
     var err = config.load("res://addons/godot_mcp/config.cfg")
     if err == OK:
@@ -33,7 +36,11 @@ func _on_connection_type_changed(index: int):
     streamable_http_settings.visible = index == 0
 
 func _on_ok_pressed():
+    if streamable_http_url == null:
+        push_error("MCP Settings: StreamableHTTPURL node is missing")
+        return
     var config = ConfigFile.new()
+    config.load("res://addons/godot_mcp/config.cfg")
     var target_url = streamable_http_url.text.strip_edges()
     if target_url == "":
         target_url = "http://localhost:9080/mcp"
@@ -42,6 +49,8 @@ func _on_ok_pressed():
     # Persist transport and endpoint settings.
     config.set_value("mcp", "connection_type", "streamable_http")
     config.set_value("mcp", "streamable_http_url", target_url)
+    config.set_value("mcp", "runtime_heartbeat_seconds", config.get_value("mcp", "runtime_heartbeat_seconds", 5.0))
+    config.set_value("mcp", "runtime_change_poll_seconds", config.get_value("mcp", "runtime_change_poll_seconds", 0.5))
     
     # Save configuration.
     var err = config.save("res://addons/godot_mcp/config.cfg")

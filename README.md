@@ -10,6 +10,7 @@ This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0
 - **Modern Architecture**: Clean separation of concerns with echo framework
 - **Comprehensive Tool System**: Organized tool categories with interface-based design
 - **Session Management**: Robust session handling for Streamable HTTP
+- **Runtime Bridge**: Godot plugin runtime snapshot sync for editor-state/node read tools
 - **Robust Error Handling**: Comprehensive logging and error management
 - **Easy Configuration**: JSON-based configuration with environment variable support
 
@@ -27,10 +28,10 @@ This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0
 Tools are organized into categories and implement the `types.Tool` interface:
 
 - **Node Tools**: Scene tree manipulation, node properties, creation/deletion
-- **Script Tools**: Script management, reading, writing, analysis
-- **Scene Tools**: Scene management, listing, creation, application
+- **Script Tools**: Script listing/reading/analysis with guarded write operations
+- **Scene Tools**: Scene listing/reading with guarded write operations
 - **Project Tools**: Project settings, resource management, editor state
-- **Utility Tools**: General utilities and offerings
+- **Utility Tools**: General utilities, offerings, and runtime bridge sync
 
 ### Directory Structure
 
@@ -163,6 +164,7 @@ The server can be configured through `config/mcp_config.json`:
 ```
 
 On startup, the server resolves the config path in this order:
+
 1. `MCP_CONFIG_PATH`
 2. `config/mcp_config.json` (project local, if present)
 3. `~/.godot-mcp/config/mcp_config.json`
@@ -196,39 +198,57 @@ If the resolved file does not exist, the server creates a default config file at
 - `rendering.mode=strict` validates required placeholders before rendering, and optionally rejects unknown arguments when `reject_unknown_arguments=true`.
 - `auto_reload.enabled=true` enables polling-based source fingerprint checks (`SKILL.md` path + size + mtime + content SHA-256) and triggers the same reload pipeline as `reload-prompt-catalog`.
 
+### Godot Runtime Bridge Notes
+
+- `sync-editor-runtime` is an internal bridge tool used by the Godot plugin to push runtime snapshots.
+- `ping-editor-runtime` is an internal bridge tool used by the plugin heartbeat to refresh snapshot freshness.
+- Runtime snapshots are bound to initialized Streamable HTTP MCP sessions.
+- `get-editor-state`, `get-scene-tree`, and `get-node-properties` read from the latest fresh snapshot.
+- When runtime snapshots are missing/stale, Godot-dependent tools return semantic `kind=not_available`.
+- Plugin heartbeat/poll intervals are configurable in `godot-plugin/addons/godot_mcp/config.cfg`:
+  - `runtime_heartbeat_seconds` (default `5.0`)
+  - `runtime_change_poll_seconds` (default `0.5`)
+
 ## Available Tools
 
 ### Scene Tools
 
-- `list-project-scenes`: Lists all `.tscn` files in the project
-- `read-scene`: Reads a specific scene file
-- `create-scene`: Creates a new scene
-- `save-scene`: Saves the current scene
-- `apply-scene`: Applies a scene to the current project
+- `list-project-scenes`: Lists `.tscn` files and returns both scene names and `scene_paths`
+- `read-scene`: Reads scene content and returns lightweight node metadata
+- `create-scene`: Not yet available (`kind=not_available`)
+- `save-scene`: Not yet available (`kind=not_available`)
+- `apply-scene`: Not yet available (`kind=not_available`)
 
 ### Node Tools
 
-- `get-scene-tree`: Returns the scene tree structure
-- `get-node-properties`: Gets properties of a specific node
-- `create-node`: Creates a new node
-- `delete-node`: Deletes a node
-- `modify-node`: Updates node properties
+- `get-scene-tree`: Returns compact runtime scene tree snapshot
+- `get-node-properties`: Returns whitelisted runtime node details (`path/name/type/owner/script/groups/child_count`)
+- `create-node`: Not yet available (`kind=not_available`)
+- `delete-node`: Not yet available (`kind=not_available`)
+- `modify-node`: Not yet available (`kind=not_available`)
 
 ### Script Tools
 
-- `list-project-scripts`: Lists all scripts in the project
-- `read-script`: Reads a specific script
-- `modify-script`: Modifies a script
-- `create-script`: Creates a new script
-- `analyze-script`: Analyzes a script
+- `list-project-scripts`: Lists `.gd` and `.rs` scripts with canonical `script_paths`
+- `read-script`: Reads script file content
+- `modify-script`: Not yet available (`kind=not_available`)
+- `create-script`: Not yet available (`kind=not_available`)
+- `analyze-script`: Returns basic static analysis (line/function counts)
 
 ### Project Tools
 
 - `get-project-settings`: Gets project settings
 - `list-project-resources`: Lists all resources in the project
-- `get-editor-state`: Gets the current editor state
-- `run-project`: Runs the project
-- `stop-project`: Stops the running project
+- `get-editor-state`: Gets runtime root summary (`active_scene`, `active_script`, root context)
+- `run-project`: Requests Godot editor to run the project through runtime command bridge
+- `stop-project`: Requests Godot editor to stop running project through runtime command bridge
+
+### Utility Tools
+
+- `list-offerings`: Lists server offerings
+- `sync-editor-runtime`: Internal runtime bridge sync endpoint (plugin-driven)
+- `ping-editor-runtime`: Internal runtime bridge heartbeat endpoint (plugin-driven)
+- `ack-editor-command`: Internal runtime command acknowledgement endpoint (plugin-driven)
 
 ## Cursor Configuration
 
@@ -271,6 +291,7 @@ godot-mcp-go/
 ├── logger/          # Logging system
 ├── mcp/             # MCP protocol implementation
 ├── promptcatalog/   # Prompt catalog discovery and policy metadata
+├── runtimebridge/   # Godot editor runtime snapshot store
 ├── tools/           # Tool system implementation
 │   ├── node/        # Node-related tools
 │   ├── script/      # Script-related tools

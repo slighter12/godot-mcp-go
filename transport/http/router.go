@@ -276,6 +276,12 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
+		if msg.Method == "tools/call" {
+			return shared.BuildToolCallResponseWithContext(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
+				SessionID:          sessionID,
+				SessionInitialized: s.sessionManager.IsInitialized(sessionID),
+			}), nil
+		}
 		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
 	}
 }
@@ -378,7 +384,7 @@ func isSupportedProtocolVersion(version string) bool {
 }
 
 func acceptsEventStream(acceptHeader string) bool {
-	for _, part := range strings.Split(acceptHeader, ",") {
+	for part := range strings.SplitSeq(acceptHeader, ",") {
 		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
 		if strings.EqualFold(mime, "text/event-stream") {
 			return true

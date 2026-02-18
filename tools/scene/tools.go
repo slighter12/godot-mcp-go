@@ -1,16 +1,19 @@
 package scene
 
 import (
+	"bufio"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 
-	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/tools/types"
 )
+
+var sceneNodePattern = regexp.MustCompile(`(name|type|parent)="([^"]*)"`)
 
 type ListProjectScenesTool struct{}
 
@@ -21,20 +24,34 @@ func (t *ListProjectScenesTool) InputSchema() mcp.InputSchema {
 }
 func (t *ListProjectScenesTool) Execute(args json.RawMessage) ([]byte, error) {
 	projectRoot := types.ResolveProjectRootFromEnvOrCWD()
-	var scenes []string
+	var names []string
+	var resPaths []string
+
 	err := filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && strings.HasSuffix(path, ".tscn") {
-			scenes = append(scenes, strings.TrimSuffix(filepath.Base(path), ".tscn"))
+		if info.IsDir() || strings.ToLower(filepath.Ext(path)) != ".tscn" {
+			return nil
 		}
+		relPath, relErr := filepath.Rel(projectRoot, path)
+		if relErr != nil {
+			return relErr
+		}
+		names = append(names, strings.TrimSuffix(filepath.Base(path), ".tscn"))
+		resPaths = append(resPaths, "res://"+filepath.ToSlash(relPath))
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	result := map[string]any{"scenes": scenes}
+
+	sort.Strings(names)
+	sort.Strings(resPaths)
+	result := map[string]any{
+		"scenes":      names,
+		"scene_paths": resPaths,
+	}
 	return json.Marshal(result)
 }
 
@@ -46,15 +63,29 @@ func (t *ReadSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Scene path"}}, Required: []string{"path"}, Title: "Read Scene"}
 }
 func (t *ReadSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	var argsMap map[string]any
-	if err := json.Unmarshal(args, &argsMap); err != nil {
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(args, &payload); err != nil {
 		return nil, err
 	}
-	path, ok := argsMap["path"].(string)
-	if !ok {
-		return nil, errors.New("invalid scene path")
+
+	data, resPath, err := types.ReadProjectFile(payload.Path, []string{".tscn"})
+	if err != nil {
+		return nil, err
 	}
-	result := map[string]any{"path": path, "nodes": []any{}}
+
+	nodes := parseSceneNodes(string(data))
+	result := map[string]any{
+		"path":    resPath,
+		"nodes":   nodes,
+		"content": string(data),
+		"metadata": map[string]any{
+			"size_bytes": len(data),
+			"line_count": countLines(data),
+			"node_count": len(nodes),
+		},
+	}
 	return json.Marshal(result)
 }
 
@@ -66,16 +97,10 @@ func (t *CreateSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Scene path"}}, Required: []string{"path"}, Title: "Create Scene"}
 }
 func (t *CreateSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	var argsMap map[string]any
-	if err := json.Unmarshal(args, &argsMap); err != nil {
-		return nil, err
-	}
-	path, ok := argsMap["path"].(string)
-	if !ok {
-		return nil, errors.New("invalid scene path")
-	}
-	result := map[string]any{"success": true, "path": path}
-	return json.Marshal(result)
+	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
+		"feature": "godot_runtime_write",
+		"tool":    t.Name(),
+	})
 }
 
 type SaveSceneTool struct{}
@@ -86,8 +111,10 @@ func (t *SaveSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Save Scene"}
 }
 func (t *SaveSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	result := map[string]any{"success": true}
-	return json.Marshal(result)
+	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
+		"feature": "godot_runtime_write",
+		"tool":    t.Name(),
+	})
 }
 
 type ApplySceneTool struct{}
@@ -98,17 +125,10 @@ func (t *ApplySceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"scene": map[string]any{"type": "string", "description": "The name of the scene to apply"}}, Required: []string{"scene"}, Title: "Apply Scene"}
 }
 func (t *ApplySceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	var argsMap map[string]any
-	if err := json.Unmarshal(args, &argsMap); err != nil {
-		return nil, err
-	}
-	scene, ok := argsMap["scene"].(string)
-	if !ok {
-		return nil, errors.New("scene argument is required")
-	}
-	logger.Info("Applying scene", "scene", scene)
-	result := map[string]bool{"success": true}
-	return json.Marshal(result)
+	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
+		"feature": "godot_runtime_write",
+		"tool":    t.Name(),
+	})
 }
 
 func GetAllTools() []types.Tool {
@@ -119,4 +139,50 @@ func GetAllTools() []types.Tool {
 		&SaveSceneTool{},
 		&ApplySceneTool{},
 	}
+}
+
+func parseSceneNodes(content string) []map[string]any {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	nodes := make([]map[string]any, 0)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "[node ") || !strings.HasSuffix(line, "]") {
+			continue
+		}
+		matches := sceneNodePattern.FindAllStringSubmatch(line, -1)
+		if len(matches) == 0 {
+			continue
+		}
+		node := map[string]any{}
+		for _, match := range matches {
+			if len(match) < 3 {
+				continue
+			}
+			node[match[1]] = match[2]
+		}
+		if _, ok := node["name"]; !ok {
+			node["name"] = ""
+		}
+		if _, ok := node["type"]; !ok {
+			node["type"] = ""
+		}
+		if _, ok := node["parent"]; !ok {
+			node["parent"] = ""
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func countLines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	lines := 1
+	for _, b := range data {
+		if b == '\n' {
+			lines++
+		}
+	}
+	return lines
 }

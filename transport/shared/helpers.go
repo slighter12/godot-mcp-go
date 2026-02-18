@@ -14,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
+	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 const pageSize = 50
@@ -28,6 +29,11 @@ type promptsGetParams struct {
 type PromptRenderOptions struct {
 	Mode                   string
 	RejectUnknownArguments bool
+}
+
+type ToolCallContext struct {
+	SessionID          string
+	SessionInitialized bool
 }
 
 const (
@@ -511,6 +517,10 @@ func appendBounded(builder *strings.Builder, segment string) error {
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
+	return BuildToolCallResponseWithContext(msg, toolManager, readResource, ToolCallContext{})
+}
+
+func BuildToolCallResponseWithContext(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error), callContext ToolCallContext) *jsonrpc.Response {
 	var toolCall struct {
 		Name      string         `json:"name"`
 		Tool      string         `json:"tool"`
@@ -532,6 +542,7 @@ func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, read
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
+	arguments = enrichToolCallArguments(arguments, callContext)
 
 	if strings.HasPrefix(toolName, "godot://") {
 		if readResource == nil {
@@ -546,6 +557,9 @@ func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, read
 
 	result, err := toolManager.CallTool(toolName, arguments)
 	if err != nil {
+		if semanticErr, ok := tooltypes.AsSemanticError(err); ok {
+			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(toolName, semanticErr))
+		}
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
@@ -573,6 +587,39 @@ func buildToolExecutionErrorResult(toolName string) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
 		"isError": true,
 	}
+}
+
+func buildToolSemanticErrorResult(toolName string, semanticErr *tooltypes.SemanticError) map[string]any {
+	message := "Tool is temporarily unavailable"
+	if semanticErr != nil && strings.TrimSpace(semanticErr.Message) != "" {
+		message = strings.TrimSpace(semanticErr.Message)
+	}
+	errorPayload := map[string]any{}
+	if semanticErr != nil {
+		if strings.TrimSpace(semanticErr.Kind) != "" {
+			errorPayload["kind"] = strings.TrimSpace(semanticErr.Kind)
+		}
+		if semanticErr.Data != nil {
+			maps.Copy(errorPayload, semanticErr.Data)
+		}
+	}
+	return map[string]any{
+		"type":    string(mcp.TypeResult),
+		"tool":    toolName,
+		"content": []map[string]any{{"type": "text", "text": message}},
+		"isError": true,
+		"error":   errorPayload,
+	}
+}
+
+func enrichToolCallArguments(arguments map[string]any, callContext ToolCallContext) map[string]any {
+	enriched := make(map[string]any, len(arguments)+1)
+	maps.Copy(enriched, arguments)
+	enriched["_mcp"] = map[string]any{
+		"session_id":          strings.TrimSpace(callContext.SessionID),
+		"session_initialized": callContext.SessionInitialized,
+	}
+	return enriched
 }
 
 func ToolContentFromResult(result any) []map[string]any {

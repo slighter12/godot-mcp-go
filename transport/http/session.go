@@ -3,6 +3,8 @@ package http
 import (
 	"sync"
 	"time"
+
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 )
 
 // SessionManager manages MCP sessions for Streamable HTTP
@@ -145,6 +147,18 @@ func (sm *SessionManager) MarkInitialized(sessionID string) bool {
 	return true
 }
 
+// IsInitialized checks whether the session exists and completed initialized notification.
+func (sm *SessionManager) IsInitialized(sessionID string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	return session.Initialized
+}
+
 // SetProtocolVersion stores the negotiated protocol version for a session.
 func (sm *SessionManager) SetProtocolVersion(sessionID string, version string) bool {
 	sm.mu.Lock()
@@ -207,6 +221,7 @@ func (sm *SessionManager) RemoveSession(sessionID string) {
 			session.Transport.Close()
 		}
 		delete(sm.sessions, sessionID)
+		runtimebridge.DefaultStore().RemoveSession(sessionID)
 	}
 }
 
@@ -222,6 +237,7 @@ func (sm *SessionManager) CleanupSessions(timeout time.Duration) {
 				session.Transport.Close()
 			}
 			delete(sm.sessions, sessionID)
+			runtimebridge.DefaultStore().RemoveSession(sessionID)
 		}
 	}
 }
