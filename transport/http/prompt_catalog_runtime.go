@@ -17,6 +17,7 @@ import (
 
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
 const promptCatalogLoadConsistencyMaxAttempts = 3
+const promptCatalogNotificationWriteTimeout = 2 * time.Second
 
 type promptCatalogReloadOutcome struct {
 	result map[string]any
@@ -319,7 +320,7 @@ func (s *Server) SendJSONRPCNotificationToSession(sessionID string, message map[
 		return false
 	}
 
-	if err := transport.SendSSE("message", message); err != nil {
+	if err := transport.SendSSEWithTimeout("message", message, promptCatalogNotificationWriteTimeout); err != nil {
 		logger.Warn("Failed to send SSE notification", "session_id", sessionID, "error", err)
 		s.sessionManager.ClearTransportIfMatch(sessionID, transport)
 		return false
