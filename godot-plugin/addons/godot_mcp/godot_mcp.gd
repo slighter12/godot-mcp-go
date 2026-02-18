@@ -78,32 +78,17 @@ func _exit_tree():
     print("Godot MCP Plugin: Exiting tree...")
     remove_tool_menu_item("MCP Settings")
 
-    if runtime_heartbeat_timer:
-        runtime_heartbeat_timer.stop()
-        if runtime_heartbeat_timer.timeout.is_connected(Callable(self, "_on_runtime_heartbeat_timeout")):
-            runtime_heartbeat_timer.timeout.disconnect(Callable(self, "_on_runtime_heartbeat_timeout"))
-        runtime_heartbeat_timer.queue_free()
+    _cleanup_timer(runtime_heartbeat_timer, "_on_runtime_heartbeat_timeout")
+    _cleanup_timer(runtime_change_timer, "_on_runtime_change_timeout")
+    runtime_heartbeat_timer = null
+    runtime_change_timer = null
 
-    if runtime_change_timer:
-        runtime_change_timer.stop()
-        if runtime_change_timer.timeout.is_connected(Callable(self, "_on_runtime_change_timeout")):
-            runtime_change_timer.timeout.disconnect(Callable(self, "_on_runtime_change_timeout"))
-        runtime_change_timer.queue_free()
-
-    if mcp_client:
-        if mcp_client.connected.is_connected(Callable(self, "_on_mcp_connected")):
-            mcp_client.connected.disconnect(Callable(self, "_on_mcp_connected"))
-        if mcp_client.disconnected.is_connected(Callable(self, "_on_mcp_disconnected")):
-            mcp_client.disconnected.disconnect(Callable(self, "_on_mcp_disconnected"))
-        if mcp_client.error.is_connected(Callable(self, "_on_mcp_error")):
-            mcp_client.error.disconnect(Callable(self, "_on_mcp_error"))
-        if mcp_client.message_received.is_connected(Callable(self, "_on_mcp_message_received")):
-            mcp_client.message_received.disconnect(Callable(self, "_on_mcp_message_received"))
-
-    if mcp_interface and mcp_interface.runtime_sync_failed.is_connected(Callable(self, "_on_runtime_sync_failed")):
-        mcp_interface.runtime_sync_failed.disconnect(Callable(self, "_on_runtime_sync_failed"))
-    if mcp_interface and mcp_interface.runtime_command_received.is_connected(Callable(self, "_on_runtime_command_received")):
-        mcp_interface.runtime_command_received.disconnect(Callable(self, "_on_runtime_command_received"))
+    _disconnect_signal_if_connected(mcp_client, "connected", "_on_mcp_connected")
+    _disconnect_signal_if_connected(mcp_client, "disconnected", "_on_mcp_disconnected")
+    _disconnect_signal_if_connected(mcp_client, "error", "_on_mcp_error")
+    _disconnect_signal_if_connected(mcp_client, "message_received", "_on_mcp_message_received")
+    _disconnect_signal_if_connected(mcp_interface, "runtime_sync_failed", "_on_runtime_sync_failed")
+    _disconnect_signal_if_connected(mcp_interface, "runtime_command_received", "_on_runtime_command_received")
 
     if mcp_client:
         mcp_client.disconnect_from_server()
@@ -115,6 +100,22 @@ func _exit_tree():
     if settings_dialog:
         settings_dialog.queue_free()
     print("Godot MCP Plugin: Cleanup complete")
+
+func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
+    if timer == null:
+        return
+    timer.stop()
+    var timeout_callable := Callable(self, timeout_handler)
+    if timer.timeout.is_connected(timeout_callable):
+        timer.timeout.disconnect(timeout_callable)
+    timer.queue_free()
+
+func _disconnect_signal_if_connected(source: Object, signal_name: StringName, handler_name: String) -> void:
+    if source == null:
+        return
+    var handler := Callable(self, handler_name)
+    if source.is_connected(signal_name, handler):
+        source.disconnect(signal_name, handler)
 
 func _on_mcp_connected():
     print("Godot MCP Plugin: Connected to MCP server")

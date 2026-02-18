@@ -85,3 +85,18 @@ func TestNodeWriteTools_ReturnNotAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveNodeDetail_NameFallbackDeterministic(t *testing.T) {
+	details := map[string]runtimebridge.NodeDetail{
+		"/B": {Path: "/B", Name: "Enemy"},
+		"/A": {Path: "/A", Name: "Enemy"},
+	}
+
+	detail, ok := resolveNodeDetail(details, "Enemy")
+	if !ok {
+		t.Fatal("expected to resolve node detail by name")
+	}
+	if detail.Path != "/A" {
+		t.Fatalf("expected deterministic first key /A, got %s", detail.Path)
+	}
+}

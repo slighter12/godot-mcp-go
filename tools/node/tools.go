@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 	"time"
 
@@ -189,8 +190,16 @@ func resolveNodeDetail(details map[string]runtimebridge.NodeDetail, nodePath str
 	if detail, ok := details[nodePath]; ok {
 		return detail, true
 	}
-	for _, detail := range details {
-		if detail.Path == nodePath || detail.Name == nodePath {
+
+	keys := make([]string, 0, len(details))
+	for key := range details {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		detail := details[key]
+		if detail.Name == nodePath {
 			return detail, true
 		}
 	}
