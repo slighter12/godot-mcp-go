@@ -148,7 +148,16 @@ The server can be configured through `config/mcp_config.json`:
   },
   "prompt_catalog": {
     "enabled": true,
-    "paths": []
+    "paths": [],
+    "allowed_roots": [],
+    "auto_reload": {
+      "enabled": false,
+      "interval_seconds": 5
+    },
+    "rendering": {
+      "mode": "legacy",
+      "reject_unknown_arguments": false
+    }
   }
 }
 ```
@@ -171,6 +180,21 @@ If the resolved file does not exist, the server creates a default config file at
 - `MCP_LOG_PATH`: Override log path
 - `MCP_PROMPT_CATALOG_ENABLED`: Enable/disable prompt catalog endpoints
 - `MCP_PROMPT_CATALOG_PATHS`: Comma-separated paths scanned for `SKILL.md`
+- `MCP_PROMPT_CATALOG_ALLOWED_ROOTS`: Comma-separated allow-list roots for discovered `SKILL.md`
+- `MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED`: Enable polling-based prompt catalog reload
+- `MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS`: Poll interval in seconds (`2..300`)
+- `MCP_PROMPT_CATALOG_RENDERING_MODE`: Prompt rendering mode (`legacy` or `strict`)
+- `MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS`: Reject unknown prompt arguments in strict mode
+
+### Prompt Catalog Runtime Notes
+
+- `prompt_catalog.enabled=false` disables prompt catalog endpoints; `prompts/list` and `prompts/get` return semantic `kind=not_supported`.
+- `reload-prompt-catalog` is the manual runtime reload entrypoint exposed through `tools/call`.
+- `notifications/prompts/list_changed` is emitted only when visible prompt metadata changes.
+- `allowed_roots` constrains discovered `SKILL.md` files; if empty, the runtime falls back to `paths`.
+- `rendering.mode=legacy` preserves existing behavior.
+- `rendering.mode=strict` validates required placeholders before rendering, and optionally rejects unknown arguments when `reject_unknown_arguments=true`.
+- `auto_reload.enabled=true` enables polling-based source fingerprint checks (`SKILL.md` path + size + mtime + content SHA-256) and triggers the same reload pipeline as `reload-prompt-catalog`.
 
 ## Available Tools
 

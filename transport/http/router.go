@@ -276,7 +276,7 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
-		return shared.DispatchStandardMethod(msg, s.toolManager, s.promptCatalog, s.handleGodotResource), nil
+		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
 	}
 }
 

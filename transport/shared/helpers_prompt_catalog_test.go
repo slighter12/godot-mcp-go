@@ -417,6 +417,90 @@ func TestBuildPromptsGetResponse_UnknownPrompt(t *testing.T) {
 	assertErrorKindFeature(t, resp.Error.Data, "invalid_params", "")
 }
 
+func TestBuildPromptsGetResponseWithOptions_StrictRejectsMissingArguments(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}} and {{line}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+	})
+	resp := BuildPromptsGetResponseWithOptions(req, catalog, PromptRenderOptions{
+		Mode: PromptRenderingModeStrict,
+	})
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
+	}
+	if data["problem"] != "missing_required_arguments" {
+		t.Fatalf("expected missing_required_arguments, got %v", data["problem"])
+	}
+}
+
+func TestBuildPromptsGetResponseWithOptions_StrictRejectsUnknownArguments(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name": "scene-review",
+		"arguments": map[string]any{
+			"scene_path": "res://Main.tscn",
+			"extra":      "unused",
+		},
+	})
+	resp := BuildPromptsGetResponseWithOptions(req, catalog, PromptRenderOptions{
+		Mode:                   PromptRenderingModeStrict,
+		RejectUnknownArguments: true,
+	})
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected error response")
+	}
+	if resp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInvalidParams), resp.Error.Code)
+	}
+	data := mustErrorDataMap(t, resp.Error.Data)
+	if data["kind"] != "invalid_params" {
+		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
+	}
+	if data["problem"] != "unknown_arguments" {
+		t.Fatalf("expected unknown_arguments, got %v", data["problem"])
+	}
+}
+
+func TestBuildPromptsGetResponseWithOptions_LegacyIgnoresMissingArguments(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "desc",
+		Template:    "Review {{scene_path}} and {{line}}",
+	})
+
+	req := mustRequest(t, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+	})
+	resp := BuildPromptsGetResponseWithOptions(req, catalog, PromptRenderOptions{
+		Mode: PromptRenderingModeLegacy,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+}
+
 func TestBuildPingResponse_EmptyResultObject(t *testing.T) {
 	resp := BuildPingResponse(jsonrpc.Request{
 		JSONRPC: jsonrpc.Version,

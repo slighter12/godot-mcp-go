@@ -51,6 +51,19 @@ func TestNewConfig(t *testing.T) {
 	if cfg.Transports[1].URL != "http://localhost:9080/mcp" {
 		t.Errorf("Expected streamable_http URL 'http://localhost:9080/mcp', got '%s'", cfg.Transports[1].URL)
 	}
+
+	if cfg.PromptCatalog.AutoReload.Enabled {
+		t.Errorf("Expected prompt catalog auto reload to be disabled by default")
+	}
+	if cfg.PromptCatalog.AutoReload.IntervalSeconds != 5 {
+		t.Errorf("Expected auto reload interval 5, got %d", cfg.PromptCatalog.AutoReload.IntervalSeconds)
+	}
+	if cfg.PromptCatalog.Rendering.Mode != "legacy" {
+		t.Errorf("Expected rendering mode legacy, got %q", cfg.PromptCatalog.Rendering.Mode)
+	}
+	if cfg.PromptCatalog.Rendering.RejectUnknownArguments {
+		t.Errorf("Expected reject_unknown_arguments to be false by default")
+	}
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -396,5 +409,127 @@ func TestSaveConfig(t *testing.T) {
 
 	if loadedCfg.Logging.Path != cfg.Logging.Path {
 		t.Errorf("Expected logging path '%s', got '%s'", cfg.Logging.Path, loadedCfg.Logging.Path)
+	}
+
+	if loadedCfg.PromptCatalog.AutoReload.IntervalSeconds != 5 {
+		t.Errorf("Expected normalized default auto reload interval 5, got %d", loadedCfg.PromptCatalog.AutoReload.IntervalSeconds)
+	}
+}
+
+func TestLoadConfigPromptCatalogEnvOverrides(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "env_overrides_config.json")
+	logPath := filepath.Join(tempDir, "test.log")
+
+	testConfig := fmt.Sprintf(`{
+		"name": "test-server",
+		"version": "1.0.0",
+		"description": "Test server",
+		"server": {
+			"host": "127.0.0.1",
+			"port": 8080,
+			"debug": true
+		},
+		"transports": [
+			{
+				"type": "stdio",
+				"enabled": true
+			}
+		],
+		"logging": {
+			"level": "debug",
+			"format": "text",
+			"path": %q
+		},
+		"prompt_catalog": {
+			"enabled": true,
+			"paths": [" /a ", "/a", "/b"],
+			"allowed_roots": ["/base"]
+		}
+	}`, logPath)
+
+	if err := os.WriteFile(configPath, []byte(testConfig), 0644); err != nil {
+		t.Fatalf("Failed to write test config file: %v", err)
+	}
+
+	t.Setenv("MCP_PROMPT_CATALOG_ALLOWED_ROOTS", "/override-a, /override-b")
+	t.Setenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED", "true")
+	t.Setenv("MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS", "9")
+	t.Setenv("MCP_PROMPT_CATALOG_RENDERING_MODE", "STRICT")
+	t.Setenv("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS", "true")
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if len(cfg.PromptCatalog.Paths) != 2 || cfg.PromptCatalog.Paths[0] != "/a" || cfg.PromptCatalog.Paths[1] != "/b" {
+		t.Fatalf("Unexpected normalized prompt catalog paths: %#v", cfg.PromptCatalog.Paths)
+	}
+	if len(cfg.PromptCatalog.AllowedRoots) != 2 || cfg.PromptCatalog.AllowedRoots[0] != "/override-a" || cfg.PromptCatalog.AllowedRoots[1] != "/override-b" {
+		t.Fatalf("Unexpected allowed roots: %#v", cfg.PromptCatalog.AllowedRoots)
+	}
+	if !cfg.PromptCatalog.AutoReload.Enabled {
+		t.Fatalf("Expected auto reload enabled")
+	}
+	if cfg.PromptCatalog.AutoReload.IntervalSeconds != 9 {
+		t.Fatalf("Expected interval 9, got %d", cfg.PromptCatalog.AutoReload.IntervalSeconds)
+	}
+	if cfg.PromptCatalog.Rendering.Mode != "strict" {
+		t.Fatalf("Expected rendering mode strict, got %q", cfg.PromptCatalog.Rendering.Mode)
+	}
+	if !cfg.PromptCatalog.Rendering.RejectUnknownArguments {
+		t.Fatalf("Expected reject unknown arguments true")
+	}
+}
+
+func TestPromptCatalogNormalizeAndValidate(t *testing.T) {
+	cfg := NewConfig()
+	cfg.PromptCatalog.AllowedRoots = []string{" /a ", "/a", "", "/b "}
+	cfg.PromptCatalog.Rendering.Mode = " STRICT "
+	cfg.PromptCatalog.AutoReload.IntervalSeconds = 0
+	cfg.Normalize()
+	if len(cfg.PromptCatalog.AllowedRoots) != 2 || cfg.PromptCatalog.AllowedRoots[0] != "/a" || cfg.PromptCatalog.AllowedRoots[1] != "/b" {
+		t.Fatalf("Unexpected normalized allowed roots: %#v", cfg.PromptCatalog.AllowedRoots)
+	}
+	if cfg.PromptCatalog.Rendering.Mode != "strict" {
+		t.Fatalf("Expected strict mode after normalize, got %q", cfg.PromptCatalog.Rendering.Mode)
+	}
+	if cfg.PromptCatalog.AutoReload.IntervalSeconds != 5 {
+		t.Fatalf("Expected default auto reload interval 5 after normalize, got %d", cfg.PromptCatalog.AutoReload.IntervalSeconds)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Expected prompt catalog config to validate, got %v", err)
+	}
+}
+
+func TestSaveConfigRejectsNilConfig(t *testing.T) {
+	if err := SaveConfig(nil, filepath.Join(t.TempDir(), "config.json")); err == nil {
+		t.Fatal("expected nil config error")
+	}
+}
+
+func TestValidateRejectsInvalidPromptCatalogRenderingMode(t *testing.T) {
+	cfg := NewConfig()
+	cfg.PromptCatalog.Rendering.Mode = "unknown"
+	cfg.Normalize()
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Expected validation error for invalid rendering mode")
+	}
+}
+
+func TestValidateRejectsInvalidPromptCatalogAutoReloadInterval(t *testing.T) {
+	cfg := NewConfig()
+	cfg.PromptCatalog.AutoReload.IntervalSeconds = 1
+	cfg.Normalize()
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Expected validation error for invalid auto reload interval")
+	}
+
+	cfg = NewConfig()
+	cfg.PromptCatalog.AutoReload.IntervalSeconds = 301
+	cfg.Normalize()
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Expected validation error for invalid auto reload interval")
 	}
 }

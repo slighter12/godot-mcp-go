@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,11 +20,38 @@ const pageSize = 50
 const maxRenderedPromptBytes = 128 * 1024
 const toolExecutionErrorMessage = "Tool execution failed"
 
-var promptPlaceholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}`)
-
 type promptsGetParams struct {
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+type PromptRenderOptions struct {
+	Mode                   string
+	RejectUnknownArguments bool
+}
+
+const (
+	PromptRenderingModeLegacy = "legacy"
+	PromptRenderingModeStrict = "strict"
+)
+
+func DefaultPromptRenderOptions() PromptRenderOptions {
+	return PromptRenderOptions{
+		Mode:                   PromptRenderingModeLegacy,
+		RejectUnknownArguments: false,
+	}
+}
+
+func normalizePromptRenderOptions(options PromptRenderOptions) PromptRenderOptions {
+	normalized := options
+	normalized.Mode = strings.ToLower(strings.TrimSpace(normalized.Mode))
+	if normalized.Mode == "" {
+		normalized.Mode = PromptRenderingModeLegacy
+	}
+	if normalized.Mode != PromptRenderingModeStrict {
+		normalized.Mode = PromptRenderingModeLegacy
+	}
+	return normalized
 }
 
 func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Response {
@@ -150,6 +176,10 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 }
 
 func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
+	return BuildPromptsGetResponseWithOptions(msg, catalog, DefaultPromptRenderOptions())
+}
+
+func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcatalog.Registry, options PromptRenderOptions) *jsonrpc.Response {
 	if catalog == nil || !catalog.Enabled() {
 		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
 			"feature": "prompt_catalog",
@@ -181,7 +211,13 @@ func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registr
 		})
 	}
 
-	renderedPrompt, renderErr := renderPromptTemplate(prompt.Template, params.Arguments)
+	normalizedOptions := normalizePromptRenderOptions(options)
+	normalizedArgs := normalizePromptArguments(params.Arguments)
+	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Arguments, normalizedArgs, normalizedOptions); strictErr != nil {
+		return strictErr
+	}
+
+	renderedPrompt, renderErr := renderPromptTemplate(prompt.Template, normalizedArgs)
 	if renderErr != nil {
 		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt arguments produced oversized output", "invalid_params", map[string]any{
 			"field":    "arguments",
@@ -232,8 +268,7 @@ func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
 	return jsonrpc.NewResponse(msg.ID, map[string]any{})
 }
 
-// DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
-func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error)) any {
+func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions) any {
 	switch msg.Method {
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
@@ -244,7 +279,7 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, cat
 	case "prompts/list":
 		return BuildPromptsListResponse(msg, catalog)
 	case "prompts/get":
-		return BuildPromptsGetResponse(msg, catalog)
+		return BuildPromptsGetResponseWithOptions(msg, catalog, promptRenderOptions)
 	case "tools/call":
 		return BuildToolCallResponse(msg, toolManager, readResource)
 	case "ping":
@@ -262,6 +297,11 @@ func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, cat
 		}
 		return nil
 	}
+}
+
+// DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
+func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error)) any {
+	return DispatchStandardMethodWithPromptOptions(msg, toolManager, catalog, readResource, DefaultPromptRenderOptions())
 }
 
 func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra map[string]any) *jsonrpc.Response {
@@ -288,11 +328,58 @@ func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]a
 	}, true
 }
 
-func renderPromptTemplate(template string, arguments map[string]string) (string, error) {
-	if template == "" || len(arguments) == 0 {
-		return template, nil
+func validateStrictPromptArguments(id any, promptArguments []promptcatalog.PromptArgument, arguments map[string]string, options PromptRenderOptions) *jsonrpc.Response {
+	if options.Mode != PromptRenderingModeStrict {
+		return nil
 	}
 
+	requiredSet := make(map[string]struct{}, len(promptArguments))
+	missing := make([]string, 0)
+	for _, promptArg := range promptArguments {
+		name := strings.TrimSpace(promptArg.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := requiredSet[name]; exists {
+			continue
+		}
+		requiredSet[name] = struct{}{}
+		// Strict mode currently treats all placeholders as required.
+		if _, ok := arguments[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return semanticError(id, jsonrpc.ErrInvalidParams, "Missing required prompt arguments", "invalid_params", map[string]any{
+			"field":   "arguments",
+			"problem": "missing_required_arguments",
+			"missing": missing,
+		})
+	}
+
+	if !options.RejectUnknownArguments {
+		return nil
+	}
+
+	unknown := make([]string, 0)
+	for key := range arguments {
+		if _, ok := requiredSet[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	if len(unknown) > 0 {
+		return semanticError(id, jsonrpc.ErrInvalidParams, "Unknown prompt arguments", "invalid_params", map[string]any{
+			"field":   "arguments",
+			"problem": "unknown_arguments",
+			"unknown": unknown,
+		})
+	}
+	return nil
+}
+
+func normalizePromptArguments(arguments map[string]string) map[string]string {
 	rawKeys := make([]string, 0, len(arguments))
 	for key := range arguments {
 		rawKeys = append(rawKeys, key)
@@ -309,10 +396,17 @@ func renderPromptTemplate(template string, arguments map[string]string) (string,
 		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(arguments[key])
 	}
 	if len(normalizedArgs) == 0 {
+		return nil
+	}
+	return normalizedArgs
+}
+
+func renderPromptTemplate(template string, normalizedArgs map[string]string) (string, error) {
+	if template == "" || len(normalizedArgs) == 0 {
 		return template, nil
 	}
 
-	matches := promptPlaceholderPattern.FindAllStringSubmatchIndex(template, -1)
+	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatchIndex(template, -1)
 	if len(matches) == 0 {
 		return template, nil
 	}

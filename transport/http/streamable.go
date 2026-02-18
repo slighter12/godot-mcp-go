@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // StreamableHTTPTransport provides optional SSE writer utilities.
@@ -34,6 +35,11 @@ func NewStreamableHTTPTransport(w http.ResponseWriter, f http.Flusher, onClose .
 
 // SendSSE sends a message through SSE stream (for server-to-client communication)
 func (t *StreamableHTTPTransport) SendSSE(event string, data any) error {
+	return t.SendSSEWithTimeout(event, data, 0)
+}
+
+// SendSSEWithTimeout sends SSE data with an optional per-write timeout.
+func (t *StreamableHTTPTransport) SendSSEWithTimeout(event string, data any, timeout time.Duration) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -48,7 +54,7 @@ func (t *StreamableHTTPTransport) SendSSE(event string, data any) error {
 	}
 
 	sseMessage := fmt.Sprintf("event: %s\ndata: %s\n\n", event, string(dataJSON))
-	if err := t.writeLocked(sseMessage); err != nil {
+	if err := t.writeLocked(sseMessage, timeout); err != nil {
 		return fmt.Errorf("failed to write SSE message: %w", err)
 	}
 	return nil
@@ -67,13 +73,22 @@ func (t *StreamableHTTPTransport) SendComment(comment string) error {
 	comment = strings.ReplaceAll(comment, "\r", "\n")
 	comment = strings.ReplaceAll(comment, "\n", "\n: ")
 	frame := fmt.Sprintf(": %s\n\n", comment)
-	if err := t.writeLocked(frame); err != nil {
+	if err := t.writeLocked(frame, 0); err != nil {
 		return fmt.Errorf("failed to write SSE comment: %w", err)
 	}
 	return nil
 }
 
-func (t *StreamableHTTPTransport) writeLocked(payload string) error {
+func (t *StreamableHTTPTransport) writeLocked(payload string, timeout time.Duration) error {
+	if timeout > 0 {
+		controller := http.NewResponseController(t.writer)
+		if err := controller.SetWriteDeadline(time.Now().Add(timeout)); err == nil {
+			defer func() {
+				_ = controller.SetWriteDeadline(time.Time{})
+			}()
+		}
+	}
+
 	_, err := t.writer.Write([]byte(payload))
 	if err != nil {
 		return err

@@ -30,7 +30,6 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 ### Open Tracks
 
 - Godot integration depth
-- Prompt catalog runtime
 - Advanced execution controls
 - Release documentation and packaging
 
@@ -57,8 +56,11 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 - [x] Prompt lookup (`prompts/list`, `prompts/get`) backed by runtime data
 - [x] Prompt-to-tool routing with validated arguments
 - [x] Prompt catalog compatibility tests (Inspector + HTTP smoke)
+- [x] Prompt catalog path governance (`allowed_roots` with fallback to `paths`)
+- [x] Polling-based prompt catalog auto-reload and list-changed notifications
+- [x] Strict rendering mode (optional) with required/unknown argument validation
 
-Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`.
+Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md` (including the deferred backlog).
 
 ### Track D: Advanced Controls
 
@@ -77,10 +79,9 @@ Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS
 ## Execution Priority
 
 1. Complete real Godot-backed behaviors for high-value tools.
-2. Complete prompt catalog endpoint correctness and routing.
-3. Enforce policy checks and structured error semantics.
-4. Close performance and concurrency test gaps.
-5. Finish release documentation and packaging.
+2. Enforce policy checks and structured error semantics.
+3. Close performance and concurrency test gaps.
+4. Finish release documentation and packaging.
 
 ## Update Rules
 

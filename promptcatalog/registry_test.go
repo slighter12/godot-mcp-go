@@ -301,3 +301,160 @@ func TestLoadFromPaths_RecordsWalkErrors(t *testing.T) {
 		t.Fatal("expected discovered prompt alpha")
 	}
 }
+
+func TestLoadFromPathsWithAllowedRoots_FallbacksToPathsWhenAllowedRootsEmpty(t *testing.T) {
+	root := t.TempDir()
+	skill := filepath.Join(root, "skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	if err := os.WriteFile(skill, []byte("---\nname: fallback\ndescription: fallback\n---\nbody\n"), 0644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	reg := NewRegistry(true)
+	if err := reg.LoadFromPathsWithAllowedRoots([]string{root}, []string{}); err != nil {
+		t.Fatalf("LoadFromPathsWithAllowedRoots: %v", err)
+	}
+	if _, ok := reg.GetPrompt("fallback"); !ok {
+		t.Fatal("expected prompt loaded when allowed roots are empty and fallback to paths is used")
+	}
+}
+
+func TestLoadFromPathsWithAllowedRoots_RejectsSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior varies on windows and may require additional privileges")
+	}
+
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	validSkill := filepath.Join(root, "valid", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(validSkill), 0755); err != nil {
+		t.Fatalf("mkdir valid skill dir: %v", err)
+	}
+	if err := os.WriteFile(validSkill, []byte("---\nname: inside\ndescription: inside\n---\ninside body\n"), 0644); err != nil {
+		t.Fatalf("write valid skill file: %v", err)
+	}
+
+	outsideSkill := filepath.Join(outside, "SKILL.md")
+	if err := os.WriteFile(outsideSkill, []byte("---\nname: outside\ndescription: outside\n---\noutside body\n"), 0644); err != nil {
+		t.Fatalf("write outside skill file: %v", err)
+	}
+
+	escapeDir := filepath.Join(root, "escape")
+	if err := os.MkdirAll(escapeDir, 0755); err != nil {
+		t.Fatalf("mkdir escape dir: %v", err)
+	}
+	linkPath := filepath.Join(escapeDir, "SKILL.md")
+	if err := os.Symlink(outsideSkill, linkPath); err != nil {
+		t.Skipf("symlink not supported in this environment: %v", err)
+	}
+
+	reg := NewRegistry(true)
+	err := reg.LoadFromPathsWithAllowedRoots([]string{root}, []string{root})
+	if err == nil {
+		t.Fatal("expected load error due to symlink escape")
+	}
+	if reg.PromptCount() != 1 {
+		t.Fatalf("expected only in-root prompt to load, got %d", reg.PromptCount())
+	}
+	if _, ok := reg.GetPrompt("inside"); !ok {
+		t.Fatal("expected in-root prompt")
+	}
+	if _, ok := reg.GetPrompt("outside"); ok {
+		t.Fatal("did not expect escaped prompt to load")
+	}
+}
+
+func TestLoadFromPathsWithAllowedRoots_LoadsValidAndSkipsInvalidPaths(t *testing.T) {
+	allowedRoot := t.TempDir()
+	disallowedRoot := t.TempDir()
+
+	allowedSkill := filepath.Join(allowedRoot, "valid", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(allowedSkill), 0755); err != nil {
+		t.Fatalf("mkdir allowed skill dir: %v", err)
+	}
+	if err := os.WriteFile(allowedSkill, []byte("---\nname: allowed\ndescription: allowed\n---\nallowed body\n"), 0644); err != nil {
+		t.Fatalf("write allowed skill file: %v", err)
+	}
+
+	disallowedSkill := filepath.Join(disallowedRoot, "invalid", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(disallowedSkill), 0755); err != nil {
+		t.Fatalf("mkdir disallowed skill dir: %v", err)
+	}
+	if err := os.WriteFile(disallowedSkill, []byte("---\nname: blocked\ndescription: blocked\n---\nblocked body\n"), 0644); err != nil {
+		t.Fatalf("write disallowed skill file: %v", err)
+	}
+
+	reg := NewRegistry(true)
+	err := reg.LoadFromPathsWithAllowedRoots([]string{allowedRoot, disallowedRoot}, []string{allowedRoot})
+	if err == nil {
+		t.Fatal("expected load warnings due to disallowed path")
+	}
+	if reg.PromptCount() != 1 {
+		t.Fatalf("expected one prompt from allowed root, got %d", reg.PromptCount())
+	}
+	if _, ok := reg.GetPrompt("allowed"); !ok {
+		t.Fatal("expected allowed prompt to load")
+	}
+	if _, ok := reg.GetPrompt("blocked"); ok {
+		t.Fatal("did not expect blocked prompt to load")
+	}
+}
+
+func TestSnapshotFingerprint_DetectsContentChangeWithSameSizeAndMtime(t *testing.T) {
+	root := t.TempDir()
+	skill := filepath.Join(root, "scene-review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+
+	contentV1 := "---\nname: scene-review\ndescription: desc\n---\nReview A\n"
+	contentV2 := "---\nname: scene-review\ndescription: desc\n---\nReview B\n"
+	if len(contentV1) != len(contentV2) {
+		t.Fatalf("expected equal-size test payloads, got %d vs %d", len(contentV1), len(contentV2))
+	}
+
+	if err := os.WriteFile(skill, []byte(contentV1), 0644); err != nil {
+		t.Fatalf("write skill v1: %v", err)
+	}
+	firstFingerprint, warnings := SnapshotFingerprint([]string{root}, nil)
+	if len(warnings) > 0 {
+		t.Fatalf("expected no snapshot warnings, got %v", warnings)
+	}
+
+	info, err := os.Stat(skill)
+	if err != nil {
+		t.Fatalf("stat skill file: %v", err)
+	}
+	fixedModTime := info.ModTime()
+
+	if err := os.WriteFile(skill, []byte(contentV2), 0644); err != nil {
+		t.Fatalf("write skill v2: %v", err)
+	}
+	if err := os.Chtimes(skill, fixedModTime, fixedModTime); err != nil {
+		t.Fatalf("set fixed modtime: %v", err)
+	}
+
+	secondFingerprint, warnings := SnapshotFingerprint([]string{root}, nil)
+	if len(warnings) > 0 {
+		t.Fatalf("expected no snapshot warnings, got %v", warnings)
+	}
+	if firstFingerprint == secondFingerprint {
+		t.Fatal("expected content hash to change snapshot fingerprint even when size/mtime are fixed")
+	}
+
+	// Guard against filesystem timestamp granularity accidentally changing the fixture.
+	infoAfter, err := os.Stat(skill)
+	if err != nil {
+		t.Fatalf("stat skill file after rewrite: %v", err)
+	}
+	if !infoAfter.ModTime().Equal(fixedModTime) {
+		t.Fatalf("expected fixed modtime %v, got %v", fixedModTime, infoAfter.ModTime())
+	}
+	if infoAfter.Size() != int64(len(contentV2)) {
+		t.Fatalf("expected size %d, got %d", len(contentV2), infoAfter.Size())
+	}
+
+}

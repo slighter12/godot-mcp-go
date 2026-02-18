@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -16,6 +18,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
+	"github.com/slighter12/godot-mcp-go/transport/shared"
 	"github.com/slighter12/godot-mcp-go/transport/stdio"
 )
 
@@ -26,6 +29,15 @@ type Server struct {
 	sessionManager *SessionManager
 	config         *config.Config
 	echo           *echo.Echo
+
+	promptCatalogReloadMu                   sync.Mutex
+	promptCatalogFileFingerprint            string
+	promptCatalogSnapshotWarningFingerprint string
+	promptCatalogSnapshotWarningLastLogged  time.Time
+
+	promptCatalogAutoReloadMu     sync.Mutex
+	promptCatalogAutoReloadCancel context.CancelFunc
+	promptCatalogAutoReloadDone   chan struct{}
 }
 
 func NewServer(cfg *config.Config) *Server {
@@ -39,7 +51,10 @@ func NewServer(cfg *config.Config) *Server {
 }
 
 func (s *Server) Start() error {
+	s.stopPromptCatalogAutoReload()
 	s.initializePromptCatalog()
+	s.startPromptCatalogAutoReload()
+	defer s.stopPromptCatalogAutoReload()
 	s.toolManager.RegisterDefaultTools()
 	if err := s.registerRuntimeTools(); err != nil {
 		logger.Error("Failed to register runtime tools", "error", err)
@@ -99,6 +114,7 @@ func (s *Server) startStdioServer() error {
 	logger.Info("Starting MCP server in stdio mode", "config", s.config)
 	server := stdio.NewStdioServer(s.toolManager)
 	server.AttachPromptCatalog(s.promptCatalog)
+	server.AttachPromptRenderOptions(s.promptRenderOptions())
 	return server.Start()
 }
 
@@ -165,13 +181,24 @@ func (s *Server) GetRegistry() *mcp.Registry {
 func (s *Server) initializePromptCatalog() {
 	s.promptCatalog = promptcatalog.NewRegistry(s.config.PromptCatalog.Enabled)
 	if !s.promptCatalog.Enabled() {
+		s.promptCatalogReloadMu.Lock()
+		s.promptCatalogFileFingerprint = ""
+		s.promptCatalogSnapshotWarningFingerprint = ""
+		s.promptCatalogSnapshotWarningLastLogged = time.Time{}
+		s.promptCatalogReloadMu.Unlock()
 		logger.Info("Prompt catalog runtime disabled")
 		return
 	}
 
-	if err := s.promptCatalog.LoadFromPaths(s.config.PromptCatalog.Paths); err != nil {
+	fingerprint, snapshotErrors, err := s.loadPromptCatalogWithStableSnapshot()
+	if err != nil {
 		logger.Warn("Prompt catalog loaded with warnings", "error", err)
 	}
+
+	s.promptCatalogReloadMu.Lock()
+	s.promptCatalogFileFingerprint = fingerprint
+	s.logPromptCatalogSnapshotWarningsLocked(snapshotErrors)
+	s.promptCatalogReloadMu.Unlock()
 
 	logger.Info("Prompt catalog runtime initialized",
 		"enabled", s.promptCatalog.Enabled(),
@@ -194,4 +221,14 @@ func (s *Server) GetSessionManager() *SessionManager {
 }
 func (s *Server) GetConfig() *config.Config {
 	return s.config
+}
+
+func (s *Server) promptRenderOptions() shared.PromptRenderOptions {
+	if s == nil || s.config == nil {
+		return shared.DefaultPromptRenderOptions()
+	}
+	return shared.PromptRenderOptions{
+		Mode:                   s.config.PromptCatalog.Rendering.Mode,
+		RejectUnknownArguments: s.config.PromptCatalog.Rendering.RejectUnknownArguments,
+	}
 }
