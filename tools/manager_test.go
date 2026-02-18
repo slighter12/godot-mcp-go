@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -133,4 +134,22 @@ func TestConcurrentToolExecution(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+func TestSummarizeToolArgsForLog(t *testing.T) {
+	if got := summarizeToolArgsForLog("ping-editor-runtime", json.RawMessage(`{"k":"v"}`)); got == `{"k":"v"}` {
+		t.Fatalf("expected ping args to be summarized, got raw payload")
+	}
+
+	if got := summarizeToolArgsForLog("other-tool", json.RawMessage(`{"k":"v"}`)); got != `{"k":"v"}` {
+		t.Fatalf("expected small payload to stay inline, got %q", got)
+	}
+
+	large := make([]byte, 513)
+	for i := range large {
+		large[i] = 'a'
+	}
+	if got := summarizeToolArgsForLog("other-tool", json.RawMessage(large)); !strings.HasPrefix(got, "<omitted:") {
+		t.Fatalf("expected large payload summary, got %q", got)
+	}
 }

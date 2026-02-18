@@ -83,8 +83,25 @@ func (m *Manager) ExecuteTool(name string, args json.RawMessage) ([]byte, error)
 		return nil, fmt.Errorf("%w: %s", ErrToolNotFound, name)
 	}
 
-	logger.Debug("Executing tool", "name", name, "args", string(args))
+	logger.Debug("Executing tool", "name", name, "args", summarizeToolArgsForLog(name, args), "args_bytes", len(args))
 	return tool.Execute(args)
+}
+
+func summarizeToolArgsForLog(name string, args json.RawMessage) string {
+	if len(args) == 0 {
+		return "<empty>"
+	}
+
+	switch name {
+	case "sync-editor-runtime", "ping-editor-runtime":
+		return fmt.Sprintf("<omitted:%d bytes>", len(args))
+	}
+
+	const maxInlineArgsBytes = 512
+	if len(args) > maxInlineArgsBytes {
+		return fmt.Sprintf("<omitted:%d bytes>", len(args))
+	}
+	return string(args)
 }
 
 // RegisterDefaultTools registers all default tools

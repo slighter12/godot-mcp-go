@@ -203,7 +203,7 @@ func (s *Server) loadPromptCatalogWithStableSnapshot(preSnapshot *promptCatalogS
 	var afterFingerprint string
 	var afterWarnings []string
 
-	for attempt := 0; attempt < promptCatalogLoadConsistencyMaxAttempts; attempt++ {
+	for attempt := range promptCatalogLoadConsistencyMaxAttempts {
 		beforeFingerprint := ""
 		beforeWarnings := []string(nil)
 		if attempt == 0 && preSnapshot != nil {

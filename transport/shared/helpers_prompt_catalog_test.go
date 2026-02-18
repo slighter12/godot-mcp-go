@@ -14,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/tools"
+	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 var initSharedTestLogger sync.Once
@@ -637,6 +638,68 @@ func TestBuildToolCallResponse_ToolNotFoundStillReturnsInvalidParams(t *testing.
 	}
 }
 
+func TestBuildToolCallResponse_SemanticErrorUsesIsErrorPayload(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&semanticFailingTool{name: "semantic-tool"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
+		"name":      "semantic-tool",
+		"arguments": map[string]any{},
+	}), manager, nil)
+	if resp == nil {
+		t.Fatal("expected response")
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected tool result response, got %+v", resp.Error)
+	}
+
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload, ok := result["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected semantic error payload map, got %T", result["error"])
+	}
+	if errPayload["kind"] != tooltypes.SemanticKindNotAvailable {
+		t.Fatalf("expected kind %q, got %v", tooltypes.SemanticKindNotAvailable, errPayload["kind"])
+	}
+	if errPayload["reason"] != "runtime_snapshot_stale" {
+		t.Fatalf("expected reason runtime_snapshot_stale, got %v", errPayload["reason"])
+	}
+}
+
+func TestBuildToolCallResponseWithContext_InjectsMCPContext(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&contextEchoTool{name: "context-echo"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContext(mustRequest(t, "tools/call", map[string]any{
+		"name":      "context-echo",
+		"arguments": map[string]any{},
+	}), manager, nil, ToolCallContext{
+		SessionID:          "session-123",
+		SessionInitialized: true,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	payload, ok := result["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result payload map, got %T", result["result"])
+	}
+	if payload["session_id"] != "session-123" {
+		t.Fatalf("expected session_id session-123, got %v", payload["session_id"])
+	}
+	if payload["session_initialized"] != true {
+		t.Fatalf("expected session_initialized=true, got %v", payload["session_initialized"])
+	}
+}
+
 func mustRequest(t *testing.T, method string, params map[string]any) jsonrpc.Request {
 	t.Helper()
 	raw, err := json.Marshal(params)
@@ -711,4 +774,48 @@ func (t *failingTool) InputSchema() mcp.InputSchema {
 
 func (t *failingTool) Execute(args json.RawMessage) ([]byte, error) {
 	return nil, t.err
+}
+
+type semanticFailingTool struct {
+	name string
+}
+
+func (t *semanticFailingTool) Name() string { return t.name }
+
+func (t *semanticFailingTool) Description() string { return "semantic failing tool for tests" }
+
+func (t *semanticFailingTool) InputSchema() mcp.InputSchema {
+	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}}
+}
+
+func (t *semanticFailingTool) Execute(args json.RawMessage) ([]byte, error) {
+	return nil, tooltypes.NewNotAvailableError("runtime sync stale", map[string]any{
+		"feature": "runtime_bridge",
+		"reason":  "runtime_snapshot_stale",
+	})
+}
+
+type contextEchoTool struct {
+	name string
+}
+
+func (t *contextEchoTool) Name() string { return t.name }
+
+func (t *contextEchoTool) Description() string { return "context echo tool for tests" }
+
+func (t *contextEchoTool) InputSchema() mcp.InputSchema {
+	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}}
+}
+
+func (t *contextEchoTool) Execute(args json.RawMessage) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return nil, err
+	}
+	mcpRaw, _ := payload["_mcp"].(map[string]any)
+	result := map[string]any{
+		"session_id":          mcpRaw["session_id"],
+		"session_initialized": mcpRaw["session_initialized"],
+	}
+	return json.Marshal(result)
 }

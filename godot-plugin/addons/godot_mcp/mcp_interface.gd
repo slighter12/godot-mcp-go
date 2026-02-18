@@ -3,6 +3,8 @@ extends Node
 signal tool_called(tool_name: String, arguments: Dictionary)
 signal tool_result(tool_name: String, result: Dictionary)
 signal tool_error(tool_name: String, error: String)
+signal runtime_sync_failed(error: String)
+signal runtime_command_received(command_id: String, command_name: String, arguments: Dictionary)
 
 var mcp_client: Node
 var tools: Dictionary = {}
@@ -12,6 +14,8 @@ var request_counter: int = 0
 var pending_requests: Dictionary = {}
 var tools_request_in_progress: bool = false
 var tools_refresh_buffer: Dictionary = {}
+var runtime_sync_in_flight: bool = false
+var runtime_ping_in_flight: bool = false
 
 func _ready():
     if mcp_client == null:
@@ -42,6 +46,8 @@ func _on_connected():
     tools_refresh_buffer.clear()
     pending_requests.clear()
     tools_request_in_progress = false
+    runtime_sync_in_flight = false
+    runtime_ping_in_flight = false
 
     _send_initialized_notification()
     _request_tools_list("")
@@ -51,6 +57,8 @@ func _on_disconnected():
     tools_refresh_buffer.clear()
     pending_requests.clear()
     tools_request_in_progress = false
+    runtime_sync_in_flight = false
+    runtime_ping_in_flight = false
 
 func _on_error(error_message: String):
     print("MCP interface error: ", error_message)
@@ -81,6 +89,72 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
         emit_signal("tool_error", tool_name, "Failed to send tools/call request")
         return
     emit_signal("tool_called", tool_name, arguments)
+
+func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
+    if mcp_client == null:
+        return false
+    if runtime_sync_in_flight:
+        return false
+    if not tools.has("sync-editor-runtime"):
+        return false
+
+    var request_id = _new_request_id()
+    runtime_sync_in_flight = true
+    pending_requests[request_id] = {
+        "kind": "runtime_sync"
+    }
+
+    var request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "sync-editor-runtime",
+            "arguments": {
+                "snapshot": snapshot
+            }
+        }
+    }
+
+    if not mcp_client.send_message(request):
+        pending_requests.erase(request_id)
+        runtime_sync_in_flight = false
+        emit_signal("runtime_sync_failed", "Failed to send runtime sync request")
+        return false
+
+    return true
+
+func can_ping_runtime_bridge() -> bool:
+    return tools.has("ping-editor-runtime")
+
+func ping_runtime_bridge() -> void:
+    if mcp_client == null:
+        return
+    if runtime_ping_in_flight:
+        return
+    if not tools.has("ping-editor-runtime"):
+        return
+
+    var request_id = _new_request_id()
+    runtime_ping_in_flight = true
+    pending_requests[request_id] = {
+        "kind": "runtime_ping"
+    }
+
+    var request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "ping-editor-runtime",
+            "arguments": {}
+        }
+    }
+
+    if not mcp_client.send_message(request):
+        pending_requests.erase(request_id)
+        runtime_ping_in_flight = false
+        emit_signal("runtime_sync_failed", "Failed to send runtime ping request")
 
 func handle_message(message: Dictionary):
     if message.get("jsonrpc", "") != "2.0":
@@ -114,6 +188,14 @@ func _handle_server_notification(message: Dictionary):
     if method == "notifications/tools/list_changed":
         if not tools_request_in_progress:
             _request_tools_list("")
+        return
+    if method == "notifications/godot/command":
+        var params = _as_dictionary(message.get("params", {}))
+        var command_id = str(params.get("commandId", "")).strip_edges()
+        var command_name = str(params.get("name", "")).strip_edges()
+        var arguments = _as_dictionary(params.get("arguments", {}))
+        if command_id != "" and command_name != "":
+            emit_signal("runtime_command_received", command_id, command_name, arguments)
 
 func _handle_error_response(pending: Dictionary, error_obj: Variant):
     var error_message = _extract_jsonrpc_error_message(error_obj)
@@ -126,6 +208,14 @@ func _handle_error_response(pending: Dictionary, error_obj: Variant):
     elif kind == "tools_list":
         tools_request_in_progress = false
         tools_refresh_buffer.clear()
+    elif kind == "runtime_sync":
+        runtime_sync_in_flight = false
+        emit_signal("runtime_sync_failed", error_message)
+    elif kind == "runtime_ping":
+        runtime_ping_in_flight = false
+        emit_signal("runtime_sync_failed", error_message)
+    elif kind == "runtime_ack":
+        emit_signal("runtime_sync_failed", error_message)
 
     handle_error({"message": error_message})
 
@@ -137,6 +227,18 @@ func _handle_result_response(pending: Dictionary, result: Variant):
 
     if kind == "tool_call":
         _handle_tool_call_result(result, pending)
+        return
+
+    if kind == "runtime_sync":
+        _handle_runtime_sync_result(result)
+        return
+
+    if kind == "runtime_ping":
+        _handle_runtime_ping_result(result)
+        return
+
+    if kind == "runtime_ack":
+        _handle_runtime_ack_result(result)
         return
 
 func _handle_tools_list_result(result: Variant):
@@ -189,6 +291,64 @@ func _handle_tool_call_result(result: Variant, pending: Dictionary):
         return
 
     emit_signal("tool_result", tool_name, {"value": payload})
+
+func _handle_runtime_sync_result(result: Variant):
+    runtime_sync_in_flight = false
+    if not (result is Dictionary):
+        emit_signal("runtime_sync_failed", "Invalid runtime sync result payload")
+        return
+
+    var result_dict: Dictionary = result
+    if bool(result_dict.get("isError", false)):
+        emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
+
+func _handle_runtime_ping_result(result: Variant):
+    runtime_ping_in_flight = false
+    if not (result is Dictionary):
+        emit_signal("runtime_sync_failed", "Invalid runtime ping result payload")
+        return
+
+    var result_dict: Dictionary = result
+    if bool(result_dict.get("isError", false)):
+        emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
+
+func _handle_runtime_ack_result(result: Variant):
+    if not (result is Dictionary):
+        emit_signal("runtime_sync_failed", "Invalid runtime command ack result payload")
+        return
+    var result_dict: Dictionary = result
+    if bool(result_dict.get("isError", false)):
+        emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
+
+func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "") -> void:
+    if mcp_client == null:
+        return
+    if not tools.has("ack-editor-command"):
+        return
+
+    var request_id = _new_request_id()
+    pending_requests[request_id] = {
+        "kind": "runtime_ack"
+    }
+
+    var request = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "tools/call",
+        "params": {
+            "name": "ack-editor-command",
+            "arguments": {
+                "command_id": command_id,
+                "success": success,
+                "result": result,
+                "error": error_message
+            }
+        }
+    }
+
+    if not mcp_client.send_message(request):
+        pending_requests.erase(request_id)
+        emit_signal("runtime_sync_failed", "Failed to send runtime command ack")
 
 func handle_error(payload: Dictionary):
     var message = payload.get("message", "Unknown error")
@@ -247,3 +407,8 @@ func _extract_jsonrpc_error_message(error_obj: Variant) -> String:
     if error_obj is Dictionary:
         return str(error_obj.get("message", "Unknown JSON-RPC error"))
     return "Unknown JSON-RPC error"
+
+func _as_dictionary(value: Variant) -> Dictionary:
+    if value is Dictionary:
+        return value
+    return {}

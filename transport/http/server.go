@@ -17,6 +17,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 	"github.com/slighter12/godot-mcp-go/transport/stdio"
@@ -41,13 +42,15 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config) *Server {
-	return &Server{
+	server := &Server{
 		registry:       mcp.NewRegistry(),
 		toolManager:    tools.NewManager(),
 		sessionManager: NewSessionManager(),
 		config:         cfg,
 		echo:           echo.New(),
 	}
+	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToSession)
+	return server
 }
 
 func (s *Server) Start() error {

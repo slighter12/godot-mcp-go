@@ -17,6 +17,16 @@ This document owns prompt catalog runtime details only.
 
 Cross-project priorities and milestone status are tracked in `docs/DEVELOPMENT.md`.
 
+## Cross-Doc Alignment Note (2026-02-18)
+
+- This update line includes Godot runtime bridge/tooling work only.
+- Delivered non-prompt runtime changes include:
+  - runtime bridge read path (`sync-editor-runtime` + `ping-editor-runtime`)
+  - runtime command bridge for `run-project` / `stop-project`
+  - runtime log summarization for large bridge payloads
+- Prompt catalog runtime contract, payloads, and semantic rules remain unchanged.
+- Track Godot integration progress in `docs/DEVELOPMENT.md` to avoid duplicating non-prompt scope here.
+
 ## v1 Contract Freeze (2026-02-17)
 
 This section is the frozen runtime contract for prompt catalog behavior in this repo line.

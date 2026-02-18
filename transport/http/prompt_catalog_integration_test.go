@@ -398,8 +398,7 @@ func TestStreamableHTTPSessionReplacementClosesPreviousSSEStream(t *testing.T) {
 	firstReq.Header.Set(headerProtocolVersion, "2025-11-25")
 	firstReq.Header.Set(echo.HeaderAccept, "text/event-stream")
 	firstRec := httptest.NewRecorder()
-	firstCtx, firstCancel := context.WithCancel(context.Background())
-	defer firstCancel()
+	firstCtx := t.Context()
 	firstReq = firstReq.WithContext(firstCtx)
 	firstEchoCtx := echo.New().NewContext(firstReq, firstRec)
 
@@ -500,8 +499,7 @@ func TestStreamableHTTPDeleteClosesActiveSSEStream(t *testing.T) {
 	streamReq.Header.Set(headerProtocolVersion, "2025-11-25")
 	streamReq.Header.Set(echo.HeaderAccept, "text/event-stream")
 	streamRec := httptest.NewRecorder()
-	streamCtx, streamCancel := context.WithCancel(context.Background())
-	defer streamCancel()
+	streamCtx := t.Context()
 	streamReq = streamReq.WithContext(streamCtx)
 	streamEchoCtx := echo.New().NewContext(streamReq, streamRec)
 

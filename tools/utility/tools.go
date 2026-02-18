@@ -22,5 +22,8 @@ func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
 func GetAllTools() []types.Tool {
 	return []types.Tool{
 		&ListOfferingsTool{},
+		NewSyncEditorRuntimeTool(),
+		NewPingEditorRuntimeTool(),
+		NewAckEditorCommandTool(),
 	}
 }

@@ -225,12 +225,12 @@ func send_message(message: Dictionary) -> bool:
     return _send_raw_message(message)
 
 func _send_raw_message(message: Dictionary) -> bool:
-    print("MCP Client: Sending message: ", message)
+    var json_message = JSON.stringify(message)
+    print("MCP Client: Sending message: ", _build_outgoing_message_summary(message, json_message.length()))
     if not post_http_connection:
         emit_signal("error", "Streamable HTTP connection is not initialized")
         return false
 
-    var json_message = JSON.stringify(message)
     var headers = [
         "Content-Type: application/json",
         "Accept: application/json, text/event-stream",
@@ -252,6 +252,76 @@ func _send_raw_message(message: Dictionary) -> bool:
             _flush_reconnect()
         return false
     return true
+
+func _build_outgoing_message_summary(message: Dictionary, payload_bytes: int) -> String:
+    var method = str(message.get("method", ""))
+    var request_id = str(message.get("id", ""))
+
+    if method == "tools/call":
+        var params = message.get("params", {})
+        if params is Dictionary:
+            var tool_name = str(params.get("name", ""))
+            if tool_name == "sync-editor-runtime":
+                return _summarize_sync_runtime_call(request_id, params, payload_bytes)
+            if tool_name == "ack-editor-command":
+                return _summarize_ack_command_call(request_id, params, payload_bytes)
+            return "tools/call id=%s name=%s bytes=%d" % [request_id, tool_name, payload_bytes]
+
+    if method == "initialize":
+        return "initialize id=%s bytes=%d" % [request_id, payload_bytes]
+
+    if method == "":
+        return "jsonrpc id=%s bytes=%d" % [request_id, payload_bytes]
+
+    return "%s id=%s bytes=%d" % [method, request_id, payload_bytes]
+
+func _summarize_sync_runtime_call(request_id: String, params: Dictionary, payload_bytes: int) -> String:
+    var active_scene = ""
+    var root_name = ""
+    var node_count = 0
+    var root_child_count = -1
+
+    var arguments = params.get("arguments", {})
+    if arguments is Dictionary:
+        var snapshot = arguments.get("snapshot", {})
+        if snapshot is Dictionary:
+            var root_summary = snapshot.get("root_summary", {})
+            if root_summary is Dictionary:
+                active_scene = str(root_summary.get("active_scene", ""))
+                root_name = str(root_summary.get("root_name", ""))
+
+            var node_details = snapshot.get("node_details", {})
+            if node_details is Dictionary:
+                node_count = node_details.size()
+
+            var scene_tree = snapshot.get("scene_tree", {})
+            if scene_tree is Dictionary:
+                root_child_count = int(scene_tree.get("child_count", -1))
+
+    return "tools/call id=%s name=sync-editor-runtime scene=%s root=%s nodes=%d root_children=%d bytes=%d" % [
+        request_id,
+        active_scene,
+        root_name,
+        node_count,
+        root_child_count,
+        payload_bytes
+    ]
+
+func _summarize_ack_command_call(request_id: String, params: Dictionary, payload_bytes: int) -> String:
+    var command_id = ""
+    var success = false
+
+    var arguments = params.get("arguments", {})
+    if arguments is Dictionary:
+        command_id = str(arguments.get("command_id", ""))
+        success = bool(arguments.get("success", false))
+
+    return "tools/call id=%s name=ack-editor-command command_id=%s success=%s bytes=%d" % [
+        request_id,
+        command_id,
+        str(success),
+        payload_bytes
+    ]
 
 func _flush_pending_messages() -> void:
     if is_connecting or request_in_flight or pending_connect_url != "":
