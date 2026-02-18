@@ -19,9 +19,16 @@ const snapshotWarningHeartbeatInterval = 10 * time.Minute
 const promptCatalogLoadConsistencyMaxAttempts = 3
 const promptCatalogNotificationWriteTimeout = 2 * time.Second
 
+var snapshotFingerprintFunc = promptcatalog.SnapshotFingerprint
+
 type promptCatalogReloadOutcome struct {
 	result map[string]any
 	notify bool
+}
+
+type promptCatalogSourceSnapshot struct {
+	fingerprint string
+	warnings    []string
 }
 
 func (s *Server) registerRuntimeTools() error {
@@ -30,7 +37,7 @@ func (s *Server) registerRuntimeTools() error {
 
 func (s *Server) reloadPromptCatalog() map[string]any {
 	s.promptCatalogReloadMu.Lock()
-	outcome := s.reloadPromptCatalogLocked()
+	outcome := s.reloadPromptCatalogLocked(nil)
 	s.promptCatalogReloadMu.Unlock()
 
 	if outcome.notify {
@@ -39,7 +46,7 @@ func (s *Server) reloadPromptCatalog() map[string]any {
 	return outcome.result
 }
 
-func (s *Server) reloadPromptCatalogLocked() promptCatalogReloadOutcome {
+func (s *Server) reloadPromptCatalogLocked(preSnapshot *promptCatalogSourceSnapshot) promptCatalogReloadOutcome {
 	result := map[string]any{
 		"changed":        false,
 		"promptCount":    0,
@@ -55,7 +62,7 @@ func (s *Server) reloadPromptCatalogLocked() promptCatalogReloadOutcome {
 	beforePrompts := s.promptCatalog.ListPrompts()
 	beforeFingerprint := promptListFingerprint(beforePrompts)
 
-	sourceFingerprint, sourceFingerprintWarnings, loadErr := s.loadPromptCatalogWithStableSnapshot()
+	sourceFingerprint, sourceFingerprintWarnings, loadErr := s.loadPromptCatalogWithStableSnapshot(preSnapshot)
 
 	afterPrompts := s.promptCatalog.ListPrompts()
 	afterFingerprint := promptListFingerprint(afterPrompts)
@@ -164,7 +171,7 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 		return nil, false
 	}
 
-	sourceFingerprint, warnings := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+	sourceFingerprint, warnings := snapshotFingerprintFunc(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
 
 	s.promptCatalogReloadMu.Lock()
 	s.logPromptCatalogSnapshotWarningsLocked(warnings)
@@ -174,7 +181,10 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 		return nil, false
 	}
 
-	outcome := s.reloadPromptCatalogLocked()
+	outcome := s.reloadPromptCatalogLocked(&promptCatalogSourceSnapshot{
+		fingerprint: sourceFingerprint,
+		warnings:    warnings,
+	})
 	s.promptCatalogReloadMu.Unlock()
 
 	if outcome.notify {
@@ -183,7 +193,7 @@ func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
 	return outcome.result, true
 }
 
-func (s *Server) loadPromptCatalogWithStableSnapshot() (string, []string, error) {
+func (s *Server) loadPromptCatalogWithStableSnapshot(preSnapshot *promptCatalogSourceSnapshot) (string, []string, error) {
 	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
 		return "", nil, nil
 	}
@@ -194,12 +204,21 @@ func (s *Server) loadPromptCatalogWithStableSnapshot() (string, []string, error)
 	var afterWarnings []string
 
 	for attempt := 0; attempt < promptCatalogLoadConsistencyMaxAttempts; attempt++ {
-		beforeFingerprint, beforeWarnings := promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+		beforeFingerprint := ""
+		beforeWarnings := []string(nil)
+		if attempt == 0 && preSnapshot != nil {
+			// Reuse already-computed snapshot from source-change detection to avoid
+			// one extra discovery/fingerprint scan on the hot auto-reload path.
+			beforeFingerprint = preSnapshot.fingerprint
+			beforeWarnings = append(beforeWarnings, preSnapshot.warnings...)
+		} else {
+			beforeFingerprint, beforeWarnings = snapshotFingerprintFunc(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+		}
 		combinedWarnings = append(combinedWarnings, beforeWarnings...)
 
 		loadErr = s.promptCatalog.LoadFromPathsWithAllowedRoots(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
 
-		afterFingerprint, afterWarnings = promptcatalog.SnapshotFingerprint(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
+		afterFingerprint, afterWarnings = snapshotFingerprintFunc(s.config.PromptCatalog.Paths, s.config.PromptCatalog.AllowedRoots)
 		combinedWarnings = append(combinedWarnings, afterWarnings...)
 
 		if beforeFingerprint == afterFingerprint {

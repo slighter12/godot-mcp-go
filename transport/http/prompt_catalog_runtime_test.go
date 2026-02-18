@@ -192,6 +192,44 @@ func TestReloadPromptCatalogIfSourcesChanged_AddModifyDelete(t *testing.T) {
 	}
 }
 
+func TestReloadPromptCatalogIfSourcesChanged_ReusesPreSnapshotOnFirstAttempt(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	root := t.TempDir()
+	server.config.PromptCatalog.Paths = []string{root}
+	server.config.PromptCatalog.AllowedRoots = []string{root}
+
+	skill := filepath.Join(root, "scene-review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
+		t.Fatalf("mkdir skill dir: %v", err)
+	}
+	content := "---\nname: scene-review\ndescription: Prompt v1\n---\nReview {{scene_path}}\n"
+	if err := os.WriteFile(skill, []byte(content), 0644); err != nil {
+		t.Fatalf("write skill file: %v", err)
+	}
+
+	originalSnapshotFingerprintFunc := snapshotFingerprintFunc
+	t.Cleanup(func() {
+		snapshotFingerprintFunc = originalSnapshotFingerprintFunc
+	})
+
+	calls := 0
+	snapshotFingerprintFunc = func(paths []string, allowedRoots []string) (string, []string) {
+		calls++
+		return promptcatalog.SnapshotFingerprint(paths, allowedRoots)
+	}
+
+	result, reloaded := server.reloadPromptCatalogIfSourcesChanged()
+	if !reloaded {
+		t.Fatalf("expected reload after adding skill file")
+	}
+	if result["changed"] != true {
+		t.Fatalf("expected changed=true after add, got %v", result["changed"])
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 fingerprint scans (detect + post-load), got %d", calls)
+	}
+}
+
 func TestPromptCatalogAutoReloadLifecycle_StopClearsRunner(t *testing.T) {
 	server := newTestHTTPServer(t, true)
 	server.config.PromptCatalog.AutoReload.Enabled = true

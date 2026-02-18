@@ -190,7 +190,7 @@ func (s *Server) initializePromptCatalog() {
 		return
 	}
 
-	fingerprint, snapshotErrors, err := s.loadPromptCatalogWithStableSnapshot()
+	fingerprint, snapshotErrors, err := s.loadPromptCatalogWithStableSnapshot(nil)
 	if err != nil {
 		logger.Warn("Prompt catalog loaded with warnings", "error", err)
 	}
