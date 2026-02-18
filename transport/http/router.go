@@ -384,7 +384,7 @@ func isSupportedProtocolVersion(version string) bool {
 }
 
 func acceptsEventStream(acceptHeader string) bool {
-	for _, part := range strings.Split(acceptHeader, ",") {
+	for part := range strings.SplitSeq(acceptHeader, ",") {
 		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
 		if strings.EqualFold(mime, "text/event-stream") {
 			return true
