@@ -213,7 +213,7 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 
 	normalizedOptions := normalizePromptRenderOptions(options)
 	normalizedArgs := normalizePromptArguments(params.Arguments)
-	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Arguments, normalizedArgs, normalizedOptions); strictErr != nil {
+	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Template, prompt.Arguments, normalizedArgs, normalizedOptions); strictErr != nil {
 		return strictErr
 	}
 
@@ -328,25 +328,40 @@ func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]a
 	}, true
 }
 
-func validateStrictPromptArguments(id any, promptArguments []promptcatalog.PromptArgument, arguments map[string]string, options PromptRenderOptions) *jsonrpc.Response {
+func validateStrictPromptArguments(id any, template string, promptArguments []promptcatalog.PromptArgument, arguments map[string]string, options PromptRenderOptions) *jsonrpc.Response {
 	if options.Mode != PromptRenderingModeStrict {
 		return nil
 	}
 
 	requiredSet := make(map[string]struct{}, len(promptArguments))
-	missing := make([]string, 0)
 	for _, promptArg := range promptArguments {
-		name := strings.TrimSpace(promptArg.Name)
-		if name == "" {
+		key := strings.TrimSpace(promptArg.Name)
+		if key == "" {
 			continue
 		}
-		if _, exists := requiredSet[name]; exists {
+		if _, exists := requiredSet[key]; exists {
 			continue
 		}
-		requiredSet[name] = struct{}{}
-		// Strict mode currently treats all placeholders as required.
-		if _, ok := arguments[name]; !ok {
-			missing = append(missing, name)
+		requiredSet[key] = struct{}{}
+	}
+
+	for _, key := range extractTemplatePlaceholderKeys(template) {
+		if _, exists := requiredSet[key]; exists {
+			continue
+		}
+		requiredSet[key] = struct{}{}
+	}
+
+	requiredKeys := make([]string, 0, len(requiredSet))
+	for key := range requiredSet {
+		requiredKeys = append(requiredKeys, key)
+	}
+	sort.Strings(requiredKeys)
+
+	missing := make([]string, 0)
+	for _, key := range requiredKeys {
+		if _, ok := arguments[key]; !ok {
+			missing = append(missing, key)
 		}
 	}
 	if len(missing) > 0 {
@@ -377,6 +392,31 @@ func validateStrictPromptArguments(id any, promptArguments []promptcatalog.Promp
 		})
 	}
 	return nil
+}
+
+func extractTemplatePlaceholderKeys(template string) []string {
+	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatch(template, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		key := strings.TrimSpace(match[1])
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func normalizePromptArguments(arguments map[string]string) map[string]string {
