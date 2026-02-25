@@ -15,6 +15,9 @@ type ackEditorCommandPayload struct {
 	Success   *bool                    `json:"success,omitempty"`
 	Result    map[string]any           `json:"result,omitempty"`
 	Error     string                   `json:"error,omitempty"`
+	Reason    string                   `json:"reason,omitempty"`
+	Retryable *bool                    `json:"retryable,omitempty"`
+	SchemaVer string                   `json:"schema_version,omitempty"`
 	Context   syncEditorRuntimeContext `json:"_mcp"`
 }
 
@@ -25,7 +28,7 @@ func NewAckEditorCommandTool() *AckEditorCommandTool {
 	return &AckEditorCommandTool{}
 }
 
-func (t *AckEditorCommandTool) Name() string { return "ack-editor-command" }
+func (t *AckEditorCommandTool) Name() string { return "godot-runtime-ack" }
 
 func (t *AckEditorCommandTool) Description() string {
 	return "Acknowledges completion of an internal Godot runtime command"
@@ -35,10 +38,13 @@ func (t *AckEditorCommandTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
 		Properties: map[string]any{
-			"command_id": map[string]any{"type": "string"},
-			"success":    map[string]any{"type": "boolean"},
-			"result":     map[string]any{"type": "object"},
-			"error":      map[string]any{"type": "string"},
+			"command_id":     map[string]any{"type": "string"},
+			"success":        map[string]any{"type": "boolean"},
+			"result":         map[string]any{"type": "object"},
+			"error":          map[string]any{"type": "string"},
+			"reason":         map[string]any{"type": "string"},
+			"retryable":      map[string]any{"type": "boolean"},
+			"schema_version": map[string]any{"type": "string"},
 		},
 		Required: []string{"command_id"},
 		Title:    "Ack Editor Command",
@@ -71,10 +77,27 @@ func (t *AckEditorCommandTool) Execute(args json.RawMessage) ([]byte, error) {
 	if payload.Success != nil {
 		success = *payload.Success
 	}
+	ackResult := payload.Result
+	trimmedReason := strings.TrimSpace(payload.Reason)
+	trimmedSchemaVersion := strings.TrimSpace(payload.SchemaVer)
+	if trimmedReason != "" || payload.Retryable != nil || trimmedSchemaVersion != "" {
+		if ackResult == nil {
+			ackResult = map[string]any{}
+		}
+		if trimmedReason != "" {
+			ackResult["reason"] = trimmedReason
+		}
+		if payload.Retryable != nil {
+			ackResult["retryable"] = *payload.Retryable
+		}
+		if trimmedSchemaVersion != "" {
+			ackResult["schema_version"] = trimmedSchemaVersion
+		}
+	}
 	ack := runtimebridge.CommandAck{
 		CommandID: commandID,
 		Success:   success,
-		Result:    payload.Result,
+		Result:    ackResult,
 		Error:     strings.TrimSpace(payload.Error),
 		AckedAt:   time.Now().UTC(),
 	}

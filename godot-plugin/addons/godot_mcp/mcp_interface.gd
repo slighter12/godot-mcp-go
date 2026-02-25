@@ -95,7 +95,7 @@ func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
         return false
     if runtime_sync_in_flight:
         return false
-    if not tools.has("sync-editor-runtime"):
+    if not tools.has("godot-runtime-sync"):
         return false
 
     var request_id = _new_request_id()
@@ -109,7 +109,7 @@ func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
         "id": request_id,
         "method": "tools/call",
         "params": {
-            "name": "sync-editor-runtime",
+            "name": "godot-runtime-sync",
             "arguments": {
                 "snapshot": snapshot
             }
@@ -125,14 +125,14 @@ func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
     return true
 
 func can_ping_runtime_bridge() -> bool:
-    return tools.has("ping-editor-runtime")
+    return tools.has("godot-runtime-ping")
 
 func ping_runtime_bridge() -> void:
     if mcp_client == null:
         return
     if runtime_ping_in_flight:
         return
-    if not tools.has("ping-editor-runtime"):
+    if not tools.has("godot-runtime-ping"):
         return
 
     var request_id = _new_request_id()
@@ -146,7 +146,7 @@ func ping_runtime_bridge() -> void:
         "id": request_id,
         "method": "tools/call",
         "params": {
-            "name": "ping-editor-runtime",
+            "name": "godot-runtime-ping",
             "arguments": {}
         }
     }
@@ -320,10 +320,10 @@ func _handle_runtime_ack_result(result: Variant):
     if bool(result_dict.get("isError", false)):
         emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
 
-func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "") -> void:
+func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "v1") -> void:
     if mcp_client == null:
         return
-    if not tools.has("ack-editor-command"):
+    if not tools.has("godot-runtime-ack"):
         return
 
     var request_id = _new_request_id()
@@ -331,18 +331,28 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
         "kind": "runtime_ack"
     }
 
+    var arguments = {
+        "command_id": command_id,
+        "success": success,
+        "result": result,
+        "error": error_message
+    }
+    var trimmed_reason = reason.strip_edges()
+    if trimmed_reason != "":
+        arguments["reason"] = trimmed_reason
+    if retryable != null and retryable is bool:
+        arguments["retryable"] = retryable
+    var trimmed_schema_version = schema_version.strip_edges()
+    if trimmed_schema_version != "":
+        arguments["schema_version"] = trimmed_schema_version
+
     var request = {
         "jsonrpc": "2.0",
         "id": request_id,
         "method": "tools/call",
         "params": {
-            "name": "ack-editor-command",
-            "arguments": {
-                "command_id": command_id,
-                "success": success,
-                "result": result,
-                "error": error_message
-            }
+            "name": "godot-runtime-ack",
+            "arguments": arguments
         }
     }
 

@@ -21,7 +21,7 @@ var last_snapshot_fingerprint: String = ""
 func _enter_tree():
     print("Godot MCP Plugin: Entering tree...")
 
-    # Create MCP client node (script path keeps legacy name for compatibility).
+    # Create MCP client node.
     mcp_client = preload("res://addons/godot_mcp/mcp_server.gd").new()
     mcp_client.name = "mcp_client"
     add_child(mcp_client)
@@ -149,7 +149,7 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
         mcp_interface.ack_runtime_command(command_id, false, {}, "Editor interface unavailable")
         return
 
-    if command_name == "run-project":
+    if command_name == "godot-project-run":
         if not editor_interface.has_method("play_main_scene"):
             mcp_interface.ack_runtime_command(command_id, false, {}, "play_main_scene is not available")
             return
@@ -158,7 +158,7 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
         mcp_interface.ack_runtime_command(command_id, true, {"running": true, "command": command_name}, "")
         return
 
-    if command_name == "stop-project":
+    if command_name == "godot-project-stop":
         if not editor_interface.has_method("stop_playing_scene"):
             mcp_interface.ack_runtime_command(command_id, false, {}, "stop_playing_scene is not available")
             return
@@ -167,7 +167,380 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
         mcp_interface.ack_runtime_command(command_id, true, {"running": false, "command": command_name}, "")
         return
 
+    if command_name == "godot-scene-create":
+        _ack_runtime_command_with_payload(command_id, _handle_scene_create(arguments))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-scene-save":
+        _ack_runtime_command_with_payload(command_id, _handle_scene_save(editor_interface))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-scene-apply":
+        _ack_runtime_command_with_payload(command_id, _handle_scene_apply(editor_interface, arguments))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-node-create":
+        _ack_runtime_command_with_payload(command_id, _handle_node_create(editor_interface, arguments))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-node-delete":
+        _ack_runtime_command_with_payload(command_id, _handle_node_delete(editor_interface, arguments))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-node-modify":
+        _ack_runtime_command_with_payload(command_id, _handle_node_modify(editor_interface, arguments))
+        _sync_runtime_snapshot(true)
+        return
+
+    if command_name == "godot-script-create":
+        _ack_runtime_command_with_payload(command_id, _handle_script_create(arguments))
+        return
+
+    if command_name == "godot-script-modify":
+        _ack_runtime_command_with_payload(command_id, _handle_script_modify(arguments))
+        return
+
     mcp_interface.ack_runtime_command(command_id, false, {}, "Unsupported runtime command: " + command_name)
+
+func _ack_runtime_command_with_payload(command_id: String, payload: Dictionary) -> void:
+    var success := bool(payload.get("success", false))
+    var result: Dictionary = {}
+    var raw_result = payload.get("result", {})
+    if raw_result is Dictionary:
+        result = raw_result
+    var error_message := str(payload.get("error", ""))
+    mcp_interface.ack_runtime_command(command_id, success, result, error_message)
+
+func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
+    var result = {
+        "schema_version": "v1"
+    }
+    for key in data.keys():
+        result[key] = data[key]
+    return {
+        "success": true,
+        "result": result,
+        "error": ""
+    }
+
+func _runtime_failure_result(reason: String, error_message: String) -> Dictionary:
+    return {
+        "success": false,
+        "result": {
+            "reason": reason,
+            "retryable": false,
+            "schema_version": "v1"
+        },
+        "error": error_message
+    }
+
+func _handle_scene_create(arguments: Dictionary) -> Dictionary:
+    var scene_path = str(arguments.get("path", "")).strip_edges()
+    if not _is_safe_res_path(scene_path, [".tscn"]):
+        return _runtime_failure_result("invalid_path", "scene create requires a safe res://*.tscn path")
+    if FileAccess.file_exists(scene_path):
+        return _runtime_failure_result("scene_already_exists", "scene file already exists: " + scene_path)
+
+    var content := ""
+    if arguments.has("content"):
+        if not (arguments["content"] is String):
+            return _runtime_failure_result("invalid_content_type", "content must be a string")
+        content = str(arguments["content"])
+    elif arguments.has("template"):
+        if not (arguments["template"] is String):
+            return _runtime_failure_result("invalid_template_type", "template must be a string")
+        content = _build_scene_template(str(arguments["template"]))
+    else:
+        content = _build_scene_template("")
+
+    var mkdir_err = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(scene_path.get_base_dir()))
+    if mkdir_err != OK:
+        return _runtime_failure_result("directory_create_failed", "failed to create scene directory (code=%d)" % mkdir_err)
+
+    var file = FileAccess.open(scene_path, FileAccess.WRITE)
+    if file == null:
+        return _runtime_failure_result("scene_write_failed", "failed to open scene file for writing: " + scene_path)
+    file.store_string(content)
+    file.flush()
+    file.close()
+
+    return _runtime_success_result({
+        "path": scene_path,
+        "bytes_written": content.length()
+    })
+
+func _handle_scene_save(editor_interface: EditorInterface) -> Dictionary:
+    var edited_root = editor_interface.get_edited_scene_root()
+    if edited_root == null:
+        return _runtime_failure_result("no_edited_scene", "no edited scene is available to save")
+    if not editor_interface.has_method("save_scene"):
+        return _runtime_failure_result("save_scene_unavailable", "save_scene is not available")
+
+    var save_result = editor_interface.call("save_scene")
+    if save_result is int and int(save_result) != OK:
+        return _runtime_failure_result("save_failed", "save_scene failed (code=%d)" % int(save_result))
+
+    return _runtime_success_result({
+        "scene_path": _resolve_active_scene_path(edited_root)
+    })
+
+func _handle_scene_apply(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var scene_path = str(arguments.get("path", "")).strip_edges()
+    if not _is_safe_res_path(scene_path, [".tscn"]):
+        return _runtime_failure_result("invalid_path", "scene apply requires a safe res://*.tscn path")
+    if not FileAccess.file_exists(scene_path):
+        return _runtime_failure_result("scene_not_found", "scene file does not exist: " + scene_path)
+    if not editor_interface.has_method("open_scene_from_path"):
+        return _runtime_failure_result("open_scene_unavailable", "open_scene_from_path is not available")
+
+    var open_result = editor_interface.call("open_scene_from_path", scene_path)
+    if open_result is int and int(open_result) != OK:
+        return _runtime_failure_result("scene_open_failed", "failed to open scene (code=%d)" % int(open_result))
+
+    return _runtime_success_result({
+        "scene_path": scene_path
+    })
+
+func _handle_node_create(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = editor_interface.get_edited_scene_root()
+    if edited_root == null:
+        return _runtime_failure_result("no_edited_scene", "node create requires an edited scene")
+    if not (arguments.get("parent", null) is String):
+        return _runtime_failure_result("invalid_parent_type", "parent must be a string")
+    if not (arguments.get("type", null) is String):
+        return _runtime_failure_result("invalid_type_type", "type must be a string")
+    if not (arguments.get("name", null) is String):
+        return _runtime_failure_result("invalid_name_type", "name must be a string")
+
+    var parent_path = str(arguments.get("parent", "")).strip_edges()
+    var node_type = str(arguments.get("type", "")).strip_edges()
+    var node_name = str(arguments.get("name", "")).strip_edges()
+    if parent_path == "" or node_type == "" or node_name == "":
+        return _runtime_failure_result("missing_required_field", "parent, type, and name are required")
+
+    var parent_node = _resolve_scene_node(edited_root, parent_path)
+    if parent_node == null:
+        return _runtime_failure_result("parent_not_found", "parent node not found: " + parent_path)
+    if not ClassDB.class_exists(node_type):
+        return _runtime_failure_result("node_type_not_found", "unknown node type: " + node_type)
+
+    var instance = ClassDB.instantiate(node_type)
+    if instance == null or not (instance is Node):
+        return _runtime_failure_result("node_type_not_instantiable", "failed to instantiate node type: " + node_type)
+
+    var created_node: Node = instance
+    created_node.name = node_name
+    parent_node.add_child(created_node)
+    created_node.owner = edited_root
+
+    return _runtime_success_result({
+        "path": str(created_node.get_path()),
+        "parent": str(parent_node.get_path()),
+        "name": str(created_node.name),
+        "type": node_type
+    })
+
+func _handle_node_delete(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = editor_interface.get_edited_scene_root()
+    if edited_root == null:
+        return _runtime_failure_result("no_edited_scene", "node delete requires an edited scene")
+    if not (arguments.get("node", null) is String):
+        return _runtime_failure_result("invalid_node_type", "node must be a string")
+
+    var node_path = str(arguments.get("node", "")).strip_edges()
+    if node_path == "":
+        return _runtime_failure_result("missing_node_path", "node path is required")
+
+    var target = _resolve_scene_node(edited_root, node_path)
+    if target == null:
+        return _runtime_failure_result("node_not_found", "node not found: " + node_path)
+    if target == edited_root:
+        return _runtime_failure_result("cannot_delete_root", "cannot delete the edited scene root node")
+
+    var parent = target.get_parent()
+    if parent == null:
+        return _runtime_failure_result("node_parent_missing", "node parent is unavailable")
+
+    parent.remove_child(target)
+    target.queue_free()
+
+    return _runtime_success_result({
+        "deleted_path": node_path
+    })
+
+func _handle_node_modify(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = editor_interface.get_edited_scene_root()
+    if edited_root == null:
+        return _runtime_failure_result("no_edited_scene", "node modify requires an edited scene")
+    if not (arguments.get("node", null) is String):
+        return _runtime_failure_result("invalid_node_type", "node must be a string")
+    if not (arguments.get("properties", null) is Dictionary):
+        return _runtime_failure_result("invalid_properties_type", "properties must be an object")
+
+    var node_path = str(arguments.get("node", "")).strip_edges()
+    if node_path == "":
+        return _runtime_failure_result("missing_node_path", "node path is required")
+
+    var target = _resolve_scene_node(edited_root, node_path)
+    if target == null:
+        return _runtime_failure_result("node_not_found", "node not found: " + node_path)
+
+    var updates: Dictionary = arguments.get("properties", {})
+    var updated_keys: Array[String] = []
+    for key in updates.keys():
+        if not (key is String):
+            return _runtime_failure_result("invalid_property_name", "property names must be strings")
+        var property_name = str(key).strip_edges()
+        if property_name == "":
+            return _runtime_failure_result("invalid_property_name", "property name must not be empty")
+        if not _node_has_property(target, property_name):
+            return _runtime_failure_result("property_not_found", "property not found: " + property_name)
+        var before_value = target.get(property_name)
+        target.set(property_name, updates[key])
+        var after_value = target.get(property_name)
+        if after_value != updates[key] and before_value == after_value:
+            return _runtime_failure_result("property_update_failed", "failed to update property: " + property_name)
+        updated_keys.append(property_name)
+
+    return _runtime_success_result({
+        "path": str(target.get_path()),
+        "updated_properties": updated_keys
+    })
+
+func _handle_script_create(arguments: Dictionary) -> Dictionary:
+    if not (arguments.get("path", null) is String):
+        return _runtime_failure_result("invalid_path_type", "path must be a string")
+    if not (arguments.get("content", null) is String):
+        return _runtime_failure_result("invalid_content_type", "content must be a string")
+
+    var script_path = str(arguments.get("path", "")).strip_edges()
+    var content = str(arguments.get("content", ""))
+    if not _is_safe_res_path(script_path, [".gd", ".rs"]):
+        return _runtime_failure_result("invalid_path", "script create requires a safe res:// path with .gd or .rs extension")
+    if FileAccess.file_exists(script_path):
+        return _runtime_failure_result("script_already_exists", "script file already exists: " + script_path)
+
+    var mkdir_err = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(script_path.get_base_dir()))
+    if mkdir_err != OK:
+        return _runtime_failure_result("directory_create_failed", "failed to create script directory (code=%d)" % mkdir_err)
+
+    var file = FileAccess.open(script_path, FileAccess.WRITE)
+    if file == null:
+        return _runtime_failure_result("script_write_failed", "failed to open script file for writing: " + script_path)
+    file.store_string(content)
+    file.flush()
+    file.close()
+
+    return _runtime_success_result({
+        "path": script_path,
+        "bytes_written": content.length()
+    })
+
+func _handle_script_modify(arguments: Dictionary) -> Dictionary:
+    if not (arguments.get("path", null) is String):
+        return _runtime_failure_result("invalid_path_type", "path must be a string")
+    if not (arguments.get("content", null) is String):
+        return _runtime_failure_result("invalid_content_type", "content must be a string")
+
+    var script_path = str(arguments.get("path", "")).strip_edges()
+    var content = str(arguments.get("content", ""))
+    if not _is_safe_res_path(script_path, [".gd", ".rs"]):
+        return _runtime_failure_result("invalid_path", "script modify requires a safe res:// path with .gd or .rs extension")
+    if not FileAccess.file_exists(script_path):
+        return _runtime_failure_result("script_not_found", "script file does not exist: " + script_path)
+
+    var file = FileAccess.open(script_path, FileAccess.WRITE)
+    if file == null:
+        return _runtime_failure_result("script_write_failed", "failed to open script file for writing: " + script_path)
+    file.store_string(content)
+    file.flush()
+    file.close()
+
+    return _runtime_success_result({
+        "path": script_path,
+        "bytes_written": content.length()
+    })
+
+func _is_safe_res_path(path: String, allowed_extensions: Array[String]) -> bool:
+    var trimmed = path.strip_edges()
+    if trimmed == "":
+        return false
+    if not trimmed.begins_with("res://"):
+        return false
+    if trimmed.find("..") != -1:
+        return false
+
+    var lowered = trimmed.to_lower()
+    for ext in allowed_extensions:
+        if lowered.ends_with(ext):
+            return true
+    return false
+
+func _build_scene_template(template_name: String) -> String:
+    var root_type = "Node"
+    var template = template_name.to_lower().strip_edges()
+    if template == "2d" or template == "node2d" or template == "empty_2d":
+        root_type = "Node2D"
+    elif template == "3d" or template == "node3d" or template == "empty_3d":
+        root_type = "Node3D"
+    elif template == "ui" or template == "control":
+        root_type = "Control"
+    return "[gd_scene format=3]\n\n[node name=\"Root\" type=\"%s\"]\n" % root_type
+
+func _resolve_scene_node(edited_root: Node, query: String) -> Node:
+    if edited_root == null:
+        return null
+
+    var needle = query.strip_edges()
+    if needle == "" or needle == ".":
+        return edited_root
+    if needle.find("..") != -1:
+        return null
+    if needle == str(edited_root.name):
+        return edited_root
+
+    var root_path = str(edited_root.get_path())
+    if needle == root_path:
+        return edited_root
+    if needle.begins_with("/"):
+        if not needle.begins_with(root_path + "/"):
+            return null
+
+    var resolved = edited_root.get_node_or_null(NodePath(needle))
+    if resolved != null and _node_within_edited_scene(edited_root, resolved):
+        return resolved
+
+    if needle.begins_with(root_path + "/"):
+        var relative = needle.substr(root_path.length())
+        if relative.begins_with("/"):
+            relative = relative.substr(1)
+        if relative == "":
+            return edited_root
+        resolved = edited_root.get_node_or_null(NodePath(relative))
+        if resolved != null and _node_within_edited_scene(edited_root, resolved):
+            return resolved
+
+    return null
+
+func _node_has_property(node: Node, property_name: String) -> bool:
+    for entry in node.get_property_list():
+        if entry is Dictionary and str(entry.get("name", "")) == property_name:
+            return true
+    return false
+
+func _node_within_edited_scene(edited_root: Node, node: Node) -> bool:
+    if edited_root == null or node == null:
+        return false
+    var root_path = str(edited_root.get_path())
+    var node_path = str(node.get_path())
+    if node_path == root_path:
+        return true
+    return node_path.begins_with(root_path + "/")
 
 func _setup_runtime_sync_timers() -> void:
     runtime_heartbeat_timer = Timer.new()

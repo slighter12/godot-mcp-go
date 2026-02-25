@@ -22,16 +22,18 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 - Tool manager and category-based tool registration
 - Config file load/validate/normalize flow
 - Runtime bridge snapshot store with stale detection (`10s`) and session binding
-- Internal runtime bridge tools (`sync-editor-runtime`, `ping-editor-runtime`, `ack-editor-command`)
-- Runtime-backed read tools (`get-editor-state`, `get-scene-tree`, `get-node-properties`)
+- Internal runtime bridge tools (`godot-runtime-sync`, `godot-runtime-ping`, `godot-runtime-ack`)
+- Runtime-backed read tools (`godot-editor-get-state`, `godot-node-get-tree`, `godot-node-get-properties`)
 - File-backed scene/script reads with safe project-path validation (`res://` + relative only)
 - Semantic tool error contract (`isError=true` + `error.kind`)
-- Runtime command bridge for `run-project` / `stop-project`
+- Runtime command bridge for project and scene/node/script mutating tools
+- Canonical v1 `godot-*` tool naming with strict binding
+- CI workflow for Go tests + HTTP smoke + inspector docker checks
 
 ### In Progress
 
-- Expand quality coverage beyond functional tests
-- Expand Godot write/edit execution beyond current read + run/stop bridge coverage
+- Performance benchmarks under concurrent requests
+- Advanced execution controls and permission model hardening
 
 ### Open Tracks
 
@@ -53,11 +55,11 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 
 - [x] Runtime bridge domain model/store and stale-aware reads
 - [x] Runtime sync lifecycle (change-driven full snapshot + heartbeat ping)
-- [x] Runtime command bridge (`run-project`, `stop-project`)
+- [x] Runtime command bridge (`godot-project-run`, `godot-project-stop`)
 - [x] Real-time scene tree and script state reads
 - [x] Editor state synchronization lifecycle
 - [x] Clear runtime availability signals for Godot-dependent calls
-- [ ] Real Godot API-backed write/edit execution for scene/script/node tools
+- [x] Real Godot API-backed write/edit execution for scene/script/node tools
 
 ### Track C: Prompt Catalog Runtime
 
@@ -80,23 +82,23 @@ Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS
 
 ### Track E: Release Readiness
 
-- [ ] API reference docs
-- [ ] Installation and upgrade guide
+- [x] API reference docs
+- [x] Installation and upgrade guide
 - [ ] End-to-end usage examples
-- [ ] Changelog and release notes discipline
+- [x] Changelog and release notes discipline
 
 ## Post-v1 Implementation Plan (Godot Wave 2)
 
 1. Scene write pipeline
-- Implement `create-scene`, `save-scene`, `apply-scene` through runtime command bridge.
+- Implement `godot-scene-create`, `godot-scene-save`, `godot-scene-apply` through runtime command bridge.
 - Return deterministic command acknowledgements (success/error/reason) instead of placeholder behavior.
 
 2. Node write pipeline
-- Implement `create-node`, `delete-node`, `modify-node` with validated request schema and whitelist field updates.
+- Implement `godot-node-create`, `godot-node-delete`, `godot-node-modify` with validated request schema and whitelist field updates.
 - Add node path resolution guarantees (exact path first, then deterministic fallback policy if enabled).
 
 3. Script write pipeline
-- Implement `create-script`, `modify-script` for `.gd` and `.rs` with path safety rules consistent with read tools.
+- Implement `godot-script-create`, `godot-script-modify` for `.gd` and `.rs` with path safety rules consistent with read tools.
 - Add overwrite/conflict policy (explicit replace flag and clear rejection reasons).
 
 4. Runtime freshness negotiation and resiliency

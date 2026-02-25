@@ -67,7 +67,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-a",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "sync-editor-runtime",
+			"name": "godot-runtime-sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://A.tscn"},
@@ -88,7 +88,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-b",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "sync-editor-runtime",
+			"name": "godot-runtime-sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://B.tscn"},
@@ -109,7 +109,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "state-a",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name":      "get-editor-state",
+			"name":      "godot-editor-get-state",
 			"arguments": map[string]any{},
 		},
 	}, sessionA, "2025-11-25")
@@ -135,7 +135,7 @@ func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "sync-editor-runtime",
+		"name": "godot-runtime-sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -186,7 +186,7 @@ func TestSyncEditorRuntimeTool_RejectsUninitializedSession(t *testing.T) {
 	server.sessionManager.CreateSession(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "sync-editor-runtime",
+		"name": "godot-runtime-sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -240,7 +240,7 @@ func TestPingEditorRuntimeTool_WithInitializedSessionAndSnapshot(t *testing.T) {
 	}, time.Now().UTC().Add(-9*time.Second))
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "ping-editor-runtime",
+		"name":      "godot-runtime-ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -279,7 +279,7 @@ func TestPingEditorRuntimeTool_RequiresExistingSnapshot(t *testing.T) {
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "ping-editor-runtime",
+		"name":      "godot-runtime-ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {

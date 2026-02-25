@@ -627,7 +627,7 @@ func TestReloadPromptCatalogToolBroadcastsPromptListChanged(t *testing.T) {
 		JSONRPC: jsonrpc.Version,
 		ID:      10,
 		Method:  "tools/call",
-		Params:  mustRawMap(t, map[string]any{"name": "reload-prompt-catalog", "arguments": map[string]any{}}),
+		Params:  mustRawMap(t, map[string]any{"name": "godot-prompts-reload", "arguments": map[string]any{}}),
 	}, sessionID)
 	if err != nil {
 		t.Fatalf("handleMessage tools/call: %v", err)
@@ -652,7 +652,7 @@ func TestReloadPromptCatalogToolBroadcastsPromptListChanged(t *testing.T) {
 		JSONRPC: jsonrpc.Version,
 		ID:      11,
 		Method:  "tools/call",
-		Params:  mustRawMap(t, map[string]any{"name": "reload-prompt-catalog", "arguments": map[string]any{}}),
+		Params:  mustRawMap(t, map[string]any{"name": "godot-prompts-reload", "arguments": map[string]any{}}),
 	}, sessionID)
 	if err != nil {
 		t.Fatalf("second handleMessage tools/call: %v", err)

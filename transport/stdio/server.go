@@ -154,7 +154,7 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 
 func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error) {
 	// Call the list scenes tool to include basic bootstrap context in legacy field.
-	result, err := s.toolManager.CallTool("list-project-scenes", map[string]any{})
+	result, err := s.toolManager.CallTool("godot-scene-list", map[string]any{})
 	if err != nil {
 		return nil, err
 	}

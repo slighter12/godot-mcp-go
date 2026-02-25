@@ -137,7 +137,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 }
 
 func TestSummarizeToolArgsForLog(t *testing.T) {
-	if got := summarizeToolArgsForLog("ping-editor-runtime", json.RawMessage(`{"k":"v"}`)); got == `{"k":"v"}` {
+	if got := summarizeToolArgsForLog("godot-runtime-ping", json.RawMessage(`{"k":"v"}`)); got == `{"k":"v"}` {
 		t.Fatalf("expected ping args to be summarized, got raw payload")
 	}
 

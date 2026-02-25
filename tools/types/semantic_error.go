@@ -6,7 +6,10 @@ import (
 )
 
 const (
-	SemanticKindNotAvailable = "not_available"
+	SemanticKindInvalidParams   = "invalid_params"
+	SemanticKindNotSupported    = "not_supported"
+	SemanticKindNotAvailable    = "not_available"
+	SemanticKindExecutionFailed = "execution_failed"
 )
 
 // SemanticError marks tool failures that should be surfaced as structured isError payloads.

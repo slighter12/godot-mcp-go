@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify Go tests
+        run: make test-go
+
+      - name: Verify Streamable HTTP smoke
+        run: make test-http-smoke
+
+      - name: Verify Streamable HTTP ping
+        run: make test-http-ping
+
+      - name: Verify Streamable HTTP delete lifecycle
+        run: make test-http-delete
+
+      - name: Verify session isolation
+        run: make test-http-session-isolation
+
+      - name: Verify Inspector docker checks
+        run: make test-inspector-docker

@@ -18,7 +18,7 @@ func TestGetSceneTreeTool_UsesRuntimeSnapshot(t *testing.T) {
 	tool := &GetSceneTreeTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute get-scene-tree: %v", err)
+		t.Fatalf("execute godot-node-get-tree: %v", err)
 	}
 
 	var result map[string]any
@@ -47,7 +47,7 @@ func TestGetSceneTreeTool_IsSessionScoped(t *testing.T) {
 	tool := &GetSceneTreeTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute get-scene-tree: %v", err)
+		t.Fatalf("execute godot-node-get-tree: %v", err)
 	}
 
 	var result map[string]any

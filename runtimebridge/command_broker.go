@@ -26,6 +26,59 @@ type CommandAck struct {
 	AckedAt   time.Time
 }
 
+func (a CommandAck) SchemaVersion() (string, bool) {
+	if a.Result == nil {
+		return "", false
+	}
+	value, ok := a.Result["schema_version"]
+	if !ok {
+		return "", false
+	}
+	schemaVersion, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	schemaVersion = strings.TrimSpace(schemaVersion)
+	if schemaVersion == "" {
+		return "", false
+	}
+	return schemaVersion, true
+}
+
+func (a CommandAck) Reason() (string, bool) {
+	if a.Result == nil {
+		return "", false
+	}
+	value, ok := a.Result["reason"]
+	if !ok {
+		return "", false
+	}
+	reason, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "", false
+	}
+	return reason, true
+}
+
+func (a CommandAck) Retryable() (bool, bool) {
+	if a.Result == nil {
+		return false, false
+	}
+	value, ok := a.Result["retryable"]
+	if !ok {
+		return false, false
+	}
+	retryable, ok := value.(bool)
+	if !ok {
+		return false, false
+	}
+	return retryable, true
+}
+
 type pendingCommand struct {
 	sessionID string
 	resultCh  chan CommandAck

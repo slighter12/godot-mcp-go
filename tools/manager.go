@@ -14,7 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
-// ToolFunc represents a tool function (legacy type for backward compatibility)
+// ToolFunc represents a tool function.
 type ToolFunc func(args map[string]any) (any, error)
 
 var ErrToolNotFound = errors.New("tool not found")
@@ -93,7 +93,7 @@ func summarizeToolArgsForLog(name string, args json.RawMessage) string {
 	}
 
 	switch name {
-	case "sync-editor-runtime", "ping-editor-runtime":
+	case "godot-runtime-sync", "godot-runtime-ping":
 		return fmt.Sprintf("<omitted:%d bytes>", len(args))
 	}
 
@@ -115,8 +115,7 @@ func (m *Manager) RegisterDefaultTools() {
 	logger.Info("Default tools registered", "count", len(allTools))
 }
 
-// GetTools returns a list of registered tools with their descriptions and schemas
-// This method is kept for backward compatibility
+// GetTools returns a list of registered tools with their descriptions and schemas.
 func (m *Manager) GetTools() []mcp.Tool {
 	tools := m.ListTools()
 	mcpTools := make([]mcp.Tool, 0, len(tools))
@@ -133,8 +132,8 @@ func (m *Manager) GetTools() []mcp.Tool {
 	return mcpTools
 }
 
-// CallTool calls a registered tool (kept for backward compatibility)
-// This method converts map[string]any to json.RawMessage for compatibility
+// CallTool calls a registered tool.
+// This method converts map[string]any to json.RawMessage.
 func (m *Manager) CallTool(name string, args map[string]any) (any, error) {
 	// Convert map[string]any to json.RawMessage
 	argsJSON, err := json.Marshal(args)
@@ -157,9 +156,9 @@ func (m *Manager) CallTool(name string, args map[string]any) (any, error) {
 	return result, nil
 }
 
-// RegisterToolByName registers a tool by name (kept for backward compatibility)
+// RegisterToolByName registers a tool by name.
 func (m *Manager) RegisterToolByName(name string, fn ToolFunc) {
-	// Create a legacy tool from the function
+	// Create a tool adapter from the function
 	tool := &LegacyTool{
 		name:        name,
 		description: getToolDescription(name),
@@ -171,7 +170,7 @@ func (m *Manager) RegisterToolByName(name string, fn ToolFunc) {
 				return nil, err
 			}
 
-			// Call the legacy function
+			// Call the function adapter
 			result, err := fn(argsMap)
 			if err != nil {
 				return nil, err
@@ -187,7 +186,7 @@ func (m *Manager) RegisterToolByName(name string, fn ToolFunc) {
 	}
 }
 
-// LegacyTool implements Tool interface for backward compatibility
+// LegacyTool adapts function-based registrations to the Tool interface.
 type LegacyTool struct {
 	name        string
 	description string
@@ -211,7 +210,7 @@ func (t *LegacyTool) Execute(args json.RawMessage) ([]byte, error) {
 	return t.executor(args)
 }
 
-// Legacy functions for backward compatibility
+// Function adapter helpers.
 
 // ListScenesTool implements the listScenes tool
 func ListScenesTool(args map[string]any) (any, error) {

@@ -586,6 +586,9 @@ func buildToolExecutionErrorResult(toolName string) map[string]any {
 		"tool":    toolName,
 		"content": []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
 		"isError": true,
+		"error": map[string]any{
+			"kind": tooltypes.SemanticKindExecutionFailed,
+		},
 	}
 }
 
