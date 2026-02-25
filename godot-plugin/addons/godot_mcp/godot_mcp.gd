@@ -414,10 +414,9 @@ func _handle_node_modify(editor_interface: EditorInterface, arguments: Dictionar
             return _runtime_failure_result("invalid_property_name", "property name must not be empty")
         if not _node_has_property(target, property_name):
             return _runtime_failure_result("property_not_found", "property not found: " + property_name)
-        var before_value = target.get(property_name)
         target.set(property_name, updates[key])
         var after_value = target.get(property_name)
-        if after_value != updates[key] and before_value == after_value:
+        if after_value != updates[key]:
             return _runtime_failure_result("property_update_failed", "failed to update property: " + property_name)
         updated_keys.append(property_name)
 
@@ -481,21 +480,39 @@ func _handle_script_modify(arguments: Dictionary) -> Dictionary:
     })
 
 func _is_safe_res_path(path: String, allowed_extensions: Array[String]) -> bool:
-    var trimmed = path.strip_edges()
-    if trimmed == "":
-        return false
-    if not trimmed.begins_with("res://"):
-        return false
-    if trimmed.find("..") != -1:
+    var normalized = _normalize_res_path(path)
+    if normalized == "":
         return false
 
-    var lowered = trimmed.to_lower()
-    if lowered.begins_with("res://addons/"):
+    var lowered = normalized.to_lower()
+    if lowered == "res://addons" or lowered.begins_with("res://addons/"):
         return false
     for ext in allowed_extensions:
         if lowered.ends_with(ext):
             return true
     return false
+
+func _normalize_res_path(path: String) -> String:
+    var trimmed = path.strip_edges().replace("\\", "/")
+    if trimmed == "":
+        return ""
+    if not trimmed.begins_with("res://"):
+        return ""
+
+    var relative = trimmed.substr(6)
+    var parts = relative.split("/", false)
+    var normalized_parts: Array[String] = []
+    for part in parts:
+        var segment = str(part).strip_edges()
+        if segment == "" or segment == ".":
+            continue
+        if segment == "..":
+            return ""
+        normalized_parts.append(segment)
+
+    if normalized_parts.is_empty():
+        return "res://"
+    return "res://" + "/".join(normalized_parts)
 
 func _build_scene_template(template_name: String) -> String:
     var root_type = "Node"
