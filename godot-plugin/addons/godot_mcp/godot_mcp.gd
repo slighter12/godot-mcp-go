@@ -199,10 +199,12 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
 
     if command_name == "godot-script-create":
         _ack_runtime_command_with_payload(command_id, _handle_script_create(arguments))
+        _sync_runtime_snapshot(true)
         return
 
     if command_name == "godot-script-modify":
         _ack_runtime_command_with_payload(command_id, _handle_script_modify(arguments))
+        _sync_runtime_snapshot(true)
         return
 
     mcp_interface.ack_runtime_command(command_id, false, {}, "Unsupported runtime command: " + command_name)
