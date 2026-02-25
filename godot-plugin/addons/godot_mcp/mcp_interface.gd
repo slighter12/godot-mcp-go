@@ -191,7 +191,7 @@ func _handle_server_notification(message: Dictionary):
         return
     if method == "notifications/godot/command":
         var params = _as_dictionary(message.get("params", {}))
-        var command_id = str(params.get("commandId", "")).strip_edges()
+        var command_id = str(params.get("command_id", params.get("commandId", ""))).strip_edges()
         var command_name = str(params.get("name", "")).strip_edges()
         var arguments = _as_dictionary(params.get("arguments", {}))
         if command_id != "" and command_name != "":

@@ -476,6 +476,8 @@ func _is_safe_res_path(path: String, allowed_extensions: Array[String]) -> bool:
         return false
 
     var lowered = trimmed.to_lower()
+    if lowered.begins_with("res://addons/"):
+        return false
     for ext in allowed_extensions:
         if lowered.ends_with(ext):
             return true

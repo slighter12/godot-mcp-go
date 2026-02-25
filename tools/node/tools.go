@@ -248,14 +248,14 @@ func dispatchNodeRuntimeCommand(rawArgs json.RawMessage, commandName string, val
 		"error":           ack.Error,
 		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
 	}
-	if value, ok := ack.Result["reason"]; ok {
-		result["reason"] = value
+	if schemaVersion, ok := ack.SchemaVersion(); ok {
+		result["schema_version"] = schemaVersion
 	}
-	if value, ok := ack.Result["retryable"]; ok {
-		result["retryable"] = value
+	if reason, ok := ack.Reason(); ok {
+		result["reason"] = reason
 	}
-	if value, ok := ack.Result["schema_version"]; ok {
-		result["schema_version"] = value
+	if retryable, ok := ack.Retryable(); ok {
+		result["retryable"] = retryable
 	}
 	return json.Marshal(result)
 }

@@ -140,9 +140,10 @@ func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, ar
 		"jsonrpc": "2.0",
 		"method":  "notifications/godot/command",
 		"params": map[string]any{
-			"commandId": commandID,
-			"name":      commandName,
-			"arguments": arguments,
+			"command_id": commandID,
+			"commandId":  commandID,
+			"name":       commandName,
+			"arguments":  arguments,
 		},
 	}
 	if !sendToSession(sessionID, message) {

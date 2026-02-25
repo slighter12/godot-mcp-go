@@ -16,7 +16,7 @@ Payload:
   "jsonrpc": "2.0",
   "method": "notifications/godot/command",
   "params": {
-    "commandId": "cmd_...",
+    "command_id": "cmd_...",
     "name": "godot-scene-create",
     "arguments": {
       "path": "res://scenes/Main.tscn"
@@ -46,6 +46,7 @@ Payload:
 ```
 
 Notes:
+- Notification payload accepts `command_id` (canonical) and `commandId` (backward-compatible alias).
 - `reason`, `retryable`, `schema_version` are optional and may be provided in top-level ack fields and/or within `result`.
 - Server normalizes metadata into command responses when present.
 
