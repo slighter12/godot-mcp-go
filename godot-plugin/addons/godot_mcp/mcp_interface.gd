@@ -334,9 +334,11 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
     var arguments = {
         "command_id": command_id,
         "success": success,
-        "result": result,
-        "error": error_message
+        "result": result
     }
+    var trimmed_error = error_message.strip_edges()
+    if trimmed_error != "":
+        arguments["error"] = trimmed_error
     var trimmed_reason = reason.strip_edges()
     if trimmed_reason != "":
         arguments["reason"] = trimmed_reason

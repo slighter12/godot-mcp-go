@@ -79,6 +79,7 @@ Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS
 - [ ] Tool progress and execution telemetry
 - [ ] Permission model for tool operations
 - [ ] Cache strategy for deterministic reads
+- [ ] Consolidate duplicated runtime command dispatch/validation helpers across `tools/node`, `tools/scene`, and `tools/script` into a shared package.
 
 ### Track E: Release Readiness
 

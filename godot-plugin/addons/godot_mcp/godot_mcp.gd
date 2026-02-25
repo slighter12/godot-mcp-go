@@ -238,8 +238,7 @@ func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
         result[key] = data[key]
     return {
         "success": true,
-        "result": result,
-        "error": ""
+        "result": result
     }
 
 func _runtime_failure_result(reason: String, error_message: String) -> Dictionary:
@@ -486,6 +485,10 @@ func _is_safe_res_path(path: String, allowed_extensions: Array[String]) -> bool:
 
     var lowered = normalized.to_lower()
     if lowered == "res://addons" or lowered.begins_with("res://addons/"):
+        return false
+    if lowered == "res://.godot" or lowered.begins_with("res://.godot/"):
+        return false
+    if lowered == "res://.git" or lowered.begins_with("res://.git/"):
         return false
     for ext in allowed_extensions:
         if lowered.ends_with(ext):

@@ -39,15 +39,13 @@ Payload:
   "result": {
     "schema_version": "v1"
   },
-  "error": "",
-  "reason": "",
   "retryable": false
 }
 ```
 
 Notes:
 - Notification payload accepts `command_id` (canonical) and `commandId` (backward-compatible alias).
-- `reason`, `retryable`, `schema_version` are optional and may be provided in top-level ack fields and/or within `result`.
+- `error`, `reason`, `retryable`, `schema_version` are optional and may be provided in top-level ack fields and/or within `result`.
 - Server normalizes metadata into command responses when present.
 
 ## Timeout and Failure Mapping
