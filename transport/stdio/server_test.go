@@ -54,7 +54,7 @@ func TestStdioServer(t *testing.T) {
 	toolCallMsg := jsonrpc.Request{
 		Method: "tools/call",
 		Params: json.RawMessage(`{
-			"tool": "list-project-scenes",
+			"tool": "godot-scene-list",
 			"arguments": {}
 		}`),
 	}
@@ -82,7 +82,7 @@ func TestStdioServer(t *testing.T) {
 	progressMsg := jsonrpc.Request{
 		Method: "tools/progress",
 		Params: json.RawMessage(`{
-			"tool": "list-project-scenes",
+			"tool": "godot-scene-list",
 			"progress": 0.5,
 			"message": "Processing..."
 		}`),

@@ -8,16 +8,20 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 var sceneNodePattern = regexp.MustCompile(`(name|type|parent)="([^"]*)"`)
 
+const sceneCommandTimeout = 8 * time.Second
+
 type ListProjectScenesTool struct{}
 
-func (t *ListProjectScenesTool) Name() string        { return "list-project-scenes" }
+func (t *ListProjectScenesTool) Name() string        { return "godot-scene-list" }
 func (t *ListProjectScenesTool) Description() string { return "Lists all scenes in the project" }
 func (t *ListProjectScenesTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Project Scenes"}
@@ -57,7 +61,7 @@ func (t *ListProjectScenesTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ReadSceneTool struct{}
 
-func (t *ReadSceneTool) Name() string        { return "read-scene" }
+func (t *ReadSceneTool) Name() string        { return "godot-scene-read" }
 func (t *ReadSceneTool) Description() string { return "Reads a specific scene" }
 func (t *ReadSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Scene path"}}, Required: []string{"path"}, Title: "Read Scene"}
@@ -91,44 +95,51 @@ func (t *ReadSceneTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type CreateSceneTool struct{}
 
-func (t *CreateSceneTool) Name() string        { return "create-scene" }
+func (t *CreateSceneTool) Name() string        { return "godot-scene-create" }
 func (t *CreateSceneTool) Description() string { return "Creates a new scene" }
 func (t *CreateSceneTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Scene path"}}, Required: []string{"path"}, Title: "Create Scene"}
+	return mcp.InputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"path":     map[string]any{"type": "string", "description": "Scene path (res://*.tscn)"},
+			"content":  map[string]any{"type": "string", "description": "Optional scene content to write"},
+			"template": map[string]any{"type": "string", "description": "Optional template hint when content is omitted"},
+		},
+		Required: []string{"path"},
+		Title:    "Create Scene",
+	}
 }
 func (t *CreateSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
-		"feature": "godot_runtime_write",
-		"tool":    t.Name(),
-	})
+	return dispatchSceneRuntimeCommand(args, t.Name(), validateCreateSceneArguments)
 }
 
 type SaveSceneTool struct{}
 
-func (t *SaveSceneTool) Name() string        { return "save-scene" }
+func (t *SaveSceneTool) Name() string        { return "godot-scene-save" }
 func (t *SaveSceneTool) Description() string { return "Saves the current scene" }
 func (t *SaveSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Save Scene"}
 }
 func (t *SaveSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
-		"feature": "godot_runtime_write",
-		"tool":    t.Name(),
-	})
+	return dispatchSceneRuntimeCommand(args, t.Name(), nil)
 }
 
 type ApplySceneTool struct{}
 
-func (t *ApplySceneTool) Name() string        { return "apply-scene" }
+func (t *ApplySceneTool) Name() string        { return "godot-scene-apply" }
 func (t *ApplySceneTool) Description() string { return "Applies a scene to the current project" }
 func (t *ApplySceneTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{"scene": map[string]any{"type": "string", "description": "The name of the scene to apply"}}, Required: []string{"scene"}, Title: "Apply Scene"}
+	return mcp.InputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"path": map[string]any{"type": "string", "description": "Scene path to open"},
+		},
+		Required: []string{"path"},
+		Title:    "Apply Scene",
+	}
 }
 func (t *ApplySceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return nil, types.NewNotAvailableError("Scene writes are not available yet", map[string]any{
-		"feature": "godot_runtime_write",
-		"tool":    t.Name(),
-	})
+	return dispatchSceneRuntimeCommand(args, t.Name(), validateApplySceneArguments)
 }
 
 func GetAllTools() []types.Tool {
@@ -185,4 +196,124 @@ func countLines(data []byte) int {
 		}
 	}
 	return lines
+}
+
+func dispatchSceneRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {
+	var arguments map[string]any
+	if err := json.Unmarshal(rawArgs, &arguments); err != nil {
+		return nil, newSceneInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
+	}
+
+	ctx := types.ExtractMCPContext(arguments)
+	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
+		return nil, types.NewNotAvailableError("Scene commands require an initialized MCP HTTP session", map[string]any{
+			"feature": "runtime_bridge",
+			"reason":  "session_not_initialized",
+			"tool":    commandName,
+		})
+	}
+
+	commandArgs := types.StripMCPContext(arguments)
+	var err error
+	if validate != nil {
+		commandArgs, err = validate(commandArgs, commandName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, commandName, commandArgs, sceneCommandTimeout)
+	if !ok {
+		return nil, types.NewNotAvailableError("Scene runtime bridge is unavailable", map[string]any{
+			"feature": "runtime_bridge",
+			"reason":  reason,
+			"tool":    commandName,
+		})
+	}
+
+	result := map[string]any{
+		"success":         ack.Success,
+		"command_id":      ack.CommandID,
+		"result":          ack.Result,
+		"error":           ack.Error,
+		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if schemaVersion, ok := ack.SchemaVersion(); ok {
+		result["schema_version"] = schemaVersion
+	}
+	if reason, ok := ack.Reason(); ok {
+		result["reason"] = reason
+	}
+	if retryable, ok := ack.Retryable(); ok {
+		result["retryable"] = retryable
+	}
+	return json.Marshal(result)
+}
+
+func validateCreateSceneArguments(arguments map[string]any, toolName string) (map[string]any, error) {
+	path, err := requiredSceneString(arguments, "path", toolName, "missing_path")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"path": path}
+	if raw, exists := arguments["content"]; exists {
+		content, ok := raw.(string)
+		if !ok {
+			return nil, newSceneInvalidParamsError("content must be a string", toolName, "invalid_content_type", nil)
+		}
+		out["content"] = content
+	}
+	if raw, exists := arguments["template"]; exists {
+		template, ok := raw.(string)
+		if !ok {
+			return nil, newSceneInvalidParamsError("template must be a string", toolName, "invalid_template_type", nil)
+		}
+		out["template"] = strings.TrimSpace(template)
+	}
+	return out, nil
+}
+
+func validateApplySceneArguments(arguments map[string]any, toolName string) (map[string]any, error) {
+	path := ""
+	if raw, exists := arguments["path"]; exists {
+		value, ok := raw.(string)
+		if !ok {
+			return nil, newSceneInvalidParamsError("path must be a string", toolName, "invalid_path_type", nil)
+		}
+		path = strings.TrimSpace(value)
+	}
+	if path == "" {
+		return nil, newSceneInvalidParamsError("path is required", toolName, "missing_path", nil)
+	}
+	return map[string]any{"path": path}, nil
+}
+
+func requiredSceneString(arguments map[string]any, key, toolName, reason string) (string, error) {
+	value, exists := arguments[key]
+	if !exists {
+		return "", newSceneInvalidParamsError(key+" is required", toolName, reason, nil)
+	}
+	asString, ok := value.(string)
+	if !ok {
+		return "", newSceneInvalidParamsError(key+" must be a string", toolName, "invalid_"+key+"_type", nil)
+	}
+	asString = strings.TrimSpace(asString)
+	if asString == "" {
+		return "", newSceneInvalidParamsError(key+" must not be empty", toolName, reason, nil)
+	}
+	return asString, nil
+}
+
+func newSceneInvalidParamsError(message, toolName, reason string, extra map[string]any) error {
+	data := map[string]any{
+		"feature": "runtime_bridge",
+		"tool":    toolName,
+	}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	return types.NewSemanticError(types.SemanticKindInvalidParams, message, data)
 }

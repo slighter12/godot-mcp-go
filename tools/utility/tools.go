@@ -9,7 +9,7 @@ import (
 
 type ListOfferingsTool struct{}
 
-func (t *ListOfferingsTool) Name() string        { return "list-offerings" }
+func (t *ListOfferingsTool) Name() string        { return "godot-offerings-list" }
 func (t *ListOfferingsTool) Description() string { return "Lists available offerings" }
 func (t *ListOfferingsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Offerings"}

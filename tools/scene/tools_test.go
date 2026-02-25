@@ -27,7 +27,7 @@ func TestReadSceneTool_ReadsContentAndNodeSummary(t *testing.T) {
 	rawArgs, _ := json.Marshal(map[string]any{"path": "res://scenes/Main.tscn"})
 	resultRaw, err := tool.Execute(rawArgs)
 	if err != nil {
-		t.Fatalf("execute read-scene: %v", err)
+		t.Fatalf("execute godot-scene-read: %v", err)
 	}
 
 	var result map[string]any

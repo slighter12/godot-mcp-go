@@ -191,19 +191,19 @@ If the resolved file does not exist, the server creates a default config file at
 ### Prompt Catalog Runtime Notes
 
 - `prompt_catalog.enabled=false` disables prompt catalog endpoints; `prompts/list` and `prompts/get` return semantic `kind=not_supported`.
-- `reload-prompt-catalog` is the manual runtime reload entrypoint exposed through `tools/call`.
+- `godot-prompts-reload` is the manual runtime reload entrypoint exposed through `tools/call`.
 - `notifications/prompts/list_changed` is emitted only when visible prompt metadata changes.
 - `allowed_roots` constrains discovered `SKILL.md` files; if empty, the runtime falls back to `paths`.
 - `rendering.mode=legacy` preserves existing behavior.
 - `rendering.mode=strict` validates required placeholders before rendering, and optionally rejects unknown arguments when `reject_unknown_arguments=true`.
-- `auto_reload.enabled=true` enables polling-based source fingerprint checks (`SKILL.md` path + size + mtime + content SHA-256) and triggers the same reload pipeline as `reload-prompt-catalog`.
+- `auto_reload.enabled=true` enables polling-based source fingerprint checks (`SKILL.md` path + size + mtime + content SHA-256) and triggers the same reload pipeline as `godot-prompts-reload`.
 
 ### Godot Runtime Bridge Notes
 
-- `sync-editor-runtime` is an internal bridge tool used by the Godot plugin to push runtime snapshots.
-- `ping-editor-runtime` is an internal bridge tool used by the plugin heartbeat to refresh snapshot freshness.
+- `godot-runtime-sync` is an internal bridge tool used by the Godot plugin to push runtime snapshots.
+- `godot-runtime-ping` is an internal bridge tool used by the plugin heartbeat to refresh snapshot freshness.
 - Runtime snapshots are bound to initialized Streamable HTTP MCP sessions.
-- `get-editor-state`, `get-scene-tree`, and `get-node-properties` read from the latest fresh snapshot.
+- `godot-editor-get-state`, `godot-node-get-tree`, and `godot-node-get-properties` read from the latest fresh snapshot.
 - When runtime snapshots are missing/stale, Godot-dependent tools return semantic `kind=not_available`.
 - Plugin heartbeat/poll intervals are configurable in `godot-plugin/addons/godot_mcp/config.cfg`:
   - `runtime_heartbeat_seconds` (default `5.0`)
@@ -211,44 +211,49 @@ If the resolved file does not exist, the server creates a default config file at
 
 ## Available Tools
 
+Only canonical v1 names are supported.
+Calls using legacy tool names are rejected with `tool not found`.
+Mutating runtime tools require Streamable HTTP session context and an active Godot plugin bridge.
+
 ### Scene Tools
 
-- `list-project-scenes`: Lists `.tscn` files and returns both scene names and `scene_paths`
-- `read-scene`: Reads scene content and returns lightweight node metadata
-- `create-scene`: Not yet available (`kind=not_available`)
-- `save-scene`: Not yet available (`kind=not_available`)
-- `apply-scene`: Not yet available (`kind=not_available`)
+- `godot-scene-list`: Lists `.tscn` files and returns both scene names and `scene_paths`
+- `godot-scene-read`: Reads scene content and returns lightweight node metadata
+- `godot-scene-create`: Creates a scene through runtime command bridge
+- `godot-scene-save`: Saves current edited scene through runtime command bridge
+- `godot-scene-apply`: Opens a target scene through runtime command bridge
 
 ### Node Tools
 
-- `get-scene-tree`: Returns compact runtime scene tree snapshot
-- `get-node-properties`: Returns whitelisted runtime node details (`path/name/type/owner/script/groups/child_count`)
-- `create-node`: Not yet available (`kind=not_available`)
-- `delete-node`: Not yet available (`kind=not_available`)
-- `modify-node`: Not yet available (`kind=not_available`)
+- `godot-node-get-tree`: Returns compact runtime scene tree snapshot
+- `godot-node-get-properties`: Returns whitelisted runtime node details (`path/name/type/owner/script/groups/child_count`)
+- `godot-node-create`: Creates a node through runtime command bridge
+- `godot-node-delete`: Deletes a node through runtime command bridge
+- `godot-node-modify`: Modifies node properties through runtime command bridge
 
 ### Script Tools
 
-- `list-project-scripts`: Lists `.gd` and `.rs` scripts with canonical `script_paths`
-- `read-script`: Reads script file content
-- `modify-script`: Not yet available (`kind=not_available`)
-- `create-script`: Not yet available (`kind=not_available`)
-- `analyze-script`: Returns basic static analysis (line/function counts)
+- `godot-script-list`: Lists `.gd` and `.rs` scripts with canonical `script_paths`
+- `godot-script-read`: Reads script file content
+- `godot-script-modify`: Modifies script content through runtime command bridge
+- `godot-script-create`: Creates scripts through runtime command bridge
+- `godot-script-analyze`: Returns basic static analysis (line/function counts)
 
 ### Project Tools
 
-- `get-project-settings`: Gets project settings
-- `list-project-resources`: Lists all resources in the project
-- `get-editor-state`: Gets runtime root summary (`active_scene`, `active_script`, root context)
-- `run-project`: Requests Godot editor to run the project through runtime command bridge
-- `stop-project`: Requests Godot editor to stop running project through runtime command bridge
+- `godot-project-get-settings`: Gets project settings
+- `godot-project-list-resources`: Lists all resources in the project
+- `godot-editor-get-state`: Gets runtime root summary (`active_scene`, `active_script`, root context)
+- `godot-project-run`: Requests Godot editor to run the project through runtime command bridge
+- `godot-project-stop`: Requests Godot editor to stop running project through runtime command bridge
 
 ### Utility Tools
 
-- `list-offerings`: Lists server offerings
-- `sync-editor-runtime`: Internal runtime bridge sync endpoint (plugin-driven)
-- `ping-editor-runtime`: Internal runtime bridge heartbeat endpoint (plugin-driven)
-- `ack-editor-command`: Internal runtime command acknowledgement endpoint (plugin-driven)
+- `godot-offerings-list`: Lists server offerings
+- `godot-runtime-sync`: Internal runtime bridge sync endpoint (plugin-driven)
+- `godot-runtime-ping`: Internal runtime bridge heartbeat endpoint (plugin-driven)
+- `godot-runtime-ack`: Internal runtime command acknowledgement endpoint (plugin-driven)
+- `godot-prompts-reload`: Manual prompt catalog reload trigger
 
 ## Cursor Configuration
 

@@ -3,7 +3,8 @@ SERVER_HOST ?= localhost
 SERVER_PORT ?= 9080
 SERVER_URL ?= http://$(SERVER_HOST):$(SERVER_PORT)/mcp
 SESSION_ISOLATION_PORT ?= 19080
-INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(SERVER_PORT)/mcp
+INSPECTOR_SERVER_PORT ?= 29080
+INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(INSPECTOR_SERVER_PORT)/mcp
 INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:latest
 
 .PHONY: help test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation inspector-pull test-inspector-docker test-all
@@ -37,6 +38,6 @@ inspector-pull:
 	docker pull $(INSPECTOR_IMAGE)
 
 test-inspector-docker: inspector-pull
-	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(SERVER_PORT)" INSPECTOR_SERVER_URL="$(INSPECTOR_SERVER_URL)" INSPECTOR_IMAGE="$(INSPECTOR_IMAGE)" ./scripts/test-inspector-docker.sh
+	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(INSPECTOR_SERVER_PORT)" INSPECTOR_SERVER_URL="$(INSPECTOR_SERVER_URL)" INSPECTOR_IMAGE="$(INSPECTOR_IMAGE)" ./scripts/test-inspector-docker.sh
 
 test-all: test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation test-inspector-docker

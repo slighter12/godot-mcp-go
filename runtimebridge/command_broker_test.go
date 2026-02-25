@@ -22,7 +22,7 @@ func TestCommandBrokerDispatchAndAck(t *testing.T) {
 	})
 	defer SetNotificationSender(nil)
 
-	ack, ok, reason := broker.DispatchAndWait("session-1", "run-project", map[string]any{}, 2*time.Second)
+	ack, ok, reason := broker.DispatchAndWait("session-1", "godot-project-run", map[string]any{}, 2*time.Second)
 	if !ok {
 		t.Fatalf("expected command ack, reason=%s", reason)
 	}
@@ -35,7 +35,7 @@ func TestCommandBrokerDispatchWithoutSender(t *testing.T) {
 	ResetDefaultCommandBrokerForTests(2 * time.Second)
 	SetNotificationSender(nil)
 
-	_, ok, reason := DefaultCommandBroker().DispatchAndWait("session-1", "run-project", map[string]any{}, 2*time.Second)
+	_, ok, reason := DefaultCommandBroker().DispatchAndWait("session-1", "godot-project-run", map[string]any{}, 2*time.Second)
 	if ok {
 		t.Fatal("expected dispatch failure without notification sender")
 	}

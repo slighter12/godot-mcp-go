@@ -3,16 +3,20 @@ package script
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 var supportedScriptExtensions = []string{".gd", ".rs"}
 
+const scriptCommandTimeout = 8 * time.Second
+
 type ListProjectScriptsTool struct{}
 
-func (t *ListProjectScriptsTool) Name() string        { return "list-project-scripts" }
+func (t *ListProjectScriptsTool) Name() string        { return "godot-script-list" }
 func (t *ListProjectScriptsTool) Description() string { return "Lists all scripts in the project" }
 func (t *ListProjectScriptsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Project Scripts"}
@@ -31,7 +35,7 @@ func (t *ListProjectScriptsTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ReadScriptTool struct{}
 
-func (t *ReadScriptTool) Name() string        { return "read-script" }
+func (t *ReadScriptTool) Name() string        { return "godot-script-read" }
 func (t *ReadScriptTool) Description() string { return "Reads a specific script" }
 func (t *ReadScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}}, Required: []string{"path"}, Title: "Read Script"}
@@ -61,35 +65,29 @@ func (t *ReadScriptTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ModifyScriptTool struct{}
 
-func (t *ModifyScriptTool) Name() string        { return "modify-script" }
+func (t *ModifyScriptTool) Name() string        { return "godot-script-modify" }
 func (t *ModifyScriptTool) Description() string { return "Modifies a script" }
 func (t *ModifyScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}, "content": map[string]any{"type": "string", "description": "New script content"}}, Required: []string{"path", "content"}, Title: "Modify Script"}
 }
 func (t *ModifyScriptTool) Execute(args json.RawMessage) ([]byte, error) {
-	return nil, types.NewNotAvailableError("Script writes are not available yet", map[string]any{
-		"feature": "godot_runtime_write",
-		"tool":    t.Name(),
-	})
+	return dispatchScriptRuntimeCommand(args, t.Name(), validateScriptWriteArguments)
 }
 
 type CreateScriptTool struct{}
 
-func (t *CreateScriptTool) Name() string        { return "create-script" }
+func (t *CreateScriptTool) Name() string        { return "godot-script-create" }
 func (t *CreateScriptTool) Description() string { return "Creates a new script" }
 func (t *CreateScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}, "content": map[string]any{"type": "string", "description": "Script content"}}, Required: []string{"path", "content"}, Title: "Create Script"}
 }
 func (t *CreateScriptTool) Execute(args json.RawMessage) ([]byte, error) {
-	return nil, types.NewNotAvailableError("Script writes are not available yet", map[string]any{
-		"feature": "godot_runtime_write",
-		"tool":    t.Name(),
-	})
+	return dispatchScriptRuntimeCommand(args, t.Name(), validateScriptWriteArguments)
 }
 
 type AnalyzeScriptTool struct{}
 
-func (t *AnalyzeScriptTool) Name() string        { return "analyze-script" }
+func (t *AnalyzeScriptTool) Name() string        { return "godot-script-analyze" }
 func (t *AnalyzeScriptTool) Description() string { return "Analyzes a script" }
 func (t *AnalyzeScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}}, Required: []string{"path"}, Title: "Analyze Script"}
@@ -126,4 +124,105 @@ func GetAllTools() []types.Tool {
 		&CreateScriptTool{},
 		&AnalyzeScriptTool{},
 	}
+}
+
+func dispatchScriptRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {
+	var arguments map[string]any
+	if err := json.Unmarshal(rawArgs, &arguments); err != nil {
+		return nil, newScriptInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
+	}
+
+	ctx := types.ExtractMCPContext(arguments)
+	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
+		return nil, types.NewNotAvailableError("Script commands require an initialized MCP HTTP session", map[string]any{
+			"feature": "runtime_bridge",
+			"reason":  "session_not_initialized",
+			"tool":    commandName,
+		})
+	}
+
+	commandArgs := types.StripMCPContext(arguments)
+	var err error
+	if validate != nil {
+		commandArgs, err = validate(commandArgs, commandName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, commandName, commandArgs, scriptCommandTimeout)
+	if !ok {
+		return nil, types.NewNotAvailableError("Script runtime bridge is unavailable", map[string]any{
+			"feature": "runtime_bridge",
+			"reason":  reason,
+			"tool":    commandName,
+		})
+	}
+
+	result := map[string]any{
+		"success":         ack.Success,
+		"command_id":      ack.CommandID,
+		"result":          ack.Result,
+		"error":           ack.Error,
+		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
+	}
+	if schemaVersion, ok := ack.SchemaVersion(); ok {
+		result["schema_version"] = schemaVersion
+	}
+	if reason, ok := ack.Reason(); ok {
+		result["reason"] = reason
+	}
+	if retryable, ok := ack.Retryable(); ok {
+		result["retryable"] = retryable
+	}
+	return json.Marshal(result)
+}
+
+func validateScriptWriteArguments(arguments map[string]any, toolName string) (map[string]any, error) {
+	path, err := requiredScriptString(arguments, "path", toolName, "missing_path")
+	if err != nil {
+		return nil, err
+	}
+	contentValue, exists := arguments["content"]
+	if !exists {
+		return nil, newScriptInvalidParamsError("content is required", toolName, "missing_content", nil)
+	}
+	content, ok := contentValue.(string)
+	if !ok {
+		return nil, newScriptInvalidParamsError("content must be a string", toolName, "invalid_content_type", nil)
+	}
+	return map[string]any{
+		"path":    path,
+		"content": content,
+	}, nil
+}
+
+func requiredScriptString(arguments map[string]any, key, toolName, reason string) (string, error) {
+	value, exists := arguments[key]
+	if !exists {
+		return "", newScriptInvalidParamsError(key+" is required", toolName, reason, nil)
+	}
+	asString, ok := value.(string)
+	if !ok {
+		return "", newScriptInvalidParamsError(key+" must be a string", toolName, "invalid_"+key+"_type", nil)
+	}
+	asString = strings.TrimSpace(asString)
+	if asString == "" {
+		return "", newScriptInvalidParamsError(key+" must not be empty", toolName, reason, nil)
+	}
+	return asString, nil
+}
+
+func newScriptInvalidParamsError(message, toolName, reason string, extra map[string]any) error {
+	data := map[string]any{
+		"feature": "runtime_bridge",
+		"tool":    toolName,
+	}
+	if reason != "" {
+		data["reason"] = reason
+	}
+	for key, value := range extra {
+		data[key] = value
+	}
+	return types.NewSemanticError(types.SemanticKindInvalidParams, message, data)
 }

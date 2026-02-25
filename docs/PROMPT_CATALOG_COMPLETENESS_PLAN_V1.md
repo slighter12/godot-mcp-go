@@ -21,8 +21,8 @@ Cross-project priorities and milestone status are tracked in `docs/DEVELOPMENT.m
 
 - This update line includes Godot runtime bridge/tooling work only.
 - Delivered non-prompt runtime changes include:
-  - runtime bridge read path (`sync-editor-runtime` + `ping-editor-runtime`)
-  - runtime command bridge for `run-project` / `stop-project`
+  - runtime bridge read path (`godot-runtime-sync` + `godot-runtime-ping`)
+  - runtime command bridge for `godot-project-run` / `godot-project-stop`
   - runtime log summarization for large bridge payloads
 - Prompt catalog runtime contract, payloads, and semantic rules remain unchanged.
 - Track Godot integration progress in `docs/DEVELOPMENT.md` to avoid duplicating non-prompt scope here.
@@ -124,8 +124,8 @@ This resource is metadata only. It is not the execution engine for policy enforc
 
 - Streamable HTTP integration targets protocol version `2025-11-25`.
 - Clients should send `MCP-Protocol-Version: 2025-11-25` on Streamable HTTP requests.
-- Prompt catalog reload is exposed via `tools/call` using `reload-prompt-catalog`.
-- `reload-prompt-catalog` and auto-reload share the same reload pipeline.
+- Prompt catalog reload is exposed via `tools/call` using `godot-prompts-reload`.
+- `godot-prompts-reload` and auto-reload share the same reload pipeline.
 - `notifications/prompts/list_changed` is emitted only when visible prompt list metadata changes.
 - stdio transport does not emit prompt list changed notifications in this phase (`prompts.listChanged=false`).
 

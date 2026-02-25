@@ -21,7 +21,7 @@ func TestGetEditorStateTool_UsesRuntimeSnapshot(t *testing.T) {
 	tool := &GetEditorStateTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute get-editor-state: %v", err)
+		t.Fatalf("execute godot-editor-get-state: %v", err)
 	}
 
 	var result map[string]any
@@ -50,7 +50,7 @@ func TestGetEditorStateTool_IsSessionScoped(t *testing.T) {
 	tool := &GetEditorStateTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute get-editor-state: %v", err)
+		t.Fatalf("execute godot-editor-get-state: %v", err)
 	}
 
 	var result map[string]any
@@ -109,7 +109,7 @@ func TestRunProject_DispatchesRuntimeCommand(t *testing.T) {
 
 	resultRaw, err := tool.Execute(raw)
 	if err != nil {
-		t.Fatalf("execute run-project: %v", err)
+		t.Fatalf("execute godot-project-run: %v", err)
 	}
 
 	var result map[string]any

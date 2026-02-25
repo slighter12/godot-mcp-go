@@ -25,7 +25,7 @@ func NewPingEditorRuntimeTool() *PingEditorRuntimeTool {
 	return &PingEditorRuntimeTool{}
 }
 
-func (t *PingEditorRuntimeTool) Name() string { return "ping-editor-runtime" }
+func (t *PingEditorRuntimeTool) Name() string { return "godot-runtime-ping" }
 
 func (t *PingEditorRuntimeTool) Description() string {
 	return "Refreshes Godot editor runtime snapshot freshness (internal bridge tool)"

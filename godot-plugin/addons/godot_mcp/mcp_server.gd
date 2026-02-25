@@ -261,9 +261,9 @@ func _build_outgoing_message_summary(message: Dictionary, payload_bytes: int) ->
         var params = message.get("params", {})
         if params is Dictionary:
             var tool_name = str(params.get("name", ""))
-            if tool_name == "sync-editor-runtime":
+            if tool_name == "godot-runtime-sync":
                 return _summarize_sync_runtime_call(request_id, params, payload_bytes)
-            if tool_name == "ack-editor-command":
+            if tool_name == "godot-runtime-ack":
                 return _summarize_ack_command_call(request_id, params, payload_bytes)
             return "tools/call id=%s name=%s bytes=%d" % [request_id, tool_name, payload_bytes]
 
@@ -298,7 +298,7 @@ func _summarize_sync_runtime_call(request_id: String, params: Dictionary, payloa
             if scene_tree is Dictionary:
                 root_child_count = int(scene_tree.get("child_count", -1))
 
-    return "tools/call id=%s name=sync-editor-runtime scene=%s root=%s nodes=%d root_children=%d bytes=%d" % [
+    return "tools/call id=%s name=godot-runtime-sync scene=%s root=%s nodes=%d root_children=%d bytes=%d" % [
         request_id,
         active_scene,
         root_name,
@@ -316,7 +316,7 @@ func _summarize_ack_command_call(request_id: String, params: Dictionary, payload
         command_id = str(arguments.get("command_id", ""))
         success = bool(arguments.get("success", false))
 
-    return "tools/call id=%s name=ack-editor-command command_id=%s success=%s bytes=%d" % [
+    return "tools/call id=%s name=godot-runtime-ack command_id=%s success=%s bytes=%d" % [
         request_id,
         command_id,
         str(success),
