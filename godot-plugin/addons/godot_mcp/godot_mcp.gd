@@ -168,43 +168,51 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
         return
 
     if command_name == "godot-scene-create":
-        _ack_runtime_command_with_payload(command_id, _handle_scene_create(arguments))
-        _sync_runtime_snapshot(true)
+        var scene_create_payload = _handle_scene_create(arguments)
+        _ack_runtime_command_with_payload(command_id, scene_create_payload)
+        _sync_runtime_snapshot_if_success(scene_create_payload)
         return
 
     if command_name == "godot-scene-save":
-        _ack_runtime_command_with_payload(command_id, _handle_scene_save(editor_interface))
-        _sync_runtime_snapshot(true)
+        var scene_save_payload = _handle_scene_save(editor_interface)
+        _ack_runtime_command_with_payload(command_id, scene_save_payload)
+        _sync_runtime_snapshot_if_success(scene_save_payload)
         return
 
     if command_name == "godot-scene-apply":
-        _ack_runtime_command_with_payload(command_id, _handle_scene_apply(editor_interface, arguments))
-        _sync_runtime_snapshot(true)
+        var scene_apply_payload = _handle_scene_apply(editor_interface, arguments)
+        _ack_runtime_command_with_payload(command_id, scene_apply_payload)
+        _sync_runtime_snapshot_if_success(scene_apply_payload)
         return
 
     if command_name == "godot-node-create":
-        _ack_runtime_command_with_payload(command_id, _handle_node_create(editor_interface, arguments))
-        _sync_runtime_snapshot(true)
+        var node_create_payload = _handle_node_create(editor_interface, arguments)
+        _ack_runtime_command_with_payload(command_id, node_create_payload)
+        _sync_runtime_snapshot_if_success(node_create_payload)
         return
 
     if command_name == "godot-node-delete":
-        _ack_runtime_command_with_payload(command_id, _handle_node_delete(editor_interface, arguments))
-        _sync_runtime_snapshot(true)
+        var node_delete_payload = _handle_node_delete(editor_interface, arguments)
+        _ack_runtime_command_with_payload(command_id, node_delete_payload)
+        _sync_runtime_snapshot_if_success(node_delete_payload)
         return
 
     if command_name == "godot-node-modify":
-        _ack_runtime_command_with_payload(command_id, _handle_node_modify(editor_interface, arguments))
-        _sync_runtime_snapshot(true)
+        var node_modify_payload = _handle_node_modify(editor_interface, arguments)
+        _ack_runtime_command_with_payload(command_id, node_modify_payload)
+        _sync_runtime_snapshot_if_success(node_modify_payload)
         return
 
     if command_name == "godot-script-create":
-        _ack_runtime_command_with_payload(command_id, _handle_script_create(arguments))
-        _sync_runtime_snapshot(true)
+        var script_create_payload = _handle_script_create(arguments)
+        _ack_runtime_command_with_payload(command_id, script_create_payload)
+        _sync_runtime_snapshot_if_success(script_create_payload)
         return
 
     if command_name == "godot-script-modify":
-        _ack_runtime_command_with_payload(command_id, _handle_script_modify(arguments))
-        _sync_runtime_snapshot(true)
+        var script_modify_payload = _handle_script_modify(arguments)
+        _ack_runtime_command_with_payload(command_id, script_modify_payload)
+        _sync_runtime_snapshot_if_success(script_modify_payload)
         return
 
     mcp_interface.ack_runtime_command(command_id, false, {}, "Unsupported runtime command: " + command_name)
@@ -217,6 +225,10 @@ func _ack_runtime_command_with_payload(command_id: String, payload: Dictionary) 
         result = raw_result
     var error_message := str(payload.get("error", ""))
     mcp_interface.ack_runtime_command(command_id, success, result, error_message)
+
+func _sync_runtime_snapshot_if_success(payload: Dictionary) -> void:
+    if bool(payload.get("success", false)):
+        _sync_runtime_snapshot(true)
 
 func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
     var result = {
