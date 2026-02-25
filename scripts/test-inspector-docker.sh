@@ -21,6 +21,7 @@ trap cleanup EXIT
 
 cp "./config/mcp_config.json" "$runtime_config"
 sed -E \
+  -e "s/\"host\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"host\": \"0.0.0.0\"/" \
   -e "s/\"port\"[[:space:]]*:[[:space:]]*[0-9]+/\"port\": ${SERVER_PORT}/" \
   -e "s|\"url\"[[:space:]]*:[[:space:]]*\"http://localhost:[0-9]+/mcp\"|\"url\": \"http://localhost:${SERVER_PORT}/mcp\"|" \
   "$runtime_config" > "${runtime_config}.tmp"
