@@ -277,10 +277,10 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
 		if msg.Method == "tools/call" {
-			return shared.BuildToolCallResponseWithContext(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
+			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
 				SessionID:          sessionID,
 				SessionInitialized: s.sessionManager.IsInitialized(sessionID),
-			}), nil
+			}, s.toolCallOptions()), nil
 		}
 		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
 	}

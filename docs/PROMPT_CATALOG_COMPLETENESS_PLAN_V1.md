@@ -155,21 +155,21 @@ This resource is metadata only. It is not the execution engine for policy enforc
 | Load-failure readiness returns `not_available` | Automated | `transport/shared/helpers_prompt_catalog_test.go`, `transport/http/prompt_catalog_runtime_test.go` |
 | Prompt list changed notification semantics | Automated | `transport/http/prompt_catalog_integration_test.go`, `transport/http/prompt_catalog_runtime_test.go` |
 | Auto-reload source-change trigger behavior | Automated | `transport/http/prompt_catalog_runtime_test.go` |
-| Policy metadata resource contract | Manual gap noted | `transport/shared/helpers.go`, `transport/stdio/server.go` (add explicit endpoint tests if stricter coverage is required) |
+| Policy metadata resource contract | Automated | `transport/shared/helpers_prompt_catalog_test.go` |
 
 ## Manual Verification Checklist
 
-- [ ] With `prompt_catalog.enabled=true`, `prompts/list` returns registered entries.
+- [x] With `prompt_catalog.enabled=true`, `prompts/list` returns registered entries.
   - Automated Coverage: Yes
-- [ ] With `prompt_catalog.enabled=true`, `prompts/get` renders placeholders from `arguments`.
+- [x] With `prompt_catalog.enabled=true`, `prompts/get` renders placeholders from `arguments`.
   - Automated Coverage: Yes
-- [ ] With `prompt_catalog.enabled=false`, prompt methods return `kind=not_supported`.
+- [x] With `prompt_catalog.enabled=false`, prompt methods return `kind=not_supported`.
   - Automated Coverage: Yes
-- [ ] Unknown prompt name returns `kind=invalid_params`.
+- [x] Unknown prompt name returns `kind=invalid_params`.
   - Automated Coverage: Yes
-- [ ] `resources/read` for `godot://policy/godot-checks` returns check metadata.
-  - Automated Coverage: Partial (manual recommended)
-- [ ] With `rendering.mode=strict`, missing required arguments return `kind=invalid_params`.
+- [x] `resources/read` for `godot://policy/godot-checks` returns check metadata.
   - Automated Coverage: Yes
-- [ ] With `auto_reload.enabled=true`, adding/modifying/deleting `SKILL.md` triggers reload only when source fingerprint changes.
+- [x] With `rendering.mode=strict`, missing required arguments return `kind=invalid_params`.
+  - Automated Coverage: Yes
+- [x] With `auto_reload.enabled=true`, adding/modifying/deleting `SKILL.md` triggers reload only when source fingerprint changes.
   - Automated Coverage: Yes

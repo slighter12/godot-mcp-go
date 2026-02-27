@@ -209,55 +209,17 @@ func resolveNodeDetail(details map[string]runtimebridge.NodeDetail, nodePath str
 }
 
 func dispatchNodeRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {
-	var arguments map[string]any
-	if err := json.Unmarshal(rawArgs, &arguments); err != nil {
-		return nil, newNodeInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
-	}
-
-	ctx := tooltypes.ExtractMCPContext(arguments)
-	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewNotAvailableError("Node commands require an initialized MCP HTTP session", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
-			"tool":    commandName,
-		})
-	}
-
-	commandArgs := tooltypes.StripMCPContext(arguments)
-	var err error
-	if validate != nil {
-		commandArgs, err = validate(commandArgs, commandName)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, commandName, commandArgs, nodeCommandTimeout)
-	if !ok {
-		return nil, tooltypes.NewNotAvailableError("Node runtime bridge is unavailable", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  reason,
-			"tool":    commandName,
-		})
-	}
-
-	result := map[string]any{
-		"success":         ack.Success,
-		"command_id":      ack.CommandID,
-		"result":          ack.Result,
-		"error":           ack.Error,
-		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if schemaVersion, ok := ack.SchemaVersion(); ok {
-		result["schema_version"] = schemaVersion
-	}
-	if reason, ok := ack.Reason(); ok {
-		result["reason"] = reason
-	}
-	if retryable, ok := ack.Retryable(); ok {
-		result["retryable"] = retryable
-	}
-	return json.Marshal(result)
+	return tooltypes.DispatchRuntimeCommand(tooltypes.RuntimeCommandDispatchOptions{
+		RawArgs:                  rawArgs,
+		CommandName:              commandName,
+		Timeout:                  nodeCommandTimeout,
+		SessionRequiredMessage:   "Node commands require an initialized MCP HTTP session",
+		BridgeUnavailableMessage: "Node runtime bridge is unavailable",
+		InvalidJSONError: func(err error) error {
+			return newNodeInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
+		},
+		Validate: validate,
+	})
 }
 
 func validateCreateNodeArguments(arguments map[string]any, toolName string) (map[string]any, error) {

@@ -28,6 +28,7 @@ type Config struct {
 	Transports    []Transport   `json:"transports"`
 	Logging       Logging       `json:"logging"`
 	PromptCatalog PromptCatalog `json:"prompt_catalog"`
+	ToolControls  ToolControls  `json:"tool_controls"`
 }
 
 // Server represents server configuration
@@ -71,6 +72,15 @@ type PromptCatalogAutoReload struct {
 type PromptCatalogRendering struct {
 	Mode                   string `json:"mode"`
 	RejectUnknownArguments bool   `json:"reject_unknown_arguments"`
+}
+
+// ToolControls controls runtime tool call validation/permission behavior.
+type ToolControls struct {
+	SchemaValidationEnabled   bool     `json:"schema_validation_enabled"`
+	RejectUnknownArguments    bool     `json:"reject_unknown_arguments"`
+	PermissionMode            string   `json:"permission_mode"`
+	AllowedTools              []string `json:"allowed_tools"`
+	EmitProgressNotifications bool     `json:"emit_progress_notifications"`
 }
 
 // NewConfig creates a new Config with default values
@@ -121,6 +131,13 @@ func NewConfig() *Config {
 				Mode:                   "legacy",
 				RejectUnknownArguments: false,
 			},
+		},
+		ToolControls: ToolControls{
+			SchemaValidationEnabled:   true,
+			RejectUnknownArguments:    false,
+			PermissionMode:            "allow_all",
+			AllowedTools:              []string{},
+			EmitProgressNotifications: true,
 		},
 	}
 }
@@ -219,6 +236,17 @@ func applyEnvOverrides(cfg *Config) {
 	}
 
 	applyEnvBoolOverride("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS", &cfg.PromptCatalog.Rendering.RejectUnknownArguments)
+
+	applyEnvBoolOverride("MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED", &cfg.ToolControls.SchemaValidationEnabled)
+	applyEnvBoolOverride("MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS", &cfg.ToolControls.RejectUnknownArguments)
+	applyEnvBoolOverride("MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS", &cfg.ToolControls.EmitProgressNotifications)
+
+	if permissionMode := os.Getenv("MCP_TOOL_CONTROLS_PERMISSION_MODE"); permissionMode != "" {
+		cfg.ToolControls.PermissionMode = permissionMode
+	}
+	if allowedTools := os.Getenv("MCP_TOOL_CONTROLS_ALLOWED_TOOLS"); allowedTools != "" {
+		cfg.ToolControls.AllowedTools = parseCSV(allowedTools)
+	}
 }
 
 func applyEnvBoolOverride(name string, target *bool) {
@@ -269,6 +297,11 @@ func (c *Config) Normalize() {
 	if c.PromptCatalog.AutoReload.IntervalSeconds == 0 {
 		c.PromptCatalog.AutoReload.IntervalSeconds = defaultPromptCatalogAutoReloadIntervalSeconds
 	}
+	c.ToolControls.PermissionMode = strings.ToLower(strings.TrimSpace(c.ToolControls.PermissionMode))
+	if c.ToolControls.PermissionMode == "" {
+		c.ToolControls.PermissionMode = "allow_all"
+	}
+	c.ToolControls.AllowedTools = normalizeStringList(c.ToolControls.AllowedTools)
 	for i := range c.Transports {
 		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
 		c.Transports[i].URL = strings.TrimSpace(c.Transports[i].URL)
@@ -350,6 +383,15 @@ func (c *Config) Validate() error {
 		)
 	}
 
+	validPermissionModes := map[string]bool{
+		"allow_all":  true,
+		"read_only":  true,
+		"allow_list": true,
+	}
+	if !validPermissionModes[c.ToolControls.PermissionMode] {
+		return fmt.Errorf("invalid tool controls permission mode: %q (expected one of [allow_all read_only allow_list])", c.ToolControls.PermissionMode)
+	}
+
 	return nil
 }
 
@@ -424,10 +466,14 @@ func parseCSV(raw string) []string {
 }
 
 func normalizePaths(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	seen := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		trimmed := strings.TrimSpace(path)
+	return normalizeStringList(paths)
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
 		if trimmed == "" {
 			continue
 		}

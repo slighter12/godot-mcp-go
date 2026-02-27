@@ -64,6 +64,21 @@ func TestNewConfig(t *testing.T) {
 	if cfg.PromptCatalog.Rendering.RejectUnknownArguments {
 		t.Errorf("Expected reject_unknown_arguments to be false by default")
 	}
+	if !cfg.ToolControls.SchemaValidationEnabled {
+		t.Errorf("Expected schema_validation_enabled to be true by default")
+	}
+	if cfg.ToolControls.RejectUnknownArguments {
+		t.Errorf("Expected tool_controls.reject_unknown_arguments to be false by default")
+	}
+	if cfg.ToolControls.PermissionMode != "allow_all" {
+		t.Errorf("Expected permission_mode allow_all, got %q", cfg.ToolControls.PermissionMode)
+	}
+	if len(cfg.ToolControls.AllowedTools) != 0 {
+		t.Errorf("Expected allowed_tools empty by default")
+	}
+	if !cfg.ToolControls.EmitProgressNotifications {
+		t.Errorf("Expected emit_progress_notifications to be true by default")
+	}
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -503,6 +518,23 @@ func TestPromptCatalogNormalizeAndValidate(t *testing.T) {
 	}
 }
 
+func TestToolControlsNormalizeAndValidate(t *testing.T) {
+	cfg := NewConfig()
+	cfg.ToolControls.PermissionMode = " ALLOW_LIST "
+	cfg.ToolControls.AllowedTools = []string{" godot-scene-read ", "godot-scene-read", "", "godot-script-read "}
+	cfg.Normalize()
+
+	if cfg.ToolControls.PermissionMode != "allow_list" {
+		t.Fatalf("Expected allow_list permission mode after normalize, got %q", cfg.ToolControls.PermissionMode)
+	}
+	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot-scene-read" || cfg.ToolControls.AllowedTools[1] != "godot-script-read" {
+		t.Fatalf("Unexpected normalized allowed tools: %#v", cfg.ToolControls.AllowedTools)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Expected tool controls config to validate, got %v", err)
+	}
+}
+
 func TestSaveConfigRejectsNilConfig(t *testing.T) {
 	if err := SaveConfig(nil, filepath.Join(t.TempDir(), "config.json")); err == nil {
 		t.Fatal("expected nil config error")
@@ -531,5 +563,80 @@ func TestValidateRejectsInvalidPromptCatalogAutoReloadInterval(t *testing.T) {
 	cfg.Normalize()
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("Expected validation error for invalid auto reload interval")
+	}
+}
+
+func TestValidateRejectsInvalidToolControlsPermissionMode(t *testing.T) {
+	cfg := NewConfig()
+	cfg.ToolControls.PermissionMode = "deny_all"
+	cfg.Normalize()
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Expected validation error for invalid tool controls permission mode")
+	}
+}
+
+func TestLoadConfigToolControlsEnvOverrides(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "tool_controls_env_overrides_config.json")
+	logPath := filepath.Join(tempDir, "test.log")
+
+	testConfig := fmt.Sprintf(`{
+		"name": "test-server",
+		"version": "1.0.0",
+		"description": "Test server",
+		"server": {
+			"host": "127.0.0.1",
+			"port": 8080,
+			"debug": true
+		},
+		"transports": [
+			{
+				"type": "stdio",
+				"enabled": true
+			}
+		],
+		"logging": {
+			"level": "debug",
+			"format": "text",
+			"path": %q
+		},
+		"tool_controls": {
+			"schema_validation_enabled": true,
+			"reject_unknown_arguments": false,
+			"permission_mode": "allow_all",
+			"allowed_tools": ["godot-scene-read"],
+			"emit_progress_notifications": true
+		}
+	}`, logPath)
+
+	if err := os.WriteFile(configPath, []byte(testConfig), 0644); err != nil {
+		t.Fatalf("Failed to write test config file: %v", err)
+	}
+
+	t.Setenv("MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED", "false")
+	t.Setenv("MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS", "true")
+	t.Setenv("MCP_TOOL_CONTROLS_PERMISSION_MODE", "ALLOW_LIST")
+	t.Setenv("MCP_TOOL_CONTROLS_ALLOWED_TOOLS", " godot-script-read, godot-script-read ,godot-scene-read ")
+	t.Setenv("MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS", "false")
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	if cfg.ToolControls.SchemaValidationEnabled {
+		t.Fatalf("Expected schema validation to be disabled by env override")
+	}
+	if !cfg.ToolControls.RejectUnknownArguments {
+		t.Fatalf("Expected reject unknown arguments to be enabled by env override")
+	}
+	if cfg.ToolControls.PermissionMode != "allow_list" {
+		t.Fatalf("Expected permission mode allow_list, got %q", cfg.ToolControls.PermissionMode)
+	}
+	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot-script-read" || cfg.ToolControls.AllowedTools[1] != "godot-scene-read" {
+		t.Fatalf("Unexpected allowed tools: %#v", cfg.ToolControls.AllowedTools)
+	}
+	if cfg.ToolControls.EmitProgressNotifications {
+		t.Fatalf("Expected emit progress notifications false")
 	}
 }

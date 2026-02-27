@@ -9,7 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
@@ -39,12 +41,33 @@ type ToolCallContext struct {
 const (
 	PromptRenderingModeLegacy = "legacy"
 	PromptRenderingModeStrict = "strict"
+	ToolPermissionAllowAll    = "allow_all"
+	ToolPermissionReadOnly    = "read_only"
+	ToolPermissionAllowList   = "allow_list"
 )
+
+type ToolCallOptions struct {
+	SchemaValidationEnabled   bool
+	RejectUnknownArguments    bool
+	PermissionMode            string
+	AllowedTools              []string
+	EmitProgressNotifications bool
+}
 
 func DefaultPromptRenderOptions() PromptRenderOptions {
 	return PromptRenderOptions{
 		Mode:                   PromptRenderingModeLegacy,
 		RejectUnknownArguments: false,
+	}
+}
+
+func DefaultToolCallOptions() ToolCallOptions {
+	return ToolCallOptions{
+		SchemaValidationEnabled:   true,
+		RejectUnknownArguments:    false,
+		PermissionMode:            ToolPermissionAllowAll,
+		AllowedTools:              []string{},
+		EmitProgressNotifications: true,
 	}
 }
 
@@ -57,6 +80,32 @@ func normalizePromptRenderOptions(options PromptRenderOptions) PromptRenderOptio
 	if normalized.Mode != PromptRenderingModeStrict {
 		normalized.Mode = PromptRenderingModeLegacy
 	}
+	return normalized
+}
+
+func normalizeToolCallOptions(options ToolCallOptions) ToolCallOptions {
+	normalized := options
+	normalized.PermissionMode = strings.ToLower(strings.TrimSpace(normalized.PermissionMode))
+	if normalized.PermissionMode == "" {
+		normalized.PermissionMode = ToolPermissionAllowAll
+	}
+	if normalized.PermissionMode != ToolPermissionReadOnly && normalized.PermissionMode != ToolPermissionAllowList {
+		normalized.PermissionMode = ToolPermissionAllowAll
+	}
+	allowed := make([]string, 0, len(normalized.AllowedTools))
+	seen := make(map[string]struct{}, len(normalized.AllowedTools))
+	for _, toolName := range normalized.AllowedTools {
+		trimmed := strings.TrimSpace(toolName)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		allowed = append(allowed, trimmed)
+	}
+	normalized.AllowedTools = allowed
 	return normalized
 }
 
@@ -275,6 +324,10 @@ func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
 }
 
 func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions) any {
+	return DispatchStandardMethodWithOptions(msg, toolManager, catalog, readResource, promptRenderOptions, DefaultToolCallOptions())
+}
+
+func DispatchStandardMethodWithOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions, toolCallOptions ToolCallOptions) any {
 	switch msg.Method {
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
@@ -287,7 +340,7 @@ func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *t
 	case "prompts/get":
 		return BuildPromptsGetResponseWithOptions(msg, catalog, promptRenderOptions)
 	case "tools/call":
-		return BuildToolCallResponse(msg, toolManager, readResource)
+		return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{}, toolCallOptions)
 	case "ping":
 		return BuildPingResponse(msg)
 	case "tools/progress":
@@ -307,7 +360,7 @@ func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *t
 
 // DispatchStandardMethod handles shared non-initialize JSON-RPC methods for all transports.
 func DispatchStandardMethod(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error)) any {
-	return DispatchStandardMethodWithPromptOptions(msg, toolManager, catalog, readResource, DefaultPromptRenderOptions())
+	return DispatchStandardMethodWithOptions(msg, toolManager, catalog, readResource, DefaultPromptRenderOptions(), DefaultToolCallOptions())
 }
 
 func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra map[string]any) *jsonrpc.Response {
@@ -517,10 +570,14 @@ func appendBounded(builder *strings.Builder, segment string) error {
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
-	return BuildToolCallResponseWithContext(msg, toolManager, readResource, ToolCallContext{})
+	return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{}, DefaultToolCallOptions())
 }
 
 func BuildToolCallResponseWithContext(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error), callContext ToolCallContext) *jsonrpc.Response {
+	return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, callContext, DefaultToolCallOptions())
+}
+
+func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error), callContext ToolCallContext, options ToolCallOptions) *jsonrpc.Response {
 	var toolCall struct {
 		Name      string         `json:"name"`
 		Tool      string         `json:"tool"`
@@ -537,14 +594,36 @@ func BuildToolCallResponseWithContext(msg jsonrpc.Request, toolManager *tools.Ma
 	if toolName == "" {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
 	}
+	options = normalizeToolCallOptions(options)
+	sessionID := strings.TrimSpace(callContext.SessionID)
+	status := "invalid_params"
+	startedAt := time.Now()
+	defer func() {
+		emitToolCallLog(
+			"tools.call.end",
+			"tool", toolName,
+			"session", sessionID,
+			"status", status,
+			"duration_ms", time.Since(startedAt).Milliseconds(),
+		)
+	}()
+	emitToolCallLog(
+		"tools.call.start",
+		"tool", toolName,
+		"session", sessionID,
+		"emit_progress_notifications", options.EmitProgressNotifications,
+	)
 
 	arguments := toolCall.Arguments
 	if arguments == nil {
 		arguments = map[string]any{}
 	}
-	arguments = enrichToolCallArguments(arguments, callContext)
 
 	if strings.HasPrefix(toolName, "godot://") {
+		if err := validateToolCallPermission(toolName, options); err != nil {
+			status = "permission_denied"
+			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(toolName, err))
+		}
 		if readResource == nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource handler is not configured", nil)
 		}
@@ -552,21 +631,217 @@ func BuildToolCallResponseWithContext(msg jsonrpc.Request, toolManager *tools.Ma
 		if err != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
+		status = "ok"
 		return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
 	}
 
-	result, err := toolManager.CallTool(toolName, arguments)
+	canonicalToolName := toolName
+	tool, found := toolManager.GetTool(toolName)
+	if found && tool != nil {
+		canonicalToolName = tool.Name()
+	}
+	if found && tool != nil {
+		if err := validateToolCallPermission(canonicalToolName, options); err != nil {
+			status = "permission_denied"
+			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, err))
+		}
+		if options.SchemaValidationEnabled {
+			if err := validateToolArguments(tool.InputSchema(), arguments, options.RejectUnknownArguments); err != nil {
+				status = "schema_validation_failed"
+				return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, err))
+			}
+		}
+	}
+
+	arguments = enrichToolCallArguments(arguments, callContext, options)
+	result, err := toolManager.CallTool(canonicalToolName, arguments)
 	if err != nil {
 		if semanticErr, ok := tooltypes.AsSemanticError(err); ok {
-			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(toolName, semanticErr))
+			status = "semantic_error"
+			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, semanticErr))
 		}
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(msg.ID, buildToolExecutionErrorResult(toolName))
+		status = "execution_error"
+		return jsonrpc.NewResponse(msg.ID, buildToolExecutionErrorResult(canonicalToolName))
 	}
 
-	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
+	status = "ok"
+	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(canonicalToolName, result))
+}
+
+func validateToolCallPermission(toolName string, options ToolCallOptions) *tooltypes.SemanticError {
+	switch options.PermissionMode {
+	case ToolPermissionAllowAll:
+		return nil
+	case ToolPermissionReadOnly:
+		if isReadOnlyToolName(toolName) {
+			return nil
+		}
+		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by permission policy", map[string]any{
+			"reason":          "permission_denied",
+			"permission_mode": options.PermissionMode,
+		})
+	case ToolPermissionAllowList:
+		for _, allowedToolName := range options.AllowedTools {
+			if allowedToolName == toolName {
+				return nil
+			}
+		}
+		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by permission policy", map[string]any{
+			"reason":          "permission_denied",
+			"permission_mode": options.PermissionMode,
+		})
+	default:
+		return nil
+	}
+}
+
+func isReadOnlyToolName(toolName string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(toolName))
+	if strings.HasPrefix(trimmed, "godot://") {
+		return true
+	}
+	segments := strings.Split(trimmed, "-")
+	mutating := map[string]struct{}{
+		"create": {},
+		"modify": {},
+		"delete": {},
+		"save":   {},
+		"apply":  {},
+		"run":    {},
+		"stop":   {},
+		"sync":   {},
+		"ack":    {},
+		"reload": {},
+	}
+	for _, segment := range segments {
+		if _, exists := mutating[segment]; exists {
+			return false
+		}
+	}
+	return true
+}
+
+func validateToolArguments(schema mcp.InputSchema, arguments map[string]any, rejectUnknown bool) *tooltypes.SemanticError {
+	missingRequired := make([]string, 0)
+	for _, required := range schema.Required {
+		requiredKey := strings.TrimSpace(required)
+		if requiredKey == "" {
+			continue
+		}
+		if _, ok := arguments[requiredKey]; !ok {
+			missingRequired = append(missingRequired, requiredKey)
+		}
+	}
+	if len(missingRequired) > 0 {
+		sort.Strings(missingRequired)
+		return tooltypes.NewSemanticError(tooltypes.SemanticKindInvalidParams, "Missing required tool arguments", map[string]any{
+			"field":   "arguments",
+			"problem": "missing_required_arguments",
+			"missing": missingRequired,
+		})
+	}
+
+	if rejectUnknown {
+		unknown := make([]string, 0)
+		for argName := range arguments {
+			if _, ok := schema.Properties[argName]; !ok {
+				unknown = append(unknown, argName)
+			}
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			return tooltypes.NewSemanticError(tooltypes.SemanticKindInvalidParams, "Unknown tool arguments", map[string]any{
+				"field":   "arguments",
+				"problem": "unknown_arguments",
+				"unknown": unknown,
+			})
+		}
+	}
+
+	for argName, argValue := range arguments {
+		propertySchemaRaw, exists := schema.Properties[argName]
+		if !exists {
+			continue
+		}
+		propertySchema, ok := propertySchemaRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		expectedType, _ := propertySchema["type"].(string)
+		expectedType = strings.ToLower(strings.TrimSpace(expectedType))
+		if expectedType == "" {
+			continue
+		}
+		if !isJSONTypeMatch(argValue, expectedType) {
+			return tooltypes.NewSemanticError(tooltypes.SemanticKindInvalidParams, "Tool argument has invalid type", map[string]any{
+				"field":    argName,
+				"problem":  "invalid_type",
+				"expected": expectedType,
+				"actual":   jsonTypeName(argValue),
+			})
+		}
+	}
+
+	return nil
+}
+
+func isJSONTypeMatch(value any, expectedType string) bool {
+	switch expectedType {
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "number":
+		_, ok := value.(float64)
+		return ok
+	case "integer":
+		number, ok := value.(float64)
+		if !ok {
+			return false
+		}
+		return number == float64(int64(number))
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "null":
+		return value == nil
+	default:
+		return true
+	}
+}
+
+func jsonTypeName(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	case map[string]any:
+		return "object"
+	case []any:
+		return "array"
+	default:
+		return "unknown"
+	}
+}
+
+func emitToolCallLog(msg string, args ...any) {
+	defer func() {
+		_ = recover()
+	}()
+	logger.Info(msg, args...)
 }
 
 func BuildToolSuccessResult(toolName string, result any) map[string]any {
@@ -615,12 +890,13 @@ func buildToolSemanticErrorResult(toolName string, semanticErr *tooltypes.Semant
 	}
 }
 
-func enrichToolCallArguments(arguments map[string]any, callContext ToolCallContext) map[string]any {
+func enrichToolCallArguments(arguments map[string]any, callContext ToolCallContext, options ToolCallOptions) map[string]any {
 	enriched := make(map[string]any, len(arguments)+1)
 	maps.Copy(enriched, arguments)
 	enriched["_mcp"] = map[string]any{
-		"session_id":          strings.TrimSpace(callContext.SessionID),
-		"session_initialized": callContext.SessionInitialized,
+		"session_id":                  strings.TrimSpace(callContext.SessionID),
+		"session_initialized":         callContext.SessionInitialized,
+		"emit_progress_notifications": options.EmitProgressNotifications,
 	}
 	return enriched
 }

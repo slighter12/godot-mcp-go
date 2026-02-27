@@ -2,10 +2,15 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/slighter12/godot-mcp-go/config"
+	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
+	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 )
 
@@ -311,4 +316,174 @@ func TestPingEditorRuntimeTool_RequiresExistingSnapshot(t *testing.T) {
 	if errPayload["kind"] != "not_available" {
 		t.Fatalf("expected not_available kind, got %v", errPayload["kind"])
 	}
+}
+
+func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	server := newTestHTTPServer(t, true)
+
+	const sessionCount = 24
+	sessionIDs := make([]string, 0, sessionCount)
+	for i := 0; i < sessionCount; i++ {
+		sessionID := fmt.Sprintf("session-stress-%02d", i)
+		server.sessionManager.CreateSession(sessionID)
+		server.sessionManager.MarkInitialized(sessionID)
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, sessionCount*2)
+	for i, sessionID := range sessionIDs {
+		wg.Add(1)
+		go func(index int, sid string) {
+			defer wg.Done()
+
+			syncParams, err := json.Marshal(map[string]any{
+				"name": "godot-runtime-sync",
+				"arguments": map[string]any{
+					"snapshot": map[string]any{
+						"root_summary": map[string]any{
+							"active_scene": fmt.Sprintf("res://Scene-%02d.tscn", index),
+						},
+						"scene_tree": map[string]any{
+							"path":        fmt.Sprintf("/Scene%02d", index),
+							"name":        fmt.Sprintf("Scene%02d", index),
+							"type":        "Node2D",
+							"child_count": 0,
+						},
+					},
+				},
+			})
+			if err != nil {
+				errCh <- fmt.Errorf("marshal sync params: %w", err)
+				return
+			}
+			syncRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+				JSONRPC: jsonrpc.Version,
+				ID:      fmt.Sprintf("sync-%02d", index),
+				Method:  "tools/call",
+				Params:  syncParams,
+			}, sid)
+			if handleErr != nil {
+				errCh <- fmt.Errorf("handle sync message: %w", handleErr)
+				return
+			}
+			syncResp, ok := syncRespAny.(*jsonrpc.Response)
+			if !ok || syncResp == nil {
+				errCh <- fmt.Errorf("sync response type mismatch: %T", syncRespAny)
+				return
+			}
+			if syncResp.Error != nil {
+				errCh <- fmt.Errorf("sync response error: %+v", syncResp.Error)
+				return
+			}
+
+			stateParams, err := json.Marshal(map[string]any{
+				"name":      "godot-editor-get-state",
+				"arguments": map[string]any{},
+			})
+			if err != nil {
+				errCh <- fmt.Errorf("marshal state params: %w", err)
+				return
+			}
+			stateRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+				JSONRPC: jsonrpc.Version,
+				ID:      fmt.Sprintf("state-%02d", index),
+				Method:  "tools/call",
+				Params:  stateParams,
+			}, sid)
+			if handleErr != nil {
+				errCh <- fmt.Errorf("handle state message: %w", handleErr)
+				return
+			}
+			stateResp, ok := stateRespAny.(*jsonrpc.Response)
+			if !ok || stateResp == nil {
+				errCh <- fmt.Errorf("state response type mismatch: %T", stateRespAny)
+				return
+			}
+			if stateResp.Error != nil {
+				errCh <- fmt.Errorf("state response error: %+v", stateResp.Error)
+				return
+			}
+			result, ok := stateResp.Result.(map[string]any)
+			if !ok {
+				errCh <- fmt.Errorf("state result type mismatch: %T", stateResp.Result)
+				return
+			}
+			toolResult, ok := result["result"].(map[string]any)
+			if !ok {
+				errCh <- fmt.Errorf("tool result type mismatch: %T", result["result"])
+				return
+			}
+			expectedScene := fmt.Sprintf("res://Scene-%02d.tscn", index)
+			if toolResult["active_scene"] != expectedScene {
+				errCh <- fmt.Errorf("expected active_scene %q, got %v", expectedScene, toolResult["active_scene"])
+				return
+			}
+			if toolResult["session_id"] != sid {
+				errCh <- fmt.Errorf("expected session_id %q, got %v", sid, toolResult["session_id"])
+				return
+			}
+		}(i, sessionID)
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("concurrent stress failure: %v", err)
+		}
+	}
+}
+
+func BenchmarkHandleMessageGetEditorStateParallel(b *testing.B) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	initHTTPTestLogger.Do(func() {
+		if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
+			b.Fatalf("init logger: %v", err)
+		}
+	})
+	cfg := config.NewConfig()
+	cfg.PromptCatalog.Enabled = true
+	server := NewServer(cfg)
+	server.promptCatalog = promptcatalog.NewRegistry(true)
+	server.toolManager.RegisterDefaultTools()
+	if err := server.registerRuntimeTools(); err != nil {
+		b.Fatalf("register runtime tools: %v", err)
+	}
+	if err := server.registry.RegisterServer("default", server.toolManager.GetTools()); err != nil {
+		b.Fatalf("register default server: %v", err)
+	}
+
+	sessionID := "session-bench-state"
+	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitialized(sessionID)
+	runtimebridge.DefaultStore().Upsert(sessionID, runtimebridge.Snapshot{
+		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Bench.tscn"},
+	}, time.Now().UTC())
+
+	params, err := json.Marshal(map[string]any{
+		"name":      "godot-editor-get-state",
+		"arguments": map[string]any{},
+	})
+	if err != nil {
+		b.Fatalf("marshal params: %v", err)
+	}
+
+	req := jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      "bench-state",
+		Method:  "tools/call",
+		Params:  params,
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, handleErr := server.handleMessage(req, sessionID)
+			if handleErr != nil {
+				b.Fatalf("handleMessage failed: %v", handleErr)
+			}
+		}
+	})
 }

@@ -32,8 +32,7 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 
 ### In Progress
 
-- Performance benchmarks under concurrent requests
-- Advanced execution controls and permission model hardening
+- Post-v1 Godot integration depth planning
 
 ### Open Tracks
 
@@ -48,8 +47,8 @@ If content belongs to both docs, keep the high-level milestone here and keep pro
 - [x] Base JSON-RPC envelope handling
 - [x] Session negotiation and protocol version checks
 - [x] Streamable HTTP policy documented: target protocol `2025-11-25` and explicit `MCP-Protocol-Version` usage
-- [ ] Performance benchmarks under concurrent requests
-- [ ] Concurrent connection stress tests
+- [x] Performance benchmarks under concurrent requests
+- [x] Concurrent connection stress tests
 
 ### Track B: Godot Integration
 
@@ -75,43 +74,49 @@ Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS
 
 ### Track D: Advanced Controls
 
-- [ ] Tool parameter schema validation completeness
-- [ ] Tool progress and execution telemetry
-- [ ] Permission model for tool operations
-- [ ] Cache strategy for deterministic reads
-- [ ] Consolidate repeated GDScript runtime handler argument validation into shared helper utilities.
-- [ ] Consolidate duplicated runtime command dispatch/validation helpers across `tools/node`, `tools/scene`, and `tools/script` into a shared package.
+- [x] Tool parameter schema validation completeness
+- [x] Tool progress and execution telemetry
+- [x] Permission model for tool operations
+- [x] Cache strategy for deterministic reads
+- [x] Consolidate repeated GDScript runtime handler argument validation into shared helper utilities.
+- [x] Consolidate duplicated runtime command dispatch/validation helpers across `tools/node`, `tools/scene`, and `tools/script` into a shared package.
 
 ### Track E: Release Readiness
 
 - [x] API reference docs
 - [x] Installation and upgrade guide
-- [ ] End-to-end usage examples
+- [x] End-to-end usage examples
 - [x] Changelog and release notes discipline
 
 ## Post-v1 Implementation Plan (Godot Wave 2)
 
 1. Scene write pipeline
+
 - Implement `godot-scene-create`, `godot-scene-save`, `godot-scene-apply` through runtime command bridge.
 - Return deterministic command acknowledgements (success/error/reason) instead of placeholder behavior.
 
-2. Node write pipeline
+1. Node write pipeline
+
 - Implement `godot-node-create`, `godot-node-delete`, `godot-node-modify` with validated request schema and whitelist field updates.
 - Add node path resolution guarantees (exact path first, then deterministic fallback policy if enabled).
 
-3. Script write pipeline
+1. Script write pipeline
+
 - Implement `godot-script-create`, `godot-script-modify` for `.gd` and `.rs` with path safety rules consistent with read tools.
 - Add overwrite/conflict policy (explicit replace flag and clear rejection reasons).
 
-4. Runtime freshness negotiation and resiliency
+1. Runtime freshness negotiation and resiliency
+
 - Expose server-side stale threshold as runtime metadata and align plugin heartbeat automatically.
 - Add jitter-tolerant guardrails so transient timer drift does not cause avoidable `runtime_snapshot_stale`.
 
-5. Runtime bridge observability and safety
+1. Runtime bridge observability and safety
+
 - Add structured metrics for command dispatch latency, ack timeout reason, and stale transitions.
 - Finalize permission model for mutating tools (session-scoped capability gating).
 
-6. Verification expansion
+1. Verification expansion
+
 - Add integration tests covering read/write bridge flows, session loss, stale transitions, and reconnect behavior.
 - Add manual verification script/checklist for end-to-end Godot editor scenarios.
 

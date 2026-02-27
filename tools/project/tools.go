@@ -109,45 +109,11 @@ func GetAllTools() []tooltypes.Tool {
 }
 
 func dispatchProjectRuntimeCommand(rawArgs json.RawMessage, commandName string) ([]byte, error) {
-	var arguments map[string]any
-	if err := json.Unmarshal(rawArgs, &arguments); err != nil {
-		return nil, err
-	}
-
-	ctx := tooltypes.ExtractMCPContext(arguments)
-	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewNotAvailableError("Project execution requires an initialized MCP HTTP session", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
-			"tool":    commandName,
-		})
-	}
-
-	commandArgs := tooltypes.StripMCPContext(arguments)
-	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, commandName, commandArgs, projectCommandTimeout)
-	if !ok {
-		return nil, tooltypes.NewNotAvailableError("Project execution bridge is unavailable", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  reason,
-			"tool":    commandName,
-		})
-	}
-
-	result := map[string]any{
-		"success":         ack.Success,
-		"command_id":      ack.CommandID,
-		"result":          ack.Result,
-		"error":           ack.Error,
-		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if schemaVersion, ok := ack.SchemaVersion(); ok {
-		result["schema_version"] = schemaVersion
-	}
-	if reason, ok := ack.Reason(); ok {
-		result["reason"] = reason
-	}
-	if retryable, ok := ack.Retryable(); ok {
-		result["retryable"] = retryable
-	}
-	return json.Marshal(result)
+	return tooltypes.DispatchRuntimeCommand(tooltypes.RuntimeCommandDispatchOptions{
+		RawArgs:                  rawArgs,
+		CommandName:              commandName,
+		Timeout:                  projectCommandTimeout,
+		SessionRequiredMessage:   "Project execution requires an initialized MCP HTTP session",
+		BridgeUnavailableMessage: "Project execution bridge is unavailable",
+	})
 }

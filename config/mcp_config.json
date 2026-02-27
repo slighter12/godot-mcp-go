@@ -40,5 +40,12 @@
       "mode": "legacy",
       "reject_unknown_arguments": false
     }
+  },
+  "tool_controls": {
+    "schema_validation_enabled": true,
+    "reject_unknown_arguments": false,
+    "permission_mode": "allow_all",
+    "allowed_tools": [],
+    "emit_progress_notifications": true
   }
 }
