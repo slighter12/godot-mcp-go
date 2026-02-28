@@ -19,6 +19,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools"
+	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 	"github.com/slighter12/godot-mcp-go/transport/stdio"
 )
@@ -50,6 +51,7 @@ func NewServer(cfg *config.Config) *Server {
 		echo:           echo.New(),
 	}
 	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToSession)
+	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
 	return server
 }
 
@@ -118,6 +120,7 @@ func (s *Server) startStdioServer() error {
 	server := stdio.NewStdioServer(s.toolManager)
 	server.AttachPromptCatalog(s.promptCatalog)
 	server.AttachPromptRenderOptions(s.promptRenderOptions())
+	server.AttachToolCallOptions(s.toolCallOptions())
 	return server.Start()
 }
 
@@ -234,4 +237,35 @@ func (s *Server) promptRenderOptions() shared.PromptRenderOptions {
 		Mode:                   s.config.PromptCatalog.Rendering.Mode,
 		RejectUnknownArguments: s.config.PromptCatalog.Rendering.RejectUnknownArguments,
 	}
+}
+
+func (s *Server) toolCallOptions() shared.ToolCallOptions {
+	if s == nil || s.config == nil {
+		return shared.DefaultToolCallOptions()
+	}
+	return shared.ToolCallOptions{
+		SchemaValidationEnabled:   s.config.ToolControls.SchemaValidationEnabled,
+		RejectUnknownArguments:    s.config.ToolControls.RejectUnknownArguments,
+		PermissionMode:            s.config.ToolControls.PermissionMode,
+		AllowedTools:              s.config.ToolControls.AllowedTools,
+		EmitProgressNotifications: s.config.ToolControls.EmitProgressNotifications,
+	}
+}
+
+func (s *Server) SendRuntimeCommandProgressNotification(event tooltypes.RuntimeCommandProgressEvent) {
+	if s == nil || s.config == nil || !s.config.ToolControls.EmitProgressNotifications {
+		return
+	}
+	if strings.TrimSpace(event.SessionID) == "" {
+		return
+	}
+	_ = s.SendJSONRPCNotificationToSession(event.SessionID, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/tools/progress",
+		"params": map[string]any{
+			"tool":     strings.TrimSpace(event.CommandName),
+			"progress": event.Progress,
+			"message":  strings.TrimSpace(event.Message),
+		},
+	})
 }

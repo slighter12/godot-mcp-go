@@ -19,6 +19,7 @@ type StdioServer struct {
 	toolManager         *tools.Manager
 	promptCatalog       *promptcatalog.Registry
 	promptRenderOptions shared.PromptRenderOptions
+	toolCallOptions     shared.ToolCallOptions
 }
 
 // NewStdioServer creates a new stdio server
@@ -26,6 +27,7 @@ func NewStdioServer(toolManager *tools.Manager) *StdioServer {
 	return &StdioServer{
 		toolManager:         toolManager,
 		promptRenderOptions: shared.DefaultPromptRenderOptions(),
+		toolCallOptions:     shared.DefaultToolCallOptions(),
 	}
 }
 
@@ -37,6 +39,11 @@ func (s *StdioServer) AttachPromptCatalog(registry *promptcatalog.Registry) {
 // AttachPromptRenderOptions applies runtime prompt rendering validation settings.
 func (s *StdioServer) AttachPromptRenderOptions(options shared.PromptRenderOptions) {
 	s.promptRenderOptions = options
+}
+
+// AttachToolCallOptions applies runtime tool call controls.
+func (s *StdioServer) AttachToolCallOptions(options shared.ToolCallOptions) {
+	s.toolCallOptions = options
 }
 
 // Start starts the stdio server
@@ -148,7 +155,7 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown stdio message", "method", msg.Method)
-		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions), nil
+		return shared.DispatchStandardMethodWithOptions(msg, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions, s.toolCallOptions), nil
 	}
 }
 

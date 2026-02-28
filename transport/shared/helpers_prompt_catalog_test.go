@@ -698,6 +698,154 @@ func TestBuildToolCallResponseWithContext_InjectsMCPContext(t *testing.T) {
 	if payload["session_initialized"] != true {
 		t.Fatalf("expected session_initialized=true, got %v", payload["session_initialized"])
 	}
+	if payload["emit_progress_notifications"] != true {
+		t.Fatalf("expected emit_progress_notifications=true, got %v", payload["emit_progress_notifications"])
+	}
+}
+
+func TestBuildToolCallResponseWithOptions_RejectsMissingRequiredArguments(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name":      "schema-echo",
+		"arguments": map[string]any{},
+	}), manager, nil, ToolCallContext{}, ToolCallOptions{
+		SchemaValidationEnabled: true,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result payload, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustErrorDataMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindInvalidParams {
+		t.Fatalf("expected kind invalid_params, got %v", errPayload["kind"])
+	}
+	if errPayload["problem"] != "missing_required_arguments" {
+		t.Fatalf("expected missing_required_arguments, got %v", errPayload["problem"])
+	}
+}
+
+func TestBuildToolCallResponseWithOptions_RejectsUnknownArguments(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name": "schema-echo",
+		"arguments": map[string]any{
+			"input": "ok",
+			"extra": "bad",
+		},
+	}), manager, nil, ToolCallContext{}, ToolCallOptions{
+		SchemaValidationEnabled: true,
+		RejectUnknownArguments:  true,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result payload, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustErrorDataMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindInvalidParams {
+		t.Fatalf("expected kind invalid_params, got %v", errPayload["kind"])
+	}
+	if errPayload["problem"] != "unknown_arguments" {
+		t.Fatalf("expected unknown_arguments, got %v", errPayload["problem"])
+	}
+}
+
+func TestBuildToolCallResponseWithOptions_AllowListDeniesNonAllowedTool(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name": "schema-echo",
+		"arguments": map[string]any{
+			"input": "ok",
+		},
+	}), manager, nil, ToolCallContext{}, ToolCallOptions{
+		PermissionMode: ToolPermissionAllowList,
+		AllowedTools:   []string{"another-tool"},
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result payload, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustErrorDataMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindNotSupported {
+		t.Fatalf("expected kind not_supported, got %v", errPayload["kind"])
+	}
+}
+
+func TestBuildToolCallResponseWithOptions_ReadOnlyBlocksMutatingTools(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-script-create"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name": "godot-script-create",
+		"arguments": map[string]any{
+			"input": "ok",
+		},
+	}), manager, nil, ToolCallContext{}, ToolCallOptions{
+		PermissionMode: ToolPermissionReadOnly,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result payload, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustErrorDataMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindNotSupported {
+		t.Fatalf("expected kind not_supported, got %v", errPayload["kind"])
+	}
+}
+
+func TestBuildResourcesReadResponse_PolicyMetadata(t *testing.T) {
+	readResource := func(uri string) (any, error) {
+		if uri != "godot://policy/godot-checks" {
+			return nil, errors.New("unexpected uri")
+		}
+		return map[string]any{
+			"policy": "policy-godot",
+			"checks": []map[string]any{
+				{"id": "GODOT_001", "level": "warn"},
+			},
+		}, nil
+	}
+
+	resp := BuildResourcesReadResponse(mustRequest(t, "resources/read", map[string]any{
+		"uri": "godot://policy/godot-checks",
+	}), readResource)
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	contentsRaw, ok := result["contents"].([]map[string]any)
+	if !ok || len(contentsRaw) != 1 {
+		t.Fatalf("expected one content entry, got %T %v", result["contents"], result["contents"])
+	}
+	text, ok := contentsRaw[0]["text"].(string)
+	if !ok || !strings.Contains(text, "\"policy\":\"policy-godot\"") {
+		t.Fatalf("expected serialized policy payload, got %v", contentsRaw[0]["text"])
+	}
 }
 
 func mustRequest(t *testing.T, method string, params map[string]any) jsonrpc.Request {
@@ -814,8 +962,35 @@ func (t *contextEchoTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	mcpRaw, _ := payload["_mcp"].(map[string]any)
 	result := map[string]any{
-		"session_id":          mcpRaw["session_id"],
-		"session_initialized": mcpRaw["session_initialized"],
+		"session_id":                  mcpRaw["session_id"],
+		"session_initialized":         mcpRaw["session_initialized"],
+		"emit_progress_notifications": mcpRaw["emit_progress_notifications"],
 	}
 	return json.Marshal(result)
+}
+
+type schemaEchoTool struct {
+	name string
+}
+
+func (t *schemaEchoTool) Name() string { return t.name }
+
+func (t *schemaEchoTool) Description() string { return "schema echo tool for tests" }
+
+func (t *schemaEchoTool) InputSchema() mcp.InputSchema {
+	return mcp.InputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+		Required: []string{"input"},
+	}
+}
+
+func (t *schemaEchoTool) Execute(args json.RawMessage) ([]byte, error) {
+	var payload map[string]any
+	if err := json.Unmarshal(args, &payload); err != nil {
+		return nil, err
+	}
+	return json.Marshal(payload)
 }

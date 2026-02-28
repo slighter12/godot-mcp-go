@@ -187,6 +187,11 @@ If the resolved file does not exist, the server creates a default config file at
 - `MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS`: Poll interval in seconds (`2..300`)
 - `MCP_PROMPT_CATALOG_RENDERING_MODE`: Prompt rendering mode (`legacy` or `strict`)
 - `MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS`: Reject unknown prompt arguments in strict mode
+- `MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED`: Enable pre-dispatch tool argument schema validation
+- `MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS`: Reject unknown tool arguments during schema validation
+- `MCP_TOOL_CONTROLS_PERMISSION_MODE`: Tool permission mode (`allow_all`, `read_only`, `allow_list`)
+- `MCP_TOOL_CONTROLS_ALLOWED_TOOLS`: Comma-separated allow-list when `permission_mode=allow_list`
+- `MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS`: Emit `notifications/tools/progress` for runtime command tools
 
 ### Prompt Catalog Runtime Notes
 
@@ -208,6 +213,28 @@ If the resolved file does not exist, the server creates a default config file at
 - Plugin heartbeat/poll intervals are configurable in `godot-plugin/addons/godot_mcp/config.cfg`:
   - `runtime_heartbeat_seconds` (default `5.0`)
   - `runtime_change_poll_seconds` (default `0.5`)
+- Runtime command tools may emit best-effort `notifications/tools/progress` over SSE (`tools/call` lifecycle remains request/response).
+
+### Tool Controls
+
+`tool_controls` config controls server-side enforcement before tool execution:
+
+```json
+{
+  "tool_controls": {
+    "schema_validation_enabled": true,
+    "reject_unknown_arguments": false,
+    "permission_mode": "allow_all",
+    "allowed_tools": [],
+    "emit_progress_notifications": true
+  }
+}
+```
+
+- `schema_validation_enabled=true`: validates required fields and JSON types from each tool `inputSchema`
+- `reject_unknown_arguments=true`: rejects extra top-level arguments not defined in `inputSchema.properties`
+- `permission_mode=read_only`: blocks mutating tool operations
+- `permission_mode=allow_list`: only tools listed in `allowed_tools` are executable
 
 ## Available Tools
 
@@ -254,6 +281,78 @@ Mutating runtime tools require Streamable HTTP session context and an active God
 - `godot-runtime-ping`: Internal runtime bridge heartbeat endpoint (plugin-driven)
 - `godot-runtime-ack`: Internal runtime command acknowledgement endpoint (plugin-driven)
 - `godot-prompts-reload`: Manual prompt catalog reload trigger
+
+## End-to-End Examples
+
+### Example A: Session Initialize + Read Tool
+
+1. Initialize:
+
+```bash
+curl -i -sS \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -X POST http://localhost:9080/mcp \
+  --data '{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"demo","version":"0.1.0"}}}'
+```
+
+1. Send initialized notification (no response body expected):
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
+  -X POST http://localhost:9080/mcp \
+  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+```
+
+1. Call a read tool:
+
+```bash
+curl -sS \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
+  -X POST http://localhost:9080/mcp \
+  --data '{"jsonrpc":"2.0","id":"state-1","method":"tools/call","params":{"name":"godot-editor-get-state","arguments":{}}}'
+```
+
+### Example B: Runtime Mutating Command + Ack Flow
+
+1. Client requests mutating tool:
+
+```bash
+curl -sS \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
+  -X POST http://localhost:9080/mcp \
+  --data '{"jsonrpc":"2.0","id":"run-1","method":"tools/call","params":{"name":"godot-project-run","arguments":{}}}'
+```
+
+1. Server sends plugin notification:
+
+- `method=notifications/godot/command`
+- includes `command_id` and runtime command `name`
+
+1. Plugin acknowledges with `godot-runtime-ack` and server returns:
+
+- `success`
+- `command_id`
+- `result`
+- `error`
+- `acknowledged_at`
+- optional `schema_version`, `reason`, `retryable`
+
+### Example C: Permission/Schema Error Semantics
+
+When blocked by `tool_controls` or argument schema checks, tool responses keep MCP `result` shape with:
+
+- `isError=true`
+- `error.kind=not_supported` (permission) or `invalid_params` (schema)
+- structured `error` fields such as `reason`, `problem`, `missing`, `unknown`
 
 ## Cursor Configuration
 

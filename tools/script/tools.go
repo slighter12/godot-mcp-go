@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
-	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
@@ -127,55 +126,17 @@ func GetAllTools() []types.Tool {
 }
 
 func dispatchScriptRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {
-	var arguments map[string]any
-	if err := json.Unmarshal(rawArgs, &arguments); err != nil {
-		return nil, newScriptInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
-	}
-
-	ctx := types.ExtractMCPContext(arguments)
-	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, types.NewNotAvailableError("Script commands require an initialized MCP HTTP session", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
-			"tool":    commandName,
-		})
-	}
-
-	commandArgs := types.StripMCPContext(arguments)
-	var err error
-	if validate != nil {
-		commandArgs, err = validate(commandArgs, commandName)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, commandName, commandArgs, scriptCommandTimeout)
-	if !ok {
-		return nil, types.NewNotAvailableError("Script runtime bridge is unavailable", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  reason,
-			"tool":    commandName,
-		})
-	}
-
-	result := map[string]any{
-		"success":         ack.Success,
-		"command_id":      ack.CommandID,
-		"result":          ack.Result,
-		"error":           ack.Error,
-		"acknowledged_at": ack.AckedAt.UTC().Format(time.RFC3339Nano),
-	}
-	if schemaVersion, ok := ack.SchemaVersion(); ok {
-		result["schema_version"] = schemaVersion
-	}
-	if reason, ok := ack.Reason(); ok {
-		result["reason"] = reason
-	}
-	if retryable, ok := ack.Retryable(); ok {
-		result["retryable"] = retryable
-	}
-	return json.Marshal(result)
+	return types.DispatchRuntimeCommand(types.RuntimeCommandDispatchOptions{
+		RawArgs:                  rawArgs,
+		CommandName:              commandName,
+		Timeout:                  scriptCommandTimeout,
+		SessionRequiredMessage:   "Script commands require an initialized MCP HTTP session",
+		BridgeUnavailableMessage: "Script runtime bridge is unavailable",
+		InvalidJSONError: func(err error) error {
+			return newScriptInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
+		},
+		Validate: validate,
+	})
 }
 
 func validateScriptWriteArguments(arguments map[string]any, toolName string) (map[string]any, error) {

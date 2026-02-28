@@ -6,14 +6,15 @@ import "strings"
 type MCPContext struct {
 	SessionID          string
 	SessionInitialized bool
+	EmitProgress       bool
 }
 
 func ExtractMCPContext(arguments map[string]any) MCPContext {
 	if arguments == nil {
-		return MCPContext{}
+		return MCPContext{EmitProgress: true}
 	}
 	rawContext, _ := arguments["_mcp"].(map[string]any)
-	ctx := MCPContext{}
+	ctx := MCPContext{EmitProgress: true}
 	if rawContext == nil {
 		return ctx
 	}
@@ -22,6 +23,9 @@ func ExtractMCPContext(arguments map[string]any) MCPContext {
 	}
 	if initialized, ok := rawContext["session_initialized"].(bool); ok {
 		ctx.SessionInitialized = initialized
+	}
+	if emitProgress, ok := rawContext["emit_progress_notifications"].(bool); ok {
+		ctx.EmitProgress = emitProgress
 	}
 	return ctx
 }

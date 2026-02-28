@@ -90,11 +90,27 @@ func ReadProjectFile(input string, allowedExts []string) ([]byte, string, error)
 		return nil, "", fmt.Errorf("path escapes project root")
 	}
 
+	fileInfo, err := os.Stat(resolvedPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	key := readProjectFileCacheKey{
+		path:            resolvedPath,
+		size:            fileInfo.Size(),
+		modTimeUnixNano: fileInfo.ModTime().UTC().UnixNano(),
+	}
+	if cached, ok := projectFileReadCache.get(key); ok {
+		return cached, resPath, nil
+	}
+
 	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return nil, "", err
 	}
-	return data, resPath, nil
+
+	projectFileReadCache.set(key, data)
+	return cloneBytes(data), resPath, nil
 }
 
 func isWithinRoot(path string, root string) bool {
