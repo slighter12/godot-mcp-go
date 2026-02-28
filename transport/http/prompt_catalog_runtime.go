@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,8 +44,12 @@ func (s *Server) startPromptCatalogWatchers() {
 	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
 		return
 	}
-	if s.promptCatalogWatchMode() == "event" && s.startPromptCatalogEventWatch() {
-		return
+	if s.promptCatalogWatchMode() == "event" {
+		if enabled, err := s.startPromptCatalogEventWatch(); enabled {
+			return
+		} else if err != nil {
+			logger.Warn("Prompt catalog event watch unavailable, fallback to polling", "error", err)
+		}
 	}
 	s.startPromptCatalogAutoReload()
 }
@@ -199,18 +204,17 @@ func (s *Server) stopPromptCatalogAutoReload() {
 	}
 }
 
-func (s *Server) startPromptCatalogEventWatch() bool {
+func (s *Server) startPromptCatalogEventWatch() (bool, error) {
 	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
-		return false
+		return false, nil
 	}
 	if s.promptCatalogWatchMode() != "event" {
-		return false
+		return false, nil
 	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		logger.Warn("Prompt catalog event watch unavailable, fallback to polling", "error", err)
-		return false
+		return false, err
 	}
 
 	roots := make([]string, 0, len(s.config.PromptCatalog.Paths))
@@ -223,12 +227,26 @@ func (s *Server) startPromptCatalogEventWatch() bool {
 	}
 	if len(roots) == 0 {
 		_ = watcher.Close()
-		return false
+		return false, nil
 	}
+	watchedDirectories := 0
+	rootWatchErrors := make([]error, 0)
 	for _, root := range roots {
-		if addErr := addPromptCatalogRecursiveWatches(watcher, root); addErr != nil {
-			logger.Warn("Prompt catalog watch root add warning", "root", root, "error", addErr)
+		added, addErr := addPromptCatalogRecursiveWatches(watcher, root)
+		watchedDirectories += added
+		if addErr != nil {
+			rootWatchErrors = append(rootWatchErrors, fmt.Errorf("watch root %s: %w", root, addErr))
 		}
+	}
+	if watchedDirectories == 0 {
+		_ = watcher.Close()
+		if len(rootWatchErrors) > 0 {
+			return false, errors.Join(rootWatchErrors...)
+		}
+		return false, errors.New("no watchable prompt catalog directories")
+	}
+	if len(rootWatchErrors) > 0 {
+		logger.Warn("Prompt catalog event watch started with partial root warnings", "warnings", summarizeErrorList(rootWatchErrors, 5))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -292,7 +310,9 @@ func (s *Server) startPromptCatalogEventWatch() bool {
 				}
 				if event.Op&fsnotify.Create != 0 {
 					if stat, statErr := os.Stat(event.Name); statErr == nil && stat.IsDir() {
-						_ = addPromptCatalogRecursiveWatches(watcher, event.Name)
+						if _, addErr := addPromptCatalogRecursiveWatches(watcher, event.Name); addErr != nil {
+							logger.Warn("Prompt catalog watch dynamic directory add warning", "path", event.Name, "error", addErr)
+						}
 					}
 				}
 				triggerReload()
@@ -315,7 +335,7 @@ func (s *Server) startPromptCatalogEventWatch() bool {
 		}
 	}()
 
-	return true
+	return true, nil
 }
 
 func (s *Server) stopPromptCatalogEventWatch() {
@@ -338,12 +358,12 @@ func (s *Server) stopPromptCatalogEventWatch() {
 	}
 }
 
-func addPromptCatalogRecursiveWatches(watcher *fsnotify.Watcher, root string) error {
+func addPromptCatalogRecursiveWatches(watcher *fsnotify.Watcher, root string) (int, error) {
 	if watcher == nil {
-		return fmt.Errorf("watcher is nil")
+		return 0, fmt.Errorf("watcher is nil")
 	}
 	if strings.TrimSpace(root) == "" {
-		return nil
+		return 0, nil
 	}
 
 	expandedRoot := root
@@ -359,24 +379,54 @@ func addPromptCatalogRecursiveWatches(watcher *fsnotify.Watcher, root string) er
 
 	info, err := os.Stat(expandedRoot)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !info.IsDir() {
-		return nil
+		return 0, nil
 	}
 
-	return filepath.WalkDir(expandedRoot, func(path string, d os.DirEntry, walkErr error) error {
+	watchedDirectories := 0
+	watchErrors := make([]error, 0)
+	walkErr := filepath.WalkDir(expandedRoot, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			watchErrors = append(watchErrors, fmt.Errorf("walk %s: %w", path, walkErr))
 			return nil
 		}
 		if !d.IsDir() {
 			return nil
 		}
 		if err := watcher.Add(path); err != nil {
+			watchErrors = append(watchErrors, fmt.Errorf("watch add %s: %w", path, err))
 			return nil
 		}
+		watchedDirectories++
 		return nil
 	})
+	if walkErr != nil {
+		watchErrors = append(watchErrors, fmt.Errorf("walk root %s: %w", expandedRoot, walkErr))
+	}
+	if len(watchErrors) > 0 {
+		return watchedDirectories, errors.Join(watchErrors...)
+	}
+	return watchedDirectories, nil
+}
+
+func summarizeErrorList(errs []error, limit int) []string {
+	if len(errs) == 0 {
+		return nil
+	}
+	messages := make([]string, 0, len(errs))
+	for _, err := range errs {
+		if err == nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(err.Error())
+		if trimmed == "" {
+			continue
+		}
+		messages = append(messages, trimmed)
+	}
+	return summarizeLoadErrors(messages, limit)
 }
 
 func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {
