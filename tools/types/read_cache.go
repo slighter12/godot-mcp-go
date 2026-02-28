@@ -65,7 +65,7 @@ func (c *readProjectFileCache) stats() (uint64, uint64) {
 }
 
 func cloneBytes(in []byte) []byte {
-	if len(in) == 0 {
+	if in == nil {
 		return nil
 	}
 	out := make([]byte, len(in))

@@ -46,17 +46,21 @@ const (
 	ToolPermissionAllowList   = "allow_list"
 )
 
-var mutatingToolNameSegments = map[string]struct{}{
-	"create": {},
-	"modify": {},
-	"delete": {},
-	"save":   {},
-	"apply":  {},
-	"run":    {},
-	"stop":   {},
-	"sync":   {},
-	"ack":    {},
-	"reload": {},
+// readOnlyToolNames enumerates tool calls that are allowed when permission_mode=read_only.
+// Unknown tool names are denied by default in read_only mode.
+var readOnlyToolNames = map[string]struct{}{
+	"godot-offerings-list":         {},
+	"godot-project-get-settings":   {},
+	"godot-project-list-resources": {},
+	"godot-editor-get-state":       {},
+	"godot-node-get-tree":          {},
+	"godot-node-get-properties":    {},
+	"godot-scene-list":             {},
+	"godot-scene-read":             {},
+	"godot-script-list":            {},
+	"godot-script-read":            {},
+	"godot-script-analyze":         {},
+	"godot-runtime-ping":           {},
 }
 
 type ToolCallOptions struct {
@@ -714,16 +718,14 @@ func validateToolCallPermission(toolName string, options ToolCallOptions) *toolt
 
 func isReadOnlyToolName(toolName string) bool {
 	trimmed := strings.ToLower(strings.TrimSpace(toolName))
+	if trimmed == "" {
+		return false
+	}
 	if strings.HasPrefix(trimmed, "godot://") {
 		return true
 	}
-	segments := strings.Split(trimmed, "-")
-	for _, segment := range segments {
-		if _, exists := mutatingToolNameSegments[segment]; exists {
-			return false
-		}
-	}
-	return true
+	_, ok := readOnlyToolNames[trimmed]
+	return ok
 }
 
 func validateToolArguments(schema mcp.InputSchema, arguments map[string]any, rejectUnknown bool) *tooltypes.SemanticError {
