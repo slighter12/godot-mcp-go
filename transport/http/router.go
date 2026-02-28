@@ -10,12 +10,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
@@ -280,6 +282,7 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
 				SessionID:          sessionID,
 				SessionInitialized: s.sessionManager.IsInitialized(sessionID),
+				MutatingAllowed:    s.sessionManager.IsMutatingAllowed(sessionID),
 			}, s.toolCallOptions()), nil
 		}
 		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
@@ -299,8 +302,10 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 	}
 
 	negotiatedVersion := negotiateProtocolVersion(msg.Params)
+	mutatingAllowed := negotiatedMutatingCapability(msg.Params)
 	if sessionID != "" {
 		s.sessionManager.SetProtocolVersion(sessionID, negotiatedVersion)
+		s.sessionManager.SetMutatingAllowed(sessionID, mutatingAllowed)
 	}
 	result := map[string]any{
 		"type":            string(mcp.TypeInit),
@@ -312,6 +317,9 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
+		},
+		"godot": map[string]any{
+			"mutating": mutatingAllowed,
 		},
 	}
 	if sessionID != "" {
@@ -331,6 +339,8 @@ func (s *Server) handleGodotResource(path string) (any, error) {
 		return map[string]any{"name": "godot-mcp", "version": "0.1.0", "type": "godot"}, nil
 	case "godot://policy/godot-checks":
 		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
+	case "godot://runtime/metrics":
+		return runtimebridge.HealthSnapshot(time.Now().UTC()), nil
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}
@@ -406,4 +416,33 @@ func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
 		return params.ProtocolVersion
 	}
 	return preferred
+}
+
+func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {
+	var params struct {
+		Capabilities map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		return false
+	}
+	if len(params.Capabilities) == 0 {
+		return false
+	}
+	rawGodotCaps, exists := params.Capabilities["godot"]
+	if !exists {
+		return false
+	}
+	godotCaps, ok := rawGodotCaps.(map[string]any)
+	if !ok {
+		return false
+	}
+	rawMutating, exists := godotCaps["mutating"]
+	if !exists {
+		return false
+	}
+	mutating, ok := rawMutating.(bool)
+	if !ok {
+		return false
+	}
+	return mutating
 }

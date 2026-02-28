@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
@@ -18,6 +21,7 @@ import (
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
 const promptCatalogLoadConsistencyMaxAttempts = 3
 const promptCatalogNotificationWriteTimeout = 2 * time.Second
+const promptCatalogEventDebounce = 300 * time.Millisecond
 
 var snapshotFingerprintFunc = promptcatalog.SnapshotFingerprint
 
@@ -33,6 +37,32 @@ type promptCatalogSourceSnapshot struct {
 
 func (s *Server) registerRuntimeTools() error {
 	return s.toolManager.RegisterTool(utility.NewReloadPromptCatalogTool(s.reloadPromptCatalog))
+}
+
+func (s *Server) startPromptCatalogWatchers() {
+	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
+		return
+	}
+	if s.promptCatalogWatchMode() == "event" && s.startPromptCatalogEventWatch() {
+		return
+	}
+	s.startPromptCatalogAutoReload()
+}
+
+func (s *Server) stopPromptCatalogWatchers() {
+	s.stopPromptCatalogEventWatch()
+	s.stopPromptCatalogAutoReload()
+}
+
+func (s *Server) promptCatalogWatchMode() string {
+	if s == nil || s.config == nil {
+		return "poll"
+	}
+	mode := strings.ToLower(strings.TrimSpace(s.config.PromptCatalog.Watch.Mode))
+	if mode == "" {
+		return "poll"
+	}
+	return mode
 }
 
 func (s *Server) reloadPromptCatalog() map[string]any {
@@ -102,6 +132,9 @@ func (s *Server) startPromptCatalogAutoReload() {
 	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
 		return
 	}
+	if s.promptCatalogWatchMode() == "event" {
+		return
+	}
 	if !s.config.PromptCatalog.AutoReload.Enabled {
 		return
 	}
@@ -164,6 +197,186 @@ func (s *Server) stopPromptCatalogAutoReload() {
 	if done != nil {
 		<-done
 	}
+}
+
+func (s *Server) startPromptCatalogEventWatch() bool {
+	if s == nil || s.config == nil || s.promptCatalog == nil || !s.promptCatalog.Enabled() {
+		return false
+	}
+	if s.promptCatalogWatchMode() != "event" {
+		return false
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Warn("Prompt catalog event watch unavailable, fallback to polling", "error", err)
+		return false
+	}
+
+	roots := make([]string, 0, len(s.config.PromptCatalog.Paths))
+	for _, raw := range s.config.PromptCatalog.Paths {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		roots = append(roots, trimmed)
+	}
+	if len(roots) == 0 {
+		_ = watcher.Close()
+		return false
+	}
+	for _, root := range roots {
+		if addErr := addPromptCatalogRecursiveWatches(watcher, root); addErr != nil {
+			logger.Warn("Prompt catalog watch root add warning", "root", root, "error", addErr)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	s.stopPromptCatalogEventWatch()
+	s.promptCatalogEventWatchMu.Lock()
+	s.promptCatalogEventWatchCancel = cancel
+	s.promptCatalogEventWatchDone = done
+	s.promptCatalogEventWatchMu.Unlock()
+
+	logger.Info("Prompt catalog event watch enabled", "roots", len(roots))
+
+	go func() {
+		defer close(done)
+		defer watcher.Close()
+
+		var debounce *time.Timer
+		triggerReload := func() {
+			if debounce == nil {
+				debounce = time.NewTimer(promptCatalogEventDebounce)
+				return
+			}
+			if !debounce.Stop() {
+				select {
+				case <-debounce.C:
+				default:
+				}
+			}
+			debounce.Reset(promptCatalogEventDebounce)
+		}
+		stopDebounce := func() {
+			if debounce == nil {
+				return
+			}
+			if !debounce.Stop() {
+				select {
+				case <-debounce.C:
+				default:
+				}
+			}
+			debounce = nil
+		}
+
+		for {
+			var debounceC <-chan time.Time
+			if debounce != nil {
+				debounceC = debounce.C
+			}
+			select {
+			case <-ctx.Done():
+				stopDebounce()
+				return
+			case event, ok := <-watcher.Events:
+				if !ok {
+					stopDebounce()
+					return
+				}
+				if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) == 0 {
+					continue
+				}
+				if event.Op&fsnotify.Create != 0 {
+					if stat, statErr := os.Stat(event.Name); statErr == nil && stat.IsDir() {
+						_ = addPromptCatalogRecursiveWatches(watcher, event.Name)
+					}
+				}
+				triggerReload()
+			case err, ok := <-watcher.Errors:
+				if !ok {
+					stopDebounce()
+					return
+				}
+				logger.Warn("Prompt catalog watcher error", "error", err)
+			case <-debounceC:
+				if result, changed := s.reloadPromptCatalogIfSourcesChanged(); changed {
+					logger.Info("Prompt catalog event reload completed",
+						"changed", result["changed"],
+						"prompt_count", result["promptCount"],
+						"status", result["status"],
+					)
+				}
+				stopDebounce()
+			}
+		}
+	}()
+
+	return true
+}
+
+func (s *Server) stopPromptCatalogEventWatch() {
+	if s == nil {
+		return
+	}
+
+	s.promptCatalogEventWatchMu.Lock()
+	cancel := s.promptCatalogEventWatchCancel
+	done := s.promptCatalogEventWatchDone
+	s.promptCatalogEventWatchCancel = nil
+	s.promptCatalogEventWatchDone = nil
+	s.promptCatalogEventWatchMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func addPromptCatalogRecursiveWatches(watcher *fsnotify.Watcher, root string) error {
+	if watcher == nil {
+		return fmt.Errorf("watcher is nil")
+	}
+	if strings.TrimSpace(root) == "" {
+		return nil
+	}
+
+	expandedRoot := root
+	if strings.HasPrefix(root, "~") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			if root == "~" {
+				expandedRoot = home
+			} else if strings.HasPrefix(root, "~/") {
+				expandedRoot = filepath.Join(home, root[2:])
+			}
+		}
+	}
+
+	info, err := os.Stat(expandedRoot)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	return filepath.WalkDir(expandedRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if err := watcher.Add(path); err != nil {
+			return nil
+		}
+		return nil
+	})
 }
 
 func (s *Server) reloadPromptCatalogIfSourcesChanged() (map[string]any, bool) {

@@ -33,17 +33,18 @@ func _enter_tree():
     mcp_interface.set_mcp_client(mcp_client)
 
     # Connect signals.
-    mcp_client.connected.connect(Callable(self, "_on_mcp_connected"))
-    mcp_client.disconnected.connect(Callable(self, "_on_mcp_disconnected"))
-    mcp_client.error.connect(Callable(self, "_on_mcp_error"))
-    mcp_client.message_received.connect(Callable(self, "_on_mcp_message_received"))
-    mcp_interface.runtime_sync_failed.connect(Callable(self, "_on_runtime_sync_failed"))
-    mcp_interface.runtime_command_received.connect(Callable(self, "_on_runtime_command_received"))
+    mcp_client.connected.connect(Callable(self , "_on_mcp_connected"))
+    mcp_client.disconnected.connect(Callable(self , "_on_mcp_disconnected"))
+    mcp_client.error.connect(Callable(self , "_on_mcp_error"))
+    mcp_client.message_received.connect(Callable(self , "_on_mcp_message_received"))
+    mcp_interface.runtime_sync_failed.connect(Callable(self , "_on_runtime_sync_failed"))
+    mcp_interface.runtime_command_received.connect(Callable(self , "_on_runtime_command_received"))
+    mcp_interface.tool_result.connect(Callable(self , "_on_mcp_tool_result"))
 
     # Create settings dialog.
     settings_dialog = preload("res://addons/godot_mcp/mcp_settings_dialog.tscn").instantiate()
     add_child(settings_dialog)
-    settings_dialog.connect("settings_saved", Callable(self, "_on_settings_saved"))
+    settings_dialog.connect("settings_saved", Callable(self , "_on_settings_saved"))
 
     # Add toolbar menu item.
     add_tool_menu_item("MCP Settings", _on_settings_pressed)
@@ -89,6 +90,7 @@ func _exit_tree():
     _disconnect_signal_if_connected(mcp_client, "message_received", "_on_mcp_message_received")
     _disconnect_signal_if_connected(mcp_interface, "runtime_sync_failed", "_on_runtime_sync_failed")
     _disconnect_signal_if_connected(mcp_interface, "runtime_command_received", "_on_runtime_command_received")
+    _disconnect_signal_if_connected(mcp_interface, "tool_result", "_on_mcp_tool_result")
 
     if mcp_client:
         mcp_client.disconnect_from_server()
@@ -105,7 +107,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
     if timer == null:
         return
     timer.stop()
-    var timeout_callable := Callable(self, timeout_handler)
+    var timeout_callable := Callable(self , timeout_handler)
     if timer.timeout.is_connected(timeout_callable):
         timer.timeout.disconnect(timeout_callable)
     timer.queue_free()
@@ -113,7 +115,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 func _disconnect_signal_if_connected(source: Object, signal_name: StringName, handler_name: String) -> void:
     if source == null:
         return
-    var handler := Callable(self, handler_name)
+    var handler := Callable(self , handler_name)
     if source.is_connected(signal_name, handler):
         source.disconnect(signal_name, handler)
 
@@ -121,6 +123,8 @@ func _on_mcp_connected():
     print("Godot MCP Plugin: Connected to MCP server")
     last_snapshot_fingerprint = ""
     _sync_runtime_snapshot(true)
+    if mcp_interface != null and mcp_interface.tools.has("godot-runtime-get-health"):
+        mcp_interface.call_tool("godot-runtime-get-health", {})
 
 func _on_mcp_disconnected():
     print("Godot MCP Plugin: Disconnected from MCP server")
@@ -217,14 +221,24 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
 
     mcp_interface.ack_runtime_command(command_id, false, {}, "Unsupported runtime command: " + command_name)
 
+func _on_mcp_tool_result(tool_name: String, result: Dictionary) -> void:
+    if tool_name != "godot-runtime-get-health":
+        return
+    _apply_runtime_bridge_health(result)
+
 func _ack_runtime_command_with_payload(command_id: String, payload: Dictionary) -> void:
     var success := bool(payload.get("success", false))
     var result: Dictionary = {}
     var raw_result = payload.get("result", {})
     if raw_result is Dictionary:
         result = raw_result
-    var error_message := str(payload.get("error", ""))
-    mcp_interface.ack_runtime_command(command_id, success, result, error_message)
+    var error_message := str(payload.get("error", "")).strip_edges()
+    var reason := str(result.get("reason", "")).strip_edges()
+    var retryable: Variant = null
+    if result.has("retryable") and result["retryable"] is bool:
+        retryable = result["retryable"]
+    var schema_version := str(result.get("schema_version", "v1")).strip_edges()
+    mcp_interface.ack_runtime_command(command_id, success, result, error_message, reason, retryable, schema_version)
 
 func _sync_runtime_snapshot_if_success(payload: Dictionary) -> void:
     if bool(payload.get("success", false)):
@@ -432,10 +446,15 @@ func _handle_script_create(arguments: Dictionary) -> Dictionary:
 
     var script_path = str(arguments.get("path", "")).strip_edges()
     var content = str(arguments.get("content", ""))
+    var replace_existing := false
+    if arguments.has("replace"):
+        if not (arguments.get("replace", null) is bool):
+            return _runtime_failure_result("invalid_replace_type", "replace must be a boolean")
+        replace_existing = bool(arguments.get("replace", false))
     if not _is_safe_res_path(script_path, [".gd", ".rs"]):
         return _runtime_failure_result("invalid_path", "script create requires a safe res:// path with .gd or .rs extension")
-    if FileAccess.file_exists(script_path):
-        return _runtime_failure_result("script_already_exists", "script file already exists: " + script_path)
+    if FileAccess.file_exists(script_path) and not replace_existing:
+        return _runtime_failure_result("script_exists_requires_replace", "script file already exists and replace=false: " + script_path)
 
     var mkdir_err = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(script_path.get_base_dir()))
     if mkdir_err != OK:
@@ -450,7 +469,8 @@ func _handle_script_create(arguments: Dictionary) -> Dictionary:
 
     return _runtime_success_result({
         "path": script_path,
-        "bytes_written": content.length()
+        "bytes_written": content.length(),
+        "replaced": replace_existing
     })
 
 func _handle_script_modify(arguments: Dictionary) -> Dictionary:
@@ -582,14 +602,14 @@ func _setup_runtime_sync_timers() -> void:
     runtime_heartbeat_timer = Timer.new()
     runtime_heartbeat_timer.one_shot = false
     runtime_heartbeat_timer.wait_time = runtime_heartbeat_seconds
-    runtime_heartbeat_timer.timeout.connect(Callable(self, "_on_runtime_heartbeat_timeout"))
+    runtime_heartbeat_timer.timeout.connect(Callable(self , "_on_runtime_heartbeat_timeout"))
     add_child(runtime_heartbeat_timer)
     runtime_heartbeat_timer.start()
 
     runtime_change_timer = Timer.new()
     runtime_change_timer.one_shot = false
     runtime_change_timer.wait_time = runtime_change_poll_seconds
-    runtime_change_timer.timeout.connect(Callable(self, "_on_runtime_change_timeout"))
+    runtime_change_timer.timeout.connect(Callable(self , "_on_runtime_change_timeout"))
     add_child(runtime_change_timer)
     runtime_change_timer.start()
 
@@ -628,6 +648,27 @@ func _resolve_interval_setting(value: Variant, min_value: float, fallback_value:
     if interval < min_value:
         interval = min_value
     return interval
+
+func _apply_runtime_bridge_health(health: Dictionary) -> void:
+    var freshness = health.get("freshness", {})
+    if not (freshness is Dictionary):
+        return
+
+    var stale_after_ms = int(freshness.get("stale_after_ms", 0))
+    var stale_grace_ms = int(freshness.get("stale_grace_ms", 0))
+    if stale_after_ms <= 0:
+        return
+
+    var effective_window_seconds = float(stale_after_ms + max(0, stale_grace_ms)) / 1000.0
+    var target_heartbeat = clampf(effective_window_seconds / 3.0, MIN_RUNTIME_HEARTBEAT_SECONDS, 10.0)
+    var target_poll = clampf(target_heartbeat / 5.0, MIN_RUNTIME_CHANGE_POLL_SECONDS, 2.0)
+
+    runtime_heartbeat_seconds = target_heartbeat
+    runtime_change_poll_seconds = target_poll
+    if runtime_heartbeat_timer != null:
+        runtime_heartbeat_timer.wait_time = runtime_heartbeat_seconds
+    if runtime_change_timer != null:
+        runtime_change_timer.wait_time = runtime_change_poll_seconds
 
 func _build_runtime_snapshot() -> Dictionary:
     var editor_interface = get_editor_interface()

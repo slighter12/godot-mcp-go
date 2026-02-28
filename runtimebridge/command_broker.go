@@ -84,11 +84,34 @@ type pendingCommand struct {
 	resultCh  chan CommandAck
 }
 
+// CommandBrokerMetrics is a snapshot of runtime command broker observability data.
+type CommandBrokerMetrics struct {
+	DispatchTotal       uint64            `json:"dispatch_total"`
+	AckedTotal          uint64            `json:"acked_total"`
+	TimeoutTotal        uint64            `json:"timeout_total"`
+	TransportErrorTotal uint64            `json:"transport_error_total"`
+	FailureReasons      map[string]uint64 `json:"failure_reasons"`
+	AvgLatencyMS        float64           `json:"avg_latency_ms"`
+	MaxLatencyMS        int64             `json:"max_latency_ms"`
+}
+
+type commandBrokerMetricsState struct {
+	mu                  sync.Mutex
+	dispatchTotal       uint64
+	ackedTotal          uint64
+	timeoutTotal        uint64
+	transportErrorTotal uint64
+	totalLatencyMS      int64
+	maxLatencyMS        int64
+	failureReasons      map[string]uint64
+}
+
 // CommandBroker coordinates server->plugin command round trips.
 type CommandBroker struct {
 	mu             sync.Mutex
 	defaultTimeout time.Duration
 	pending        map[string]pendingCommand
+	metrics        commandBrokerMetricsState
 }
 
 func NewCommandBroker(defaultTimeout time.Duration) *CommandBroker {
@@ -98,6 +121,9 @@ func NewCommandBroker(defaultTimeout time.Duration) *CommandBroker {
 	return &CommandBroker{
 		defaultTimeout: defaultTimeout,
 		pending:        make(map[string]pendingCommand),
+		metrics: commandBrokerMetricsState{
+			failureReasons: make(map[string]uint64),
+		},
 	}
 }
 
@@ -146,8 +172,11 @@ func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, ar
 			"arguments":  arguments,
 		},
 	}
+	startedAt := time.Now().UTC()
+	b.metricsDispatch()
 	if !sendToSession(sessionID, message) {
 		b.remove(commandID)
+		b.metricsFailure("command_transport_unavailable")
 		return CommandAck{}, false, "command_transport_unavailable"
 	}
 
@@ -159,9 +188,11 @@ func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, ar
 		if ack.AckedAt.IsZero() {
 			ack.AckedAt = time.Now().UTC()
 		}
+		b.metricsAcked(ack.AckedAt.Sub(startedAt))
 		return ack, true, ""
 	case <-timer.C:
 		b.remove(commandID)
+		b.metricsFailure("command_ack_timeout")
 		return CommandAck{}, false, "command_ack_timeout"
 	}
 }
@@ -210,4 +241,68 @@ func (b *CommandBroker) remove(commandID string) {
 func nextCommandID() string {
 	seq := commandSeq.Add(1)
 	return fmt.Sprintf("cmd_%d_%s", time.Now().UTC().UnixNano(), strconv.FormatUint(seq, 10))
+}
+
+func (b *CommandBroker) Metrics() CommandBrokerMetrics {
+	if b == nil {
+		return CommandBrokerMetrics{
+			FailureReasons: map[string]uint64{},
+		}
+	}
+
+	b.metrics.mu.Lock()
+	defer b.metrics.mu.Unlock()
+
+	out := CommandBrokerMetrics{
+		DispatchTotal:       b.metrics.dispatchTotal,
+		AckedTotal:          b.metrics.ackedTotal,
+		TimeoutTotal:        b.metrics.timeoutTotal,
+		TransportErrorTotal: b.metrics.transportErrorTotal,
+		FailureReasons:      make(map[string]uint64, len(b.metrics.failureReasons)),
+		AvgLatencyMS:        0,
+		MaxLatencyMS:        b.metrics.maxLatencyMS,
+	}
+	for reason, count := range b.metrics.failureReasons {
+		out.FailureReasons[reason] = count
+	}
+	if b.metrics.ackedTotal > 0 {
+		out.AvgLatencyMS = float64(b.metrics.totalLatencyMS) / float64(b.metrics.ackedTotal)
+	}
+	return out
+}
+
+func (b *CommandBroker) metricsDispatch() {
+	b.metrics.mu.Lock()
+	defer b.metrics.mu.Unlock()
+	b.metrics.dispatchTotal = b.metrics.dispatchTotal + 1
+}
+
+func (b *CommandBroker) metricsAcked(latency time.Duration) {
+	if latency < 0 {
+		latency = 0
+	}
+	latencyMS := latency.Milliseconds()
+	b.metrics.mu.Lock()
+	defer b.metrics.mu.Unlock()
+	b.metrics.ackedTotal = b.metrics.ackedTotal + 1
+	b.metrics.totalLatencyMS = b.metrics.totalLatencyMS + latencyMS
+	if latencyMS > b.metrics.maxLatencyMS {
+		b.metrics.maxLatencyMS = latencyMS
+	}
+}
+
+func (b *CommandBroker) metricsFailure(reason string) {
+	trimmedReason := strings.TrimSpace(reason)
+	if trimmedReason == "" {
+		trimmedReason = "unknown"
+	}
+	b.metrics.mu.Lock()
+	defer b.metrics.mu.Unlock()
+	b.metrics.failureReasons[trimmedReason] = b.metrics.failureReasons[trimmedReason] + 1
+	switch trimmedReason {
+	case "command_transport_unavailable":
+		b.metrics.transportErrorTotal = b.metrics.transportErrorTotal + 1
+	case "command_ack_timeout":
+		b.metrics.timeoutTotal = b.metrics.timeoutTotal + 1
+	}
 }

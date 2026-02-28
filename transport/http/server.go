@@ -40,6 +40,10 @@ type Server struct {
 	promptCatalogAutoReloadMu     sync.Mutex
 	promptCatalogAutoReloadCancel context.CancelFunc
 	promptCatalogAutoReloadDone   chan struct{}
+
+	promptCatalogEventWatchMu     sync.Mutex
+	promptCatalogEventWatchCancel context.CancelFunc
+	promptCatalogEventWatchDone   chan struct{}
 }
 
 func NewServer(cfg *config.Config) *Server {
@@ -50,16 +54,20 @@ func NewServer(cfg *config.Config) *Server {
 		config:         cfg,
 		echo:           echo.New(),
 	}
+	runtimebridge.DefaultStore().ConfigureFreshness(
+		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
+		time.Duration(cfg.RuntimeBridge.StaleGraceMS)*time.Millisecond,
+	)
 	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToSession)
 	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
 	return server
 }
 
 func (s *Server) Start() error {
-	s.stopPromptCatalogAutoReload()
+	s.stopPromptCatalogWatchers()
 	s.initializePromptCatalog()
-	s.startPromptCatalogAutoReload()
-	defer s.stopPromptCatalogAutoReload()
+	s.startPromptCatalogWatchers()
+	defer s.stopPromptCatalogWatchers()
 	s.toolManager.RegisterDefaultTools()
 	if err := s.registerRuntimeTools(); err != nil {
 		logger.Error("Failed to register runtime tools", "error", err)
@@ -233,9 +241,17 @@ func (s *Server) promptRenderOptions() shared.PromptRenderOptions {
 	if s == nil || s.config == nil {
 		return shared.DefaultPromptRenderOptions()
 	}
+	governanceRoots := make([]shared.PromptGovernanceRoot, 0, len(s.config.PromptCatalog.Governance.Roots))
+	for _, root := range s.config.PromptCatalog.Governance.Roots {
+		governanceRoots = append(governanceRoots, shared.PromptGovernanceRoot{
+			Path: root.Path,
+			Tier: root.Tier,
+		})
+	}
 	return shared.PromptRenderOptions{
 		Mode:                   s.config.PromptCatalog.Rendering.Mode,
 		RejectUnknownArguments: s.config.PromptCatalog.Rendering.RejectUnknownArguments,
+		GovernanceRoots:        governanceRoots,
 	}
 }
 

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/slighter12/godot-mcp-go/logger"
@@ -31,25 +33,47 @@ type promptsGetParams struct {
 type PromptRenderOptions struct {
 	Mode                   string
 	RejectUnknownArguments bool
+	GovernanceRoots        []PromptGovernanceRoot
+}
+
+type PromptGovernanceRoot struct {
+	Path string
+	Tier string
 }
 
 type ToolCallContext struct {
 	SessionID          string
 	SessionInitialized bool
+	MutatingAllowed    bool
 }
 
 const (
-	PromptRenderingModeLegacy = "legacy"
-	PromptRenderingModeStrict = "strict"
-	ToolPermissionAllowAll    = "allow_all"
-	ToolPermissionReadOnly    = "read_only"
-	ToolPermissionAllowList   = "allow_list"
+	PromptRenderingModeLegacy   = "legacy"
+	PromptRenderingModeStrict   = "strict"
+	PromptRenderingModeAdvanced = "advanced"
+	ToolPermissionAllowAll      = "allow_all"
+	ToolPermissionReadOnly      = "read_only"
+	ToolPermissionAllowList     = "allow_list"
 )
+
+var errRenderedPromptTooLarge = errors.New("rendered prompt too large")
+
+var advancedTemplateControlTokens = map[string]struct{}{
+	"if":       {},
+	"else":     {},
+	"end":      {},
+	"range":    {},
+	"with":     {},
+	"template": {},
+	"define":   {},
+	"block":    {},
+}
 
 // readOnlyToolNames enumerates tool calls that are allowed when permission_mode=read_only.
 // Unknown tool names are denied by default in read_only mode.
 var readOnlyToolNames = map[string]struct{}{
 	"godot-offerings-list":         {},
+	"godot-runtime-get-health":     {},
 	"godot-project-get-settings":   {},
 	"godot-project-list-resources": {},
 	"godot-editor-get-state":       {},
@@ -61,6 +85,19 @@ var readOnlyToolNames = map[string]struct{}{
 	"godot-script-read":            {},
 	"godot-script-analyze":         {},
 	"godot-runtime-ping":           {},
+}
+
+var mutatingToolNames = map[string]struct{}{
+	"godot-project-run":   {},
+	"godot-project-stop":  {},
+	"godot-scene-create":  {},
+	"godot-scene-save":    {},
+	"godot-scene-apply":   {},
+	"godot-node-create":   {},
+	"godot-node-delete":   {},
+	"godot-node-modify":   {},
+	"godot-script-create": {},
+	"godot-script-modify": {},
 }
 
 type ToolCallOptions struct {
@@ -94,7 +131,7 @@ func normalizePromptRenderOptions(options PromptRenderOptions) PromptRenderOptio
 	if normalized.Mode == "" {
 		normalized.Mode = PromptRenderingModeLegacy
 	}
-	if normalized.Mode != PromptRenderingModeStrict {
+	if normalized.Mode != PromptRenderingModeStrict && normalized.Mode != PromptRenderingModeAdvanced {
 		normalized.Mode = PromptRenderingModeLegacy
 	}
 	return normalized
@@ -258,13 +295,34 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 	}
 
 	normalizedOptions := normalizePromptRenderOptions(options)
-	normalizedArgs := normalizePromptArguments(params.Arguments)
-	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Template, prompt.Arguments, normalizedArgs, normalizedOptions); strictErr != nil {
+	rawArgs := normalizePromptArgumentsRaw(params.Arguments)
+	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Template, prompt.Arguments, rawArgs, normalizedOptions); strictErr != nil {
 		return strictErr
 	}
 
-	renderedPrompt, renderErr := renderPromptTemplate(prompt.Template, normalizedArgs)
+	var renderedPrompt string
+	var renderErr error
+	switch normalizedOptions.Mode {
+	case PromptRenderingModeAdvanced:
+		governanceTier := governanceTierForPrompt(prompt, normalizedOptions)
+		if governanceTier != "trusted" {
+			return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Advanced prompt rendering is blocked by governance policy", "not_supported", map[string]any{
+				"feature": "prompt_catalog",
+				"reason":  "governance_restricted",
+			})
+		}
+		renderedPrompt, renderErr = renderPromptTemplateAdvanced(prompt.Template, rawArgs)
+	default:
+		normalizedArgs := normalizePromptArguments(params.Arguments)
+		renderedPrompt, renderErr = renderPromptTemplate(prompt.Template, normalizedArgs)
+	}
 	if renderErr != nil {
+		if !errors.Is(renderErr, errRenderedPromptTooLarge) {
+			return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt rendering failed", "invalid_params", map[string]any{
+				"field":   "arguments",
+				"problem": "render_error",
+			})
+		}
 		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt arguments produced oversized output", "invalid_params", map[string]any{
 			"field":    "arguments",
 			"problem":  "rendered_prompt_too_large",
@@ -470,6 +528,18 @@ func extractTemplatePlaceholderKeys(template string) []string {
 }
 
 func normalizePromptArguments(arguments map[string]string) map[string]string {
+	normalizedRaw := normalizePromptArgumentsRaw(arguments)
+	if len(normalizedRaw) == 0 {
+		return nil
+	}
+	normalizedArgs := make(map[string]string, len(normalizedRaw))
+	for key, value := range normalizedRaw {
+		normalizedArgs[key] = normalizePromptArgumentValue(value)
+	}
+	return normalizedArgs
+}
+
+func normalizePromptArgumentsRaw(arguments map[string]string) map[string]string {
 	rawKeys := make([]string, 0, len(arguments))
 	for key := range arguments {
 		rawKeys = append(rawKeys, key)
@@ -483,7 +553,7 @@ func normalizePromptArguments(arguments map[string]string) map[string]string {
 			continue
 		}
 		// Deterministic overwrite: later keys in sorted order win for the same trimmed key.
-		normalizedArgs[trimmedKey] = normalizePromptArgumentValue(arguments[key])
+		normalizedArgs[trimmedKey] = strings.ReplaceAll(arguments[key], "\x00", "")
 	}
 	if len(normalizedArgs) == 0 {
 		return nil
@@ -554,10 +624,146 @@ func wrapPromptArgumentValue(key, value string) string {
 
 func appendBounded(builder *strings.Builder, segment string) error {
 	if builder.Len()+len(segment) > maxRenderedPromptBytes {
-		return fmt.Errorf("rendered prompt exceeds %d bytes", maxRenderedPromptBytes)
+		return errRenderedPromptTooLarge
 	}
 	builder.WriteString(segment)
 	return nil
+}
+
+func governanceTierForPrompt(prompt promptcatalog.Prompt, options PromptRenderOptions) string {
+	if len(options.GovernanceRoots) == 0 {
+		return "restricted"
+	}
+	sourcePath := canonicalPromptPath(prompt.SourcePath)
+	bestPath := ""
+	bestTier := "restricted"
+	for _, root := range options.GovernanceRoots {
+		rootPath := canonicalPromptPath(root.Path)
+		if rootPath == "" {
+			continue
+		}
+		rel, err := filepath.Rel(rootPath, sourcePath)
+		if err != nil {
+			continue
+		}
+		if rel != "." && rel != "" && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+			continue
+		}
+		if len(rootPath) < len(bestPath) {
+			continue
+		}
+		bestPath = rootPath
+		tier := strings.ToLower(strings.TrimSpace(root.Tier))
+		if tier == "" {
+			tier = "restricted"
+		}
+		bestTier = tier
+	}
+	return bestTier
+}
+
+func canonicalPromptPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(trimmed)
+	if abs, err := filepath.Abs(cleaned); err == nil {
+		cleaned = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		cleaned = resolved
+	}
+	return filepath.Clean(cleaned)
+}
+
+func renderPromptTemplateAdvanced(templateSource string, args map[string]string) (string, error) {
+	rewritten := rewriteAdvancedPromptTemplate(templateSource)
+	tpl, err := template.New("prompt").
+		Option("missingkey=zero").
+		Funcs(advancedTemplateFuncMap()).
+		Parse(rewritten)
+	if err != nil {
+		return "", err
+	}
+
+	data := map[string]any{
+		"args": args,
+	}
+	for key, value := range args {
+		data[key] = value
+	}
+
+	var b strings.Builder
+	if err := tpl.Execute(&b, data); err != nil {
+		return "", err
+	}
+	if b.Len() > maxRenderedPromptBytes {
+		return "", errRenderedPromptTooLarge
+	}
+	return b.String(), nil
+}
+
+func rewriteAdvancedPromptTemplate(templateSource string) string {
+	matches := promptcatalog.PromptPlaceholderPattern().FindAllStringSubmatchIndex(templateSource, -1)
+	if len(matches) == 0 {
+		return templateSource
+	}
+
+	var b strings.Builder
+	b.Grow(len(templateSource))
+	last := 0
+	for _, match := range matches {
+		if len(match) < 4 {
+			continue
+		}
+		start, end := match[0], match[1]
+		keyStart, keyEnd := match[2], match[3]
+		token := strings.TrimSpace(templateSource[keyStart:keyEnd])
+
+		b.WriteString(templateSource[last:start])
+		switch {
+		case token == "":
+			b.WriteString(templateSource[start:end])
+		case strings.HasPrefix(token, "."):
+			b.WriteString(templateSource[start:end])
+		default:
+			if _, isControlToken := advancedTemplateControlTokens[token]; isControlToken {
+				b.WriteString(templateSource[start:end])
+			} else {
+				b.WriteString("{{ index .args ")
+				b.WriteString(strconv.Quote(token))
+				b.WriteString(" }}")
+			}
+		}
+		last = end
+	}
+	b.WriteString(templateSource[last:])
+	return b.String()
+}
+
+func advancedTemplateFuncMap() template.FuncMap {
+	return template.FuncMap{
+		"upper":     strings.ToUpper,
+		"lower":     strings.ToLower,
+		"title":     strings.Title,
+		"trim":      strings.TrimSpace,
+		"contains":  strings.Contains,
+		"hasPrefix": strings.HasPrefix,
+		"hasSuffix": strings.HasSuffix,
+		"replace": func(input string, old string, newValue string) string {
+			return strings.ReplaceAll(input, old, newValue)
+		},
+		"default": func(value string, fallback string) string {
+			if strings.TrimSpace(value) == "" {
+				return fallback
+			}
+			return value
+		},
+		"join": func(values []string, sep string) string {
+			return strings.Join(values, sep)
+		},
+	}
 }
 
 func BuildToolCallResponse(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error)) *jsonrpc.Response {
@@ -631,6 +837,16 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 		canonicalToolName = tool.Name()
 	}
 	if found && tool != nil {
+		if isMutatingToolName(canonicalToolName) && !callContext.MutatingAllowed {
+			status = "mutating_capability_required"
+			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, tooltypes.NewSemanticError(
+				tooltypes.SemanticKindNotSupported,
+				"Mutating tools require initialize.params.capabilities.godot.mutating=true",
+				map[string]any{
+					"reason": "mutating_capability_required",
+				},
+			)))
+		}
 		if err := validateToolCallPermission(canonicalToolName, options); err != nil {
 			status = "permission_denied"
 			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, err))
@@ -701,6 +917,15 @@ func isReadOnlyToolName(toolName string) bool {
 		return true
 	}
 	_, ok := readOnlyToolNames[trimmed]
+	return ok
+}
+
+func isMutatingToolName(toolName string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(toolName))
+	if trimmed == "" {
+		return false
+	}
+	_, ok := mutatingToolNames[trimmed]
 	return ok
 }
 
@@ -947,6 +1172,11 @@ func defaultResources() []map[string]any {
 		{
 			"uri":      "godot://policy/godot-checks",
 			"name":     "Godot Policy Checks",
+			"mimeType": "application/json",
+		},
+		{
+			"uri":      "godot://runtime/metrics",
+			"name":     "Runtime Metrics",
 			"mimeType": "application/json",
 		},
 	}

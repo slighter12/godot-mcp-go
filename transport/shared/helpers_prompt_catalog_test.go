@@ -818,6 +818,131 @@ func TestBuildToolCallResponseWithOptions_ReadOnlyBlocksMutatingTools(t *testing
 	}
 }
 
+func TestBuildToolCallResponseWithContext_MutatingCapabilityRequired(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-scene-save"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name": "godot-scene-save",
+		"arguments": map[string]any{
+			"input": "ok",
+		},
+	}), manager, nil, ToolCallContext{
+		SessionID:          "session-1",
+		SessionInitialized: true,
+		MutatingAllowed:    false,
+	}, ToolCallOptions{
+		SchemaValidationEnabled: true,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected tool result payload, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustErrorDataMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindNotSupported {
+		t.Fatalf("expected kind not_supported, got %v", errPayload["kind"])
+	}
+	if errPayload["reason"] != "mutating_capability_required" {
+		t.Fatalf("expected reason mutating_capability_required, got %v", errPayload["reason"])
+	}
+}
+
+func TestBuildToolCallResponseWithContext_MutatingAllowedPasses(t *testing.T) {
+	manager := tools.NewManager()
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-scene-save"}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+
+	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
+		"name": "godot-scene-save",
+		"arguments": map[string]any{
+			"input": "ok",
+		},
+	}), manager, nil, ToolCallContext{
+		SessionID:          "session-1",
+		SessionInitialized: true,
+		MutatingAllowed:    true,
+	}, ToolCallOptions{
+		SchemaValidationEnabled: true,
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	if result["isError"] != false {
+		t.Fatalf("expected isError=false, got %v", result["isError"])
+	}
+}
+
+func TestBuildPromptsGetResponseWithOptions_AdvancedRestrictedByDefault(t *testing.T) {
+	reg := promptcatalog.NewRegistry(true)
+	reg.RegisterPrompt(promptcatalog.Prompt{
+		Name:       "demo",
+		Template:   "Hello {{name}}",
+		SourcePath: "/tmp/skill/SKILL.md",
+	})
+
+	resp := BuildPromptsGetResponseWithOptions(mustRequest(t, "prompts/get", map[string]any{
+		"name": "demo",
+		"arguments": map[string]string{
+			"name": "world",
+		},
+	}), reg, PromptRenderOptions{
+		Mode: PromptRenderingModeAdvanced,
+	})
+	if resp == nil || resp.Error == nil {
+		t.Fatalf("expected JSON-RPC semantic error, got %+v", resp)
+	}
+	errData := mustErrorDataMap(t, resp.Error.Data)
+	if errData["kind"] != "not_supported" {
+		t.Fatalf("expected kind not_supported, got %v", errData["kind"])
+	}
+	if errData["reason"] != "governance_restricted" {
+		t.Fatalf("expected reason governance_restricted, got %v", errData["reason"])
+	}
+}
+
+func TestBuildPromptsGetResponseWithOptions_AdvancedTrustedRenders(t *testing.T) {
+	reg := promptcatalog.NewRegistry(true)
+	reg.RegisterPrompt(promptcatalog.Prompt{
+		Name:       "demo",
+		Template:   "Hello {{name}}",
+		SourcePath: "/tmp/trusted/skill/SKILL.md",
+	})
+
+	resp := BuildPromptsGetResponseWithOptions(mustRequest(t, "prompts/get", map[string]any{
+		"name": "demo",
+		"arguments": map[string]string{
+			"name": "world",
+		},
+	}), reg, PromptRenderOptions{
+		Mode: PromptRenderingModeAdvanced,
+		GovernanceRoots: []PromptGovernanceRoot{
+			{Path: "/tmp/trusted", Tier: "trusted"},
+		},
+	})
+	if resp == nil || resp.Error != nil {
+		t.Fatalf("expected success response, got %+v", resp)
+	}
+	result := mustResultMap(t, resp)
+	messages, ok := result["messages"].([]map[string]any)
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one message, got %T %v", result["messages"], result["messages"])
+	}
+	content, ok := messages[0]["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected content map, got %T", messages[0]["content"])
+	}
+	if content["text"] != "Hello world" {
+		t.Fatalf("expected rendered text 'Hello world', got %v", content["text"])
+	}
+}
+
 func TestBuildResourcesReadResponse_PolicyMetadata(t *testing.T) {
 	readResource := func(uri string) (any, error) {
 		if uri != "godot://policy/godot-checks" {

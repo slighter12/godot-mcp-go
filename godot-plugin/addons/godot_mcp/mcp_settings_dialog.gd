@@ -58,4 +58,4 @@ func _on_ok_pressed():
         print("MCP Settings: Configuration saved successfully")
         emit_signal("settings_saved", target_url)
     else:
-        print("MCP Settings: Failed to save configuration") 
+        print("MCP Settings: Failed to save configuration")

@@ -208,7 +208,7 @@ func _handle_tools_list_result(result: Variant):
     if listed_tools is Array:
         for tool in listed_tools:
             if tool is Dictionary and tool.has("name"):
-                tools_refresh_buffer[str(tool["name"])] = tool
+                tools_refresh_buffer[str(tool ["name"])] = tool
 
     var next_cursor_value = result_dict.get("nextCursor", "")
     var next_cursor = str(next_cursor_value).strip_edges()
@@ -219,6 +219,11 @@ func _handle_tools_list_result(result: Variant):
     tools = tools_refresh_buffer.duplicate(true)
     tools_refresh_buffer.clear()
     tools_request_in_progress = false
+    if tools.has("godot-runtime-get-health"):
+        _send_tools_call_request("godot-runtime-get-health", {}, {
+            "kind": "tool_call",
+            "tool_name": "godot-runtime-get-health"
+        })
 
 func _handle_tool_call_result(result: Variant, pending: Dictionary):
     var tool_name = str(pending.get("tool_name", ""))

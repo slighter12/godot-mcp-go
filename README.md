@@ -1,120 +1,96 @@
 # Godot MCP Go Server
 
-A Go-based implementation of the Model Context Protocol (MCP) server for Godot, providing seamless integration between Godot and AI assistants like Claude and Cursor.
-
-This project is based on the design of [ee0pdt/Godot-MCP](https://github.com/ee0pdt/Godot-MCP) and implements the MCP protocol in Go, with references to [metoro-io/mcp-golang](https://github.com/metoro-io/mcp-golang) and [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go/blob/main/mcp/utils.go) for protocol implementation details.
+A Go implementation of an MCP server for Godot with `stdio` and Streamable HTTP transports, runtime bridge integration, and prompt catalog support.
 
 ## Features
 
-- **Dual Transport Support**: Both stdio and Streamable HTTP transports
-- **Modern Architecture**: Clean separation of concerns with echo framework
-- **Comprehensive Tool System**: Organized tool categories with interface-based design
-- **Session Management**: Robust session handling for Streamable HTTP
-- **Runtime Bridge**: Godot plugin runtime snapshot sync for editor-state/node read tools
-- **Robust Error Handling**: Comprehensive logging and error management
-- **Easy Configuration**: JSON-based configuration with environment variable support
-
-## Architecture
-
-### Transport Layer
-
-- **stdio**: Direct process communication via standard input/output
-- **Streamable HTTP**: HTTP-based communication (POST-only in this implementation)
-  - POST requests for client-to-server request/notification/response delivery
-  - Session management with unique session IDs
-
-### Tool System
-
-Tools are organized into categories and implement the `types.Tool` interface:
-
-- **Node Tools**: Scene tree manipulation, node properties, creation/deletion
-- **Script Tools**: Script listing/reading/analysis with guarded write operations
-- **Scene Tools**: Scene listing/reading with guarded write operations
-- **Project Tools**: Project settings, resource management, editor state
-- **Utility Tools**: General utilities, offerings, and runtime bridge sync
-
-### Directory Structure
-
-```text
-transport/
-├── http/           # HTTP transport implementation
-│   ├── server.go   # HTTP server with echo framework
-│   ├── router.go   # HTTP routes and handlers
-│   ├── streamable.go # Streamable HTTP transport
-│   └── session.go  # Session management
-├── stdio/          # stdio transport implementation
-│   ├── server.go   # stdio server
-│   └── test.go     # stdio tests
-└── logs/           # Log files
-```
+- Dual transport support: `stdio` and `streamable_http`
+- Canonical `godot-*` tool contract
+- Session-scoped runtime bridge with stale + grace freshness policy
+- Session mutating capability gate (`capabilities.godot.mutating=true`)
+- Prompt catalog with `legacy`, `strict`, and `advanced` rendering modes
+- Prompt source governance tiers (`restricted`, `trusted`)
+- Prompt source watch modes (`poll`, `event` with fallback)
+- Runtime observability:
+  - tool: `godot-runtime-get-health`
+  - resource: `godot://runtime/metrics`
+- Tool controls: schema validation, unknown argument rejection, permission policy, progress notifications
 
 ## Prerequisites
 
-- Go 1.26 or later
+- Go 1.26+
 - Godot 4.x
-- Basic understanding of the Model Context Protocol
 
 ## Installation
 
-1. Clone the repository:
+```bash
+git clone https://github.com/slighter12/godot-mcp-go.git
+cd godot-mcp-go
+go mod tidy
+go build
+```
 
-   ```bash
-   git clone https://github.com/slighter12/godot-mcp-go.git
-   cd godot-mcp-go
-   ```
+Link plugin into your Godot project:
 
-2. Install dependencies:
-
-   ```bash
-   go mod tidy
-   ```
-
-3. Build the server:
-
-   ```bash
-   go build
-   ```
-
-4. Link the MCP plugin to your Godot project:
-
-   ```bash
-   # Create the addons directory if it doesn't exist
-   mkdir -p /path/to/your/godot/project/addons
-   
-   # Create a symbolic link to the MCP plugin
-   ln -s /path/to/godot-mcp-go/godot-plugin /path/to/your/godot/project/addons/godot_mcp
-   ```
+```bash
+mkdir -p /path/to/project/addons
+ln -s /path/to/godot-mcp-go/godot-plugin /path/to/project/addons/godot_mcp
+```
 
 ## Usage
 
-### Streamable HTTP Mode (Default)
+### Streamable HTTP (default)
 
-1. Start the server:
+```bash
+./godot-mcp-go
+```
 
-   ```bash
-   ./godot-mcp-go
-   ```
+Endpoints:
 
-2. The server will be available at:
-   - MCP endpoint: `http://localhost:9080/mcp`
-   - HTTP info endpoint: `http://localhost:9080`
+- MCP: `http://localhost:9080/mcp`
+- Info: `http://localhost:9080/`
 
-### Stdio Mode
+### Stdio
 
-1. Start the server with stdio mode:
+```bash
+MCP_USE_STDIO=true ./godot-mcp-go
+```
 
-   ```bash
-   MCP_USE_STDIO=true ./godot-mcp-go
-   ```
+## Mutating Capability Negotiation
 
-### Godot Plugin Transport Note
+Mutating tools are blocked by default. Clients must negotiate during `initialize`:
 
-- The Godot editor plugin currently supports `streamable_http` only.
-- The server still supports both `stdio` and `streamable_http` transports for non-plugin clients.
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "init-1",
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-11-25",
+    "capabilities": {
+      "godot": {
+        "mutating": true
+      }
+    },
+    "clientInfo": {
+      "name": "demo",
+      "version": "0.1.0"
+    }
+  }
+}
+```
+
+Without this capability, mutating calls return semantic `not_supported` with `reason=mutating_capability_required`.
 
 ## Configuration
 
-The server can be configured through `config/mcp_config.json`:
+Default config path resolution order:
+
+1. `MCP_CONFIG_PATH`
+2. `config/mcp_config.json`
+3. `~/.godot-mcp/config/mcp_config.json`
+
+Default config shape:
 
 ```json
 {
@@ -127,10 +103,7 @@ The server can be configured through `config/mcp_config.json`:
     "debug": false
   },
   "transports": [
-    {
-      "type": "stdio",
-      "enabled": true
-    },
+    { "type": "stdio", "enabled": true },
     {
       "type": "streamable_http",
       "enabled": true,
@@ -151,6 +124,8 @@ The server can be configured through `config/mcp_config.json`:
     "enabled": true,
     "paths": [],
     "allowed_roots": [],
+    "watch": { "mode": "poll" },
+    "governance": { "roots": [] },
     "auto_reload": {
       "enabled": false,
       "interval_seconds": 5
@@ -159,292 +134,134 @@ The server can be configured through `config/mcp_config.json`:
       "mode": "legacy",
       "reject_unknown_arguments": false
     }
-  }
-}
-```
-
-On startup, the server resolves the config path in this order:
-
-1. `MCP_CONFIG_PATH`
-2. `config/mcp_config.json` (project local, if present)
-3. `~/.godot-mcp/config/mcp_config.json`
-
-If the resolved file does not exist, the server creates a default config file at that path.
-
-### Environment Variables
-
-- `MCP_USE_STDIO`: Set to "true" to use stdio transport on the Go server
-- `MCP_DEBUG`: Set to "true" to enable debug mode
-- `MCP_CONFIG_PATH`: Override config file path
-- `MCP_PORT`: Override server port
-- `MCP_HOST`: Override server host
-- `MCP_LOG_LEVEL`: Override log level
-- `MCP_LOG_PATH`: Override log path
-- `MCP_PROMPT_CATALOG_ENABLED`: Enable/disable prompt catalog endpoints
-- `MCP_PROMPT_CATALOG_PATHS`: Comma-separated paths scanned for `SKILL.md`
-- `MCP_PROMPT_CATALOG_ALLOWED_ROOTS`: Comma-separated allow-list roots for discovered `SKILL.md`
-- `MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED`: Enable polling-based prompt catalog reload
-- `MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS`: Poll interval in seconds (`2..300`)
-- `MCP_PROMPT_CATALOG_RENDERING_MODE`: Prompt rendering mode (`legacy` or `strict`)
-- `MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS`: Reject unknown prompt arguments in strict mode
-- `MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED`: Enable pre-dispatch tool argument schema validation
-- `MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS`: Reject unknown tool arguments during schema validation
-- `MCP_TOOL_CONTROLS_PERMISSION_MODE`: Tool permission mode (`allow_all`, `read_only`, `allow_list`)
-- `MCP_TOOL_CONTROLS_ALLOWED_TOOLS`: Comma-separated allow-list when `permission_mode=allow_list`
-- `MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS`: Emit `notifications/tools/progress` for runtime command tools
-
-### Prompt Catalog Runtime Notes
-
-- `prompt_catalog.enabled=false` disables prompt catalog endpoints; `prompts/list` and `prompts/get` return semantic `kind=not_supported`.
-- `godot-prompts-reload` is the manual runtime reload entrypoint exposed through `tools/call`.
-- `notifications/prompts/list_changed` is emitted only when visible prompt metadata changes.
-- `allowed_roots` constrains discovered `SKILL.md` files; if empty, the runtime falls back to `paths`.
-- `rendering.mode=legacy` preserves existing behavior.
-- `rendering.mode=strict` validates required placeholders before rendering, and optionally rejects unknown arguments when `reject_unknown_arguments=true`.
-- `auto_reload.enabled=true` enables polling-based source fingerprint checks (`SKILL.md` path + size + mtime + content SHA-256) and triggers the same reload pipeline as `godot-prompts-reload`.
-
-### Godot Runtime Bridge Notes
-
-- `godot-runtime-sync` is an internal bridge tool used by the Godot plugin to push runtime snapshots.
-- `godot-runtime-ping` is an internal bridge tool used by the plugin heartbeat to refresh snapshot freshness.
-- Runtime snapshots are bound to initialized Streamable HTTP MCP sessions.
-- `godot-editor-get-state`, `godot-node-get-tree`, and `godot-node-get-properties` read from the latest fresh snapshot.
-- When runtime snapshots are missing/stale, Godot-dependent tools return semantic `kind=not_available`.
-- Plugin heartbeat/poll intervals are configurable in `godot-plugin/addons/godot_mcp/config.cfg`:
-  - `runtime_heartbeat_seconds` (default `5.0`)
-  - `runtime_change_poll_seconds` (default `0.5`)
-- Runtime command tools may emit best-effort `notifications/tools/progress` over SSE (`tools/call` lifecycle remains request/response).
-
-### Tool Controls
-
-`tool_controls` config controls server-side enforcement before tool execution:
-
-```json
-{
+  },
   "tool_controls": {
     "schema_validation_enabled": true,
     "reject_unknown_arguments": false,
     "permission_mode": "allow_all",
     "allowed_tools": [],
     "emit_progress_notifications": true
+  },
+  "runtime_bridge": {
+    "stale_after_seconds": 10,
+    "stale_grace_ms": 1500
   }
 }
 ```
 
-- `schema_validation_enabled=true`: validates required fields and JSON types from each tool `inputSchema`
-- `reject_unknown_arguments=true`: rejects extra top-level arguments not defined in `inputSchema.properties`
-- `permission_mode=read_only`: blocks mutating tool operations
-- `permission_mode=allow_list`: only tools listed in `allowed_tools` are executable
+### Environment Variables
+
+- `MCP_USE_STDIO`
+- `MCP_DEBUG`
+- `MCP_CONFIG_PATH`
+- `MCP_PORT`
+- `MCP_HOST`
+- `MCP_LOG_LEVEL`
+- `MCP_LOG_PATH`
+- `MCP_PROMPT_CATALOG_ENABLED`
+- `MCP_PROMPT_CATALOG_PATHS`
+- `MCP_PROMPT_CATALOG_ALLOWED_ROOTS`
+- `MCP_PROMPT_CATALOG_WATCH_MODE` (`poll` or `event`)
+- `MCP_PROMPT_CATALOG_GOVERNANCE_ROOTS` (CSV: `path:tier,path:tier`)
+- `MCP_PROMPT_CATALOG_AUTO_RELOAD_ENABLED`
+- `MCP_PROMPT_CATALOG_AUTO_RELOAD_INTERVAL_SECONDS`
+- `MCP_PROMPT_CATALOG_RENDERING_MODE` (`legacy`, `strict`, `advanced`)
+- `MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS`
+- `MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED`
+- `MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS`
+- `MCP_TOOL_CONTROLS_PERMISSION_MODE` (`allow_all`, `read_only`, `allow_list`)
+- `MCP_TOOL_CONTROLS_ALLOWED_TOOLS`
+- `MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS`
+- `MCP_RUNTIME_BRIDGE_STALE_AFTER_SECONDS`
+- `MCP_RUNTIME_BRIDGE_STALE_GRACE_MS`
 
 ## Available Tools
 
-Only canonical v1 names are supported.
-Calls using legacy tool names are rejected with `tool not found`.
-Mutating runtime tools require Streamable HTTP session context and an active Godot plugin bridge.
+### Scene
 
-### Scene Tools
+- `godot-scene-list`
+- `godot-scene-read`
+- `godot-scene-create`
+- `godot-scene-save`
+- `godot-scene-apply`
 
-- `godot-scene-list`: Lists `.tscn` files and returns both scene names and `scene_paths`
-- `godot-scene-read`: Reads scene content and returns lightweight node metadata
-- `godot-scene-create`: Creates a scene through runtime command bridge
-- `godot-scene-save`: Saves current edited scene through runtime command bridge
-- `godot-scene-apply`: Opens a target scene through runtime command bridge
+### Node
 
-### Node Tools
+- `godot-node-get-tree`
+- `godot-node-get-properties`
+- `godot-node-create`
+- `godot-node-delete`
+- `godot-node-modify`
 
-- `godot-node-get-tree`: Returns compact runtime scene tree snapshot
-- `godot-node-get-properties`: Returns whitelisted runtime node details (`path/name/type/owner/script/groups/child_count`)
-- `godot-node-create`: Creates a node through runtime command bridge
-- `godot-node-delete`: Deletes a node through runtime command bridge
-- `godot-node-modify`: Modifies node properties through runtime command bridge
+### Script
 
-### Script Tools
+- `godot-script-list`
+- `godot-script-read`
+- `godot-script-create` (`replace` optional, default `false`)
+- `godot-script-modify`
+- `godot-script-analyze`
 
-- `godot-script-list`: Lists `.gd` and `.rs` scripts with canonical `script_paths`
-- `godot-script-read`: Reads script file content
-- `godot-script-modify`: Modifies script content through runtime command bridge
-- `godot-script-create`: Creates scripts through runtime command bridge
-- `godot-script-analyze`: Returns basic static analysis (line/function counts)
+### Project
 
-### Project Tools
+- `godot-project-get-settings` (paginated)
+- `godot-project-list-resources` (paginated)
+- `godot-editor-get-state`
+- `godot-project-run`
+- `godot-project-stop`
 
-- `godot-project-get-settings`: Gets project settings
-- `godot-project-list-resources`: Lists all resources in the project
-- `godot-editor-get-state`: Gets runtime root summary (`active_scene`, `active_script`, root context)
-- `godot-project-run`: Requests Godot editor to run the project through runtime command bridge
-- `godot-project-stop`: Requests Godot editor to stop running project through runtime command bridge
+### Utility
 
-### Utility Tools
+- `godot-offerings-list`
+- `godot-runtime-get-health`
+- `godot-runtime-sync` (internal)
+- `godot-runtime-ping` (internal)
+- `godot-runtime-ack` (internal)
+- `godot-prompts-reload`
 
-- `godot-offerings-list`: Lists server offerings
-- `godot-runtime-sync`: Internal runtime bridge sync endpoint (plugin-driven)
-- `godot-runtime-ping`: Internal runtime bridge heartbeat endpoint (plugin-driven)
-- `godot-runtime-ack`: Internal runtime command acknowledgement endpoint (plugin-driven)
-- `godot-prompts-reload`: Manual prompt catalog reload trigger
+## Resources
 
-## End-to-End Examples
-
-### Example A: Session Initialize + Read Tool
-
-1. Initialize:
-
-```bash
-curl -i -sS \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -X POST http://localhost:9080/mcp \
-  --data '{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"demo","version":"0.1.0"}}}'
-```
-
-1. Send initialized notification (no response body expected):
-
-```bash
-curl -sS -o /dev/null -w "%{http_code}\n" \
-  -H 'Content-Type: application/json' \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
-  -X POST http://localhost:9080/mcp \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-```
-
-1. Call a read tool:
-
-```bash
-curl -sS \
-  -H 'Content-Type: application/json' \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
-  -X POST http://localhost:9080/mcp \
-  --data '{"jsonrpc":"2.0","id":"state-1","method":"tools/call","params":{"name":"godot-editor-get-state","arguments":{}}}'
-```
-
-### Example B: Runtime Mutating Command + Ack Flow
-
-1. Client requests mutating tool:
-
-```bash
-curl -sS \
-  -H 'Content-Type: application/json' \
-  -H 'MCP-Protocol-Version: 2025-11-25' \
-  -H 'MCP-Session-Id: <SESSION_ID_FROM_INIT_HEADER>' \
-  -X POST http://localhost:9080/mcp \
-  --data '{"jsonrpc":"2.0","id":"run-1","method":"tools/call","params":{"name":"godot-project-run","arguments":{}}}'
-```
-
-1. Server sends plugin notification:
-
-- `method=notifications/godot/command`
-- includes `command_id` and runtime command `name`
-
-1. Plugin acknowledges with `godot-runtime-ack` and server returns:
-
-- `success`
-- `command_id`
-- `result`
-- `error`
-- `acknowledged_at`
-- optional `schema_version`, `reason`, `retryable`
-
-### Example C: Permission/Schema Error Semantics
-
-When blocked by `tool_controls` or argument schema checks, tool responses keep MCP `result` shape with:
-
-- `isError=true`
-- `error.kind=not_supported` (permission) or `invalid_params` (schema)
-- structured `error` fields such as `reason`, `problem`, `missing`, `unknown`
-
-## Cursor Configuration
-
-To enable MCP integration with Cursor IDE, create or modify:
-
-`~/.cursor/mcp.json`:
-
-```json
-{
-    "mcpServers": {
-        "godot-mcp": {
-            "type": "streamable_http",
-            "url": "http://localhost:9080/mcp"
-        }
-    }
-}
-```
+- `godot://project/info`
+- `godot://scene/current`
+- `godot://script/current`
+- `godot://policy/godot-checks`
+- `godot://runtime/metrics`
 
 ## Development
 
-### Building and Testing
+### Test and Validation
 
 ```bash
-# Build the project
-go build
-
-# Run tests
 go test ./...
-
-# Run with debug logging
-MCP_DEBUG=true go run main.go
+make test-http-smoke
+make test-http-ping
+make test-http-delete
+make test-http-session-isolation
+make test-inspector-docker
 ```
 
 ### Project Structure
 
 ```text
 godot-mcp-go/
-├── config/          # Configuration management
-├── docs/            # Planning and architecture documents
-├── logger/          # Logging system
-├── mcp/             # MCP protocol implementation
-├── promptcatalog/   # Prompt catalog discovery and policy metadata
-├── runtimebridge/   # Godot editor runtime snapshot store
-├── tools/           # Tool system implementation
-│   ├── node/        # Node-related tools
-│   ├── script/      # Script-related tools
-│   ├── scene/       # Scene-related tools
-│   ├── project/     # Project-related tools
-│   ├── utility/     # Utility tools
-│   └── types/       # Tool interfaces and types
-├── transport/       # Transport layer implementation
-│   ├── http/        # HTTP transport
-│   └── stdio/       # stdio transport
-├── godot-plugin/    # Godot plugin
-└── main.go          # Application entry point
+├── config/
+├── docs/
+├── logger/
+├── mcp/
+├── promptcatalog/
+├── runtimebridge/
+├── tools/
+├── transport/
+├── godot-plugin/
+└── main.go
 ```
 
-### Planning Docs
+## Documentation
 
-- `docs/DEVELOPMENT.md`: Repository-level roadmap and milestone ownership
-- `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`: Prompt catalog runtime contract and delivery phases
-
-### Referenced Skill Sources
-
-- [SkillsMP: godot-gdscript-patterns](https://skillsmp.com/skills/wshobson-agents-plugins-game-development-skills-godot-gdscript-patterns-skill-md)
-- [wshobson/agents: godot-gdscript-patterns SKILL.md](https://raw.githubusercontent.com/wshobson/agents/main/plugins/game-development/skills/godot-gdscript-patterns/SKILL.md)
-- [jwynia/agent-skills: godot-best-practices SKILL.md](https://raw.githubusercontent.com/jwynia/agent-skills/main/skills/tech/game-development/godot/godot-best-practices/SKILL.md)
-- [bfollington/terma: godot SKILL.md](https://raw.githubusercontent.com/bfollington/terma/main/plugins/tsal/skills/godot/SKILL.md)
+- `docs/DEVELOPMENT.md`
+- `docs/V1_TOOL_CONTRACT.md`
+- `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`
+- `docs/INSTALL_UPGRADE.md`
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## References
-
-### Core Technologies
-
-- [Model Context Protocol](https://modelcontextprotocol.io/) - Official MCP documentation
-- [MCP Specification](https://modelcontextprotocol.io/specification/) - Protocol specification
-- [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification) - JSON-RPC protocol
-
-### Frameworks and Libraries
-
-- [Echo Framework](https://echo.labstack.com/) - HTTP web framework for Go
-- [Godot Engine](https://godotengine.org/) - Game engine and editor
-
-### Related Projects
-
-- [ee0pdt/Godot-MCP](https://github.com/ee0pdt/Godot-MCP) - Original Godot MCP implementation
-- [metoro-io/mcp-golang](https://github.com/metoro-io/mcp-golang) - Go MCP reference implementation
-- [mark3labs/mcp-go](https://github.com/mark3labs/mcp-go) - Another Go MCP implementation
+MIT. See `LICENSE`.

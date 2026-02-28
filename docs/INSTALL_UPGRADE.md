@@ -10,33 +10,41 @@ go build
 
 1. Place or link plugin into your Godot project `addons/godot_mcp`.
 
-2. Start server (default streamable HTTP):
+2. Start server (default Streamable HTTP):
 
 ```bash
 ./godot-mcp-go
 ```
 
-## Upgrade to v1 Canonical Tools
+## Upgrade (Current v1 line)
 
-v1 introduces canonical `godot-*` tool names.
+Current line introduces the following compatibility changes:
 
-Recommended client migration:
-
-1. Switch tool calls to canonical names from `tools/list`.
-2. Remove legacy tool-name fallbacks from clients/plugins.
-3. Handle semantic `error.kind` values explicitly.
-
-After this upgrade, legacy tool names fail with `tool not found`.
+1. Mutating tools require capability negotiation:
+   - Send `initialize.params.capabilities.godot.mutating=true`
+2. `godot-script-create` supports `replace` (default `false`)
+   - Existing file + `replace=false` returns conflict semantic reason
+3. Prompt rendering mode adds `advanced` with governance enforcement
+4. Runtime observability is exposed through:
+   - tool: `godot-runtime-get-health`
+   - resource: `godot://runtime/metrics`
+5. Project tools now return real paginated payloads:
+   - `godot-project-get-settings`
+   - `godot-project-list-resources`
 
 ## Transport Notes
 
-- Mutating runtime tools require `streamable_http` and initialized session context.
-- `stdio` mutating calls that depend on runtime bridge return `not_available`.
-- Runtime command progress notifications (`notifications/tools/progress`) are best-effort SSE notifications.
+- Runtime mutating tools require:
+  - `streamable_http`
+  - initialized session
+  - mutating capability negotiation
+  - active runtime bridge
+- `stdio` supports read/non-runtime operations.
+- Progress notifications (`notifications/tools/progress`) are best-effort.
 
-## Tool Controls Upgrade Note
+## Tool Controls
 
-`tool_controls` is optional and defaults to permissive behavior (`allow_all` + schema validation on).
+`tool_controls` defaults remain permissive:
 
 ```json
 {
@@ -50,7 +58,35 @@ After this upgrade, legacy tool names fail with `tool not found`.
 }
 ```
 
-Set `permission_mode=read_only` or `allow_list` for stricter runtime policies.
+## Prompt Catalog Config Additions
+
+```json
+{
+  "prompt_catalog": {
+    "watch": { "mode": "poll" },
+    "governance": {
+      "roots": [
+        { "path": "/abs/path/to/trusted/skills", "tier": "trusted" }
+      ]
+    },
+    "rendering": {
+      "mode": "advanced",
+      "reject_unknown_arguments": false
+    }
+  }
+}
+```
+
+## Runtime Bridge Config Additions
+
+```json
+{
+  "runtime_bridge": {
+    "stale_after_seconds": 10,
+    "stale_grace_ms": 1500
+  }
+}
+```
 
 ## Validation Checklist
 
@@ -59,7 +95,4 @@ Set `permission_mode=read_only` or `allow_list` for stricter runtime policies.
 3. `make test-http-ping`
 4. `make test-http-delete`
 5. `make test-http-session-isolation`
-6. `go test ./transport/http -run TestRuntimeBridgeConcurrentSessionStress -count=1`
-7. `go test ./runtimebridge -run '^$' -bench CommandBroker -benchmem`
-8. `go test ./transport/http -run '^$' -bench HandleMessageGetEditorStateParallel -benchmem`
-9. `make test-inspector-docker` (optional when Docker is available)
+6. `make test-inspector-docker`

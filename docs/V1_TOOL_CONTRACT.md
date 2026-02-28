@@ -1,10 +1,10 @@
 # v1 Tool Contract
 
-This document defines the v1 public tool contract for `godot-mcp-go`.
+This document defines the public tool contract for `godot-mcp-go`.
 
 ## Naming
 
-v1 canonical tool names:
+Canonical tool names:
 
 ### Scene
 
@@ -41,6 +41,7 @@ v1 canonical tool names:
 ### Utility
 
 - `godot-offerings-list`
+- `godot-runtime-get-health`
 - `godot-runtime-sync` (internal bridge)
 - `godot-runtime-ping` (internal bridge)
 - `godot-runtime-ack` (internal bridge)
@@ -48,17 +49,33 @@ v1 canonical tool names:
 
 ## Name Binding Policy
 
-Canonical tool names are strictly required.
-Legacy tool names are rejected with `tool not found`.
+Canonical names are strictly required. Legacy aliases are rejected with `tool not found`.
+
+## Mutating Capability Gate
+
+Mutating tools require session-scoped capability negotiation:
+
+- Client must send `initialize.params.capabilities.godot.mutating=true`
+- Without this capability, mutating tools return semantic error:
+  - `isError=true`
+  - `error.kind=not_supported`
+  - `error.reason=mutating_capability_required`
+
+Mutating tools covered by this gate:
+
+- `godot-project-run`, `godot-project-stop`
+- `godot-scene-create`, `godot-scene-save`, `godot-scene-apply`
+- `godot-node-create`, `godot-node-delete`, `godot-node-modify`
+- `godot-script-create`, `godot-script-modify`
 
 ## Transport Support Matrix
 
 - `streamable_http`
   - Supports all read and mutating tools.
-  - Mutating tools require initialized MCP session and active Godot plugin bridge.
+  - Mutating tools require initialized session + mutating capability + active runtime bridge.
 - `stdio`
-  - Supports non-runtime and read-oriented tool operations.
-  - Mutating runtime tools that require `_mcp` session context return semantic `kind=not_available`.
+  - Supports non-runtime and read-oriented operations.
+  - Runtime mutating command bridge paths are unavailable.
 
 ## Error Semantics
 
@@ -69,11 +86,9 @@ Tool result errors use semantic kinds in `result.error.kind`:
 - `not_available`
 - `execution_failed`
 
-Non-semantic runtime failures are normalized to `execution_failed`.
-
 ## Mutating Tool Result Envelope
 
-Mutating tool success/failure responses include:
+Mutating tool responses include:
 
 - `success`
 - `command_id`
@@ -81,15 +96,53 @@ Mutating tool success/failure responses include:
 - `error`
 - `acknowledged_at`
 
-When present from runtime ack metadata:
+Optional metadata fields when provided by runtime ack:
 
 - `schema_version`
 - `reason`
 - `retryable`
 
+## Project Tool Contracts
+
+### `godot-project-get-settings`
+
+Input:
+
+- optional `cursor`
+- optional `section_prefix`
+
+Output:
+
+- `settings`: array of `{key, section, value, raw}`
+- optional `nextCursor`
+
+### `godot-project-list-resources`
+
+Input:
+
+- optional `cursor`
+- optional `extensions` (array)
+- optional `include_hidden` (boolean)
+
+Output:
+
+- `resources`: array of `{path, extension, size_bytes, modified_at}`
+- optional `nextCursor`
+
+## Script Create Conflict Policy
+
+`godot-script-create` supports:
+
+- `replace` (optional boolean, default `false`)
+
+When target file exists and `replace=false`, response returns semantic conflict reason:
+
+- `error.kind=invalid_params`
+- `error.reason=script_exists_requires_replace`
+
 ## Tool Controls
 
-Runtime `tools/call` behavior can be configured with optional `tool_controls`:
+`tool_controls` fields:
 
 - `schema_validation_enabled`
 - `reject_unknown_arguments`
@@ -97,4 +150,4 @@ Runtime `tools/call` behavior can be configured with optional `tool_controls`:
 - `allowed_tools`
 - `emit_progress_notifications`
 
-Controls are additive and backward-compatible; canonical tool names and result envelope fields are unchanged.
+Controls are additive and do not change canonical naming.
