@@ -425,24 +425,12 @@ func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {
 	if err := json.Unmarshal(paramsRaw, &params); err != nil {
 		return false
 	}
-	if len(params.Capabilities) == 0 {
-		return false
+
+	if godotCaps, ok := params.Capabilities["godot"].(map[string]any); ok {
+		if mutating, ok := godotCaps["mutating"].(bool); ok {
+			return mutating
+		}
 	}
-	rawGodotCaps, exists := params.Capabilities["godot"]
-	if !exists {
-		return false
-	}
-	godotCaps, ok := rawGodotCaps.(map[string]any)
-	if !ok {
-		return false
-	}
-	rawMutating, exists := godotCaps["mutating"]
-	if !exists {
-		return false
-	}
-	mutating, ok := rawMutating.(bool)
-	if !ok {
-		return false
-	}
-	return mutating
+
+	return false
 }

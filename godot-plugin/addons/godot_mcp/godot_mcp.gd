@@ -33,18 +33,18 @@ func _enter_tree():
     mcp_interface.set_mcp_client(mcp_client)
 
     # Connect signals.
-    mcp_client.connected.connect(Callable(self , "_on_mcp_connected"))
-    mcp_client.disconnected.connect(Callable(self , "_on_mcp_disconnected"))
-    mcp_client.error.connect(Callable(self , "_on_mcp_error"))
-    mcp_client.message_received.connect(Callable(self , "_on_mcp_message_received"))
-    mcp_interface.runtime_sync_failed.connect(Callable(self , "_on_runtime_sync_failed"))
-    mcp_interface.runtime_command_received.connect(Callable(self , "_on_runtime_command_received"))
-    mcp_interface.tool_result.connect(Callable(self , "_on_mcp_tool_result"))
+    mcp_client.connected.connect(Callable(self, "_on_mcp_connected"))
+    mcp_client.disconnected.connect(Callable(self, "_on_mcp_disconnected"))
+    mcp_client.error.connect(Callable(self, "_on_mcp_error"))
+    mcp_client.message_received.connect(Callable(self, "_on_mcp_message_received"))
+    mcp_interface.runtime_sync_failed.connect(Callable(self, "_on_runtime_sync_failed"))
+    mcp_interface.runtime_command_received.connect(Callable(self, "_on_runtime_command_received"))
+    mcp_interface.tool_result.connect(Callable(self, "_on_mcp_tool_result"))
 
     # Create settings dialog.
     settings_dialog = preload("res://addons/godot_mcp/mcp_settings_dialog.tscn").instantiate()
     add_child(settings_dialog)
-    settings_dialog.connect("settings_saved", Callable(self , "_on_settings_saved"))
+    settings_dialog.connect("settings_saved", Callable(self, "_on_settings_saved"))
 
     # Add toolbar menu item.
     add_tool_menu_item("MCP Settings", _on_settings_pressed)
@@ -107,7 +107,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
     if timer == null:
         return
     timer.stop()
-    var timeout_callable := Callable(self , timeout_handler)
+    var timeout_callable := Callable(self, timeout_handler)
     if timer.timeout.is_connected(timeout_callable):
         timer.timeout.disconnect(timeout_callable)
     timer.queue_free()
@@ -115,7 +115,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 func _disconnect_signal_if_connected(source: Object, signal_name: StringName, handler_name: String) -> void:
     if source == null:
         return
-    var handler := Callable(self , handler_name)
+    var handler := Callable(self, handler_name)
     if source.is_connected(signal_name, handler):
         source.disconnect(signal_name, handler)
 
@@ -602,14 +602,14 @@ func _setup_runtime_sync_timers() -> void:
     runtime_heartbeat_timer = Timer.new()
     runtime_heartbeat_timer.one_shot = false
     runtime_heartbeat_timer.wait_time = runtime_heartbeat_seconds
-    runtime_heartbeat_timer.timeout.connect(Callable(self , "_on_runtime_heartbeat_timeout"))
+    runtime_heartbeat_timer.timeout.connect(Callable(self, "_on_runtime_heartbeat_timeout"))
     add_child(runtime_heartbeat_timer)
     runtime_heartbeat_timer.start()
 
     runtime_change_timer = Timer.new()
     runtime_change_timer.one_shot = false
     runtime_change_timer.wait_time = runtime_change_poll_seconds
-    runtime_change_timer.timeout.connect(Callable(self , "_on_runtime_change_timeout"))
+    runtime_change_timer.timeout.connect(Callable(self, "_on_runtime_change_timeout"))
     add_child(runtime_change_timer)
     runtime_change_timer.start()
 
