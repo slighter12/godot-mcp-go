@@ -95,27 +95,27 @@ Reference implementation and contracts live in `docs/PROMPT_CATALOG_COMPLETENESS
 - Implement `godot-scene-create`, `godot-scene-save`, `godot-scene-apply` through runtime command bridge.
 - Return deterministic command acknowledgements (success/error/reason) instead of placeholder behavior.
 
-1. Node write pipeline
+2. Node write pipeline
 
 - Implement `godot-node-create`, `godot-node-delete`, `godot-node-modify` with validated request schema and whitelist field updates.
 - Add node path resolution guarantees (exact path first, then deterministic fallback policy if enabled).
 
-1. Script write pipeline
+3. Script write pipeline
 
 - Implement `godot-script-create`, `godot-script-modify` for `.gd` and `.rs` with path safety rules consistent with read tools.
 - Add overwrite/conflict policy (explicit replace flag and clear rejection reasons).
 
-1. Runtime freshness negotiation and resiliency
+4. Runtime freshness negotiation and resiliency
 
 - Expose server-side stale threshold as runtime metadata and align plugin heartbeat automatically.
 - Add jitter-tolerant guardrails so transient timer drift does not cause avoidable `runtime_snapshot_stale`.
 
-1. Runtime bridge observability and safety
+5. Runtime bridge observability and safety
 
 - Add structured metrics for command dispatch latency, ack timeout reason, and stale transitions.
 - Finalize permission model for mutating tools (session-scoped capability gating).
 
-1. Verification expansion
+6. Verification expansion
 
 - Add integration tests covering read/write bridge flows, session loss, stale transitions, and reconnect behavior.
 - Add manual verification script/checklist for end-to-end Godot editor scenarios.

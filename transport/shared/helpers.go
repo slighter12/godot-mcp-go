@@ -46,6 +46,19 @@ const (
 	ToolPermissionAllowList   = "allow_list"
 )
 
+var mutatingToolNameSegments = map[string]struct{}{
+	"create": {},
+	"modify": {},
+	"delete": {},
+	"save":   {},
+	"apply":  {},
+	"run":    {},
+	"stop":   {},
+	"sync":   {},
+	"ack":    {},
+	"reload": {},
+}
+
 type ToolCallOptions struct {
 	SchemaValidationEnabled   bool
 	RejectUnknownArguments    bool
@@ -87,9 +100,6 @@ func normalizeToolCallOptions(options ToolCallOptions) ToolCallOptions {
 	normalized := options
 	normalized.PermissionMode = strings.ToLower(strings.TrimSpace(normalized.PermissionMode))
 	if normalized.PermissionMode == "" {
-		normalized.PermissionMode = ToolPermissionAllowAll
-	}
-	if normalized.PermissionMode != ToolPermissionReadOnly && normalized.PermissionMode != ToolPermissionAllowList {
 		normalized.PermissionMode = ToolPermissionAllowAll
 	}
 	allowed := make([]string, 0, len(normalized.AllowedTools))
@@ -694,7 +704,11 @@ func validateToolCallPermission(toolName string, options ToolCallOptions) *toolt
 			"permission_mode": options.PermissionMode,
 		})
 	default:
-		return nil
+		logger.Warn("Unknown tool permission mode, denying tool call", "permission_mode", options.PermissionMode, "tool", toolName)
+		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by unknown permission policy", map[string]any{
+			"reason":          "permission_denied",
+			"permission_mode": options.PermissionMode,
+		})
 	}
 }
 
@@ -704,20 +718,8 @@ func isReadOnlyToolName(toolName string) bool {
 		return true
 	}
 	segments := strings.Split(trimmed, "-")
-	mutating := map[string]struct{}{
-		"create": {},
-		"modify": {},
-		"delete": {},
-		"save":   {},
-		"apply":  {},
-		"run":    {},
-		"stop":   {},
-		"sync":   {},
-		"ack":    {},
-		"reload": {},
-	}
 	for _, segment := range segments {
-		if _, exists := mutating[segment]; exists {
+		if _, exists := mutatingToolNameSegments[segment]; exists {
 			return false
 		}
 	}

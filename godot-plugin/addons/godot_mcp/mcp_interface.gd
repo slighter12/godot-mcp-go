@@ -208,7 +208,7 @@ func _handle_tools_list_result(result: Variant):
     if listed_tools is Array:
         for tool in listed_tools:
             if tool is Dictionary and tool.has("name"):
-                tools_refresh_buffer[str(tool ["name"])] = tool
+                tools_refresh_buffer[str(tool["name"])] = tool
 
     var next_cursor_value = result_dict.get("nextCursor", "")
     var next_cursor = str(next_cursor_value).strip_edges()
