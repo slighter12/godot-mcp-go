@@ -17,6 +17,8 @@ const (
 	defaultPromptCatalogAutoReloadIntervalSeconds = 5
 	minPromptCatalogAutoReloadIntervalSeconds     = 2
 	maxPromptCatalogAutoReloadIntervalSeconds     = 300
+	defaultRuntimeBridgeStaleAfterSeconds         = 10
+	defaultRuntimeBridgeStaleGraceMS              = 1500
 )
 
 // Config represents the MCP server configuration
@@ -29,6 +31,7 @@ type Config struct {
 	Logging       Logging       `json:"logging"`
 	PromptCatalog PromptCatalog `json:"prompt_catalog"`
 	ToolControls  ToolControls  `json:"tool_controls"`
+	RuntimeBridge RuntimeBridge `json:"runtime_bridge"`
 }
 
 // Server represents server configuration
@@ -58,8 +61,26 @@ type PromptCatalog struct {
 	Enabled      bool                    `json:"enabled"`
 	Paths        []string                `json:"paths"`
 	AllowedRoots []string                `json:"allowed_roots"`
+	Watch        PromptCatalogWatch      `json:"watch"`
+	Governance   PromptCatalogGovernance `json:"governance"`
 	AutoReload   PromptCatalogAutoReload `json:"auto_reload"`
 	Rendering    PromptCatalogRendering  `json:"rendering"`
+}
+
+// PromptCatalogWatch controls source change detection mode.
+type PromptCatalogWatch struct {
+	Mode string `json:"mode"`
+}
+
+// PromptCatalogGovernance controls per-root policy tiers.
+type PromptCatalogGovernance struct {
+	Roots []PromptCatalogGovernanceRoot `json:"roots"`
+}
+
+// PromptCatalogGovernanceRoot defines one governed source root.
+type PromptCatalogGovernanceRoot struct {
+	Path string `json:"path"`
+	Tier string `json:"tier"`
 }
 
 // PromptCatalogAutoReload controls polling-based prompt catalog reload behavior.
@@ -81,6 +102,12 @@ type ToolControls struct {
 	PermissionMode            string   `json:"permission_mode"`
 	AllowedTools              []string `json:"allowed_tools"`
 	EmitProgressNotifications bool     `json:"emit_progress_notifications"`
+}
+
+// RuntimeBridge controls stale detection and grace windows for synced snapshots.
+type RuntimeBridge struct {
+	StaleAfterSeconds int `json:"stale_after_seconds"`
+	StaleGraceMS      int `json:"stale_grace_ms"`
 }
 
 // NewConfig creates a new Config with default values
@@ -123,6 +150,12 @@ func NewConfig() *Config {
 			Enabled:      true,
 			Paths:        []string{},
 			AllowedRoots: []string{},
+			Watch: PromptCatalogWatch{
+				Mode: "poll",
+			},
+			Governance: PromptCatalogGovernance{
+				Roots: []PromptCatalogGovernanceRoot{},
+			},
 			AutoReload: PromptCatalogAutoReload{
 				Enabled:         false,
 				IntervalSeconds: defaultPromptCatalogAutoReloadIntervalSeconds,
@@ -138,6 +171,10 @@ func NewConfig() *Config {
 			PermissionMode:            "allow_all",
 			AllowedTools:              []string{},
 			EmitProgressNotifications: true,
+		},
+		RuntimeBridge: RuntimeBridge{
+			StaleAfterSeconds: defaultRuntimeBridgeStaleAfterSeconds,
+			StaleGraceMS:      defaultRuntimeBridgeStaleGraceMS,
 		},
 	}
 }
@@ -234,6 +271,12 @@ func applyEnvOverrides(cfg *Config) {
 	if renderingMode := os.Getenv("MCP_PROMPT_CATALOG_RENDERING_MODE"); renderingMode != "" {
 		cfg.PromptCatalog.Rendering.Mode = renderingMode
 	}
+	if watchMode := os.Getenv("MCP_PROMPT_CATALOG_WATCH_MODE"); watchMode != "" {
+		cfg.PromptCatalog.Watch.Mode = watchMode
+	}
+	if governanceRoots := os.Getenv("MCP_PROMPT_CATALOG_GOVERNANCE_ROOTS"); governanceRoots != "" {
+		cfg.PromptCatalog.Governance.Roots = parseGovernanceRootsCSV(governanceRoots)
+	}
 
 	applyEnvBoolOverride("MCP_PROMPT_CATALOG_REJECT_UNKNOWN_ARGUMENTS", &cfg.PromptCatalog.Rendering.RejectUnknownArguments)
 
@@ -247,6 +290,9 @@ func applyEnvOverrides(cfg *Config) {
 	if allowedTools := os.Getenv("MCP_TOOL_CONTROLS_ALLOWED_TOOLS"); allowedTools != "" {
 		cfg.ToolControls.AllowedTools = parseCSV(allowedTools)
 	}
+
+	applyEnvIntOverride("MCP_RUNTIME_BRIDGE_STALE_AFTER_SECONDS", &cfg.RuntimeBridge.StaleAfterSeconds)
+	applyEnvIntOverride("MCP_RUNTIME_BRIDGE_STALE_GRACE_MS", &cfg.RuntimeBridge.StaleGraceMS)
 }
 
 func applyEnvBoolOverride(name string, target *bool) {
@@ -290,6 +336,11 @@ func (c *Config) Normalize() {
 	c.Logging.Path = strings.TrimSpace(c.Logging.Path)
 	c.PromptCatalog.Paths = normalizePaths(c.PromptCatalog.Paths)
 	c.PromptCatalog.AllowedRoots = normalizePaths(c.PromptCatalog.AllowedRoots)
+	c.PromptCatalog.Watch.Mode = strings.ToLower(strings.TrimSpace(c.PromptCatalog.Watch.Mode))
+	if c.PromptCatalog.Watch.Mode == "" {
+		c.PromptCatalog.Watch.Mode = "poll"
+	}
+	c.PromptCatalog.Governance.Roots = normalizeGovernanceRoots(c.PromptCatalog.Governance.Roots)
 	c.PromptCatalog.Rendering.Mode = strings.ToLower(strings.TrimSpace(c.PromptCatalog.Rendering.Mode))
 	if c.PromptCatalog.Rendering.Mode == "" {
 		c.PromptCatalog.Rendering.Mode = "legacy"
@@ -305,6 +356,12 @@ func (c *Config) Normalize() {
 	for i := range c.Transports {
 		c.Transports[i].Type = strings.ToLower(strings.TrimSpace(c.Transports[i].Type))
 		c.Transports[i].URL = strings.TrimSpace(c.Transports[i].URL)
+	}
+	if c.RuntimeBridge.StaleAfterSeconds <= 0 {
+		c.RuntimeBridge.StaleAfterSeconds = defaultRuntimeBridgeStaleAfterSeconds
+	}
+	if c.RuntimeBridge.StaleGraceMS < 0 {
+		c.RuntimeBridge.StaleGraceMS = 0
 	}
 }
 
@@ -367,11 +424,32 @@ func (c *Config) Validate() error {
 	}
 
 	validRenderingModes := map[string]bool{
-		"legacy": true,
-		"strict": true,
+		"legacy":   true,
+		"strict":   true,
+		"advanced": true,
 	}
 	if !validRenderingModes[c.PromptCatalog.Rendering.Mode] {
-		return fmt.Errorf("invalid prompt catalog rendering mode: %q (expected one of [legacy strict])", c.PromptCatalog.Rendering.Mode)
+		return fmt.Errorf("invalid prompt catalog rendering mode: %q (expected one of [legacy strict advanced])", c.PromptCatalog.Rendering.Mode)
+	}
+
+	validWatchModes := map[string]bool{
+		"poll":  true,
+		"event": true,
+	}
+	if !validWatchModes[c.PromptCatalog.Watch.Mode] {
+		return fmt.Errorf("invalid prompt catalog watch mode: %q (expected one of [poll event])", c.PromptCatalog.Watch.Mode)
+	}
+	validGovernanceTiers := map[string]bool{
+		"restricted": true,
+		"trusted":    true,
+	}
+	for _, root := range c.PromptCatalog.Governance.Roots {
+		if root.Path == "" {
+			return errors.New("prompt catalog governance root path cannot be empty")
+		}
+		if !validGovernanceTiers[root.Tier] {
+			return fmt.Errorf("invalid prompt catalog governance tier: %q (expected one of [restricted trusted])", root.Tier)
+		}
 	}
 
 	if c.PromptCatalog.AutoReload.IntervalSeconds < minPromptCatalogAutoReloadIntervalSeconds || c.PromptCatalog.AutoReload.IntervalSeconds > maxPromptCatalogAutoReloadIntervalSeconds {
@@ -390,6 +468,13 @@ func (c *Config) Validate() error {
 	}
 	if !validPermissionModes[c.ToolControls.PermissionMode] {
 		return fmt.Errorf("invalid tool controls permission mode: %q (expected one of [allow_all read_only allow_list])", c.ToolControls.PermissionMode)
+	}
+
+	if c.RuntimeBridge.StaleAfterSeconds <= 0 {
+		return fmt.Errorf("invalid runtime bridge stale_after_seconds: %d (must be > 0)", c.RuntimeBridge.StaleAfterSeconds)
+	}
+	if c.RuntimeBridge.StaleGraceMS < 0 {
+		return fmt.Errorf("invalid runtime bridge stale_grace_ms: %d (must be >= 0)", c.RuntimeBridge.StaleGraceMS)
 	}
 
 	return nil
@@ -482,6 +567,53 @@ func normalizeStringList(values []string) []string {
 		}
 		seen[trimmed] = struct{}{}
 		out = append(out, trimmed)
+	}
+	return out
+}
+
+func parseGovernanceRootsCSV(raw string) []PromptCatalogGovernanceRoot {
+	items := parseCSV(raw)
+	out := make([]PromptCatalogGovernanceRoot, 0, len(items))
+	for _, item := range items {
+		path := strings.TrimSpace(item)
+		tier := "restricted"
+		if left, right, ok := strings.Cut(item, ":"); ok {
+			path = strings.TrimSpace(left)
+			if trimmedTier := strings.TrimSpace(right); trimmedTier != "" {
+				tier = trimmedTier
+			}
+		}
+		if path == "" {
+			continue
+		}
+		out = append(out, PromptCatalogGovernanceRoot{
+			Path: path,
+			Tier: tier,
+		})
+	}
+	return out
+}
+
+func normalizeGovernanceRoots(roots []PromptCatalogGovernanceRoot) []PromptCatalogGovernanceRoot {
+	out := make([]PromptCatalogGovernanceRoot, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		path := strings.TrimSpace(root.Path)
+		if path == "" {
+			continue
+		}
+		tier := strings.ToLower(strings.TrimSpace(root.Tier))
+		if tier == "" {
+			tier = "restricted"
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, PromptCatalogGovernanceRoot{
+			Path: path,
+			Tier: tier,
+		})
 	}
 	return out
 }

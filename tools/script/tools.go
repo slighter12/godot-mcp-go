@@ -70,7 +70,7 @@ func (t *ModifyScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}, "content": map[string]any{"type": "string", "description": "New script content"}}, Required: []string{"path", "content"}, Title: "Modify Script"}
 }
 func (t *ModifyScriptTool) Execute(args json.RawMessage) ([]byte, error) {
-	return dispatchScriptRuntimeCommand(args, t.Name(), validateScriptWriteArguments)
+	return dispatchScriptRuntimeCommand(args, t.Name(), validateModifyScriptArguments)
 }
 
 type CreateScriptTool struct{}
@@ -78,10 +78,19 @@ type CreateScriptTool struct{}
 func (t *CreateScriptTool) Name() string        { return "godot-script-create" }
 func (t *CreateScriptTool) Description() string { return "Creates a new script" }
 func (t *CreateScriptTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}, "content": map[string]any{"type": "string", "description": "Script content"}}, Required: []string{"path", "content"}, Title: "Create Script"}
+	return mcp.InputSchema{
+		Type: "object",
+		Properties: map[string]any{
+			"path":    map[string]any{"type": "string", "description": "Script path"},
+			"content": map[string]any{"type": "string", "description": "Script content"},
+			"replace": map[string]any{"type": "boolean", "description": "Allow overwriting existing script when true"},
+		},
+		Required: []string{"path", "content"},
+		Title:    "Create Script",
+	}
 }
 func (t *CreateScriptTool) Execute(args json.RawMessage) ([]byte, error) {
-	return dispatchScriptRuntimeCommand(args, t.Name(), validateScriptWriteArguments)
+	return dispatchScriptRuntimeCommand(args, t.Name(), validateCreateScriptArguments)
 }
 
 type AnalyzeScriptTool struct{}
@@ -139,7 +148,7 @@ func dispatchScriptRuntimeCommand(rawArgs json.RawMessage, commandName string, v
 	})
 }
 
-func validateScriptWriteArguments(arguments map[string]any, toolName string) (map[string]any, error) {
+func validateModifyScriptArguments(arguments map[string]any, toolName string) (map[string]any, error) {
 	path, err := requiredScriptString(arguments, "path", toolName, "missing_path")
 	if err != nil {
 		return nil, err
@@ -156,6 +165,23 @@ func validateScriptWriteArguments(arguments map[string]any, toolName string) (ma
 		"path":    path,
 		"content": content,
 	}, nil
+}
+
+func validateCreateScriptArguments(arguments map[string]any, toolName string) (map[string]any, error) {
+	out, err := validateModifyScriptArguments(arguments, toolName)
+	if err != nil {
+		return nil, err
+	}
+	replace := false
+	if rawReplace, exists := arguments["replace"]; exists {
+		asBool, ok := rawReplace.(bool)
+		if !ok {
+			return nil, newScriptInvalidParamsError("replace must be a boolean", toolName, "invalid_replace_type", nil)
+		}
+		replace = asBool
+	}
+	out["replace"] = replace
+	return out, nil
 }
 
 func requiredScriptString(arguments map[string]any, key, toolName, reason string) (string, error) {

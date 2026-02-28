@@ -2,12 +2,90 @@ package project
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
+
+func TestGetProjectSettingsTool_ReturnsParsedEntries(t *testing.T) {
+	projectRoot := t.TempDir()
+	projectFile := filepath.Join(projectRoot, "project.godot")
+	content := strings.Join([]string{
+		"; comment",
+		"[application]",
+		"config/name=\"Demo\"",
+		"run/main_scene=\"res://scenes/Main.tscn\"",
+		"[physics]",
+		"common/physics_ticks_per_second=60",
+		"",
+	}, "\n")
+	if err := os.WriteFile(projectFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write project.godot: %v", err)
+	}
+
+	t.Setenv("GODOT_PROJECT_ROOT", projectRoot)
+	tool := &GetProjectSettingsTool{}
+	resultRaw, err := tool.Execute(json.RawMessage(`{"section_prefix":"application"}`))
+	if err != nil {
+		t.Fatalf("execute godot-project-get-settings: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	settingsRaw, ok := result["settings"].([]any)
+	if !ok || len(settingsRaw) == 0 {
+		t.Fatalf("expected non-empty settings list, got %T %v", result["settings"], result["settings"])
+	}
+}
+
+func TestListProjectResourcesTool_FiltersByExtension(t *testing.T) {
+	projectRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectRoot, "project.godot"), []byte("[application]\n"), 0644); err != nil {
+		t.Fatalf("write project.godot: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "scenes"), 0755); err != nil {
+		t.Fatalf("mkdir scenes: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectRoot, "scripts"), 0755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "scenes", "Main.tscn"), []byte("[gd_scene]\n"), 0644); err != nil {
+		t.Fatalf("write scene: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "scripts", "Main.gd"), []byte("extends Node\n"), 0644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	t.Setenv("GODOT_PROJECT_ROOT", projectRoot)
+	tool := &ListProjectResourcesTool{}
+	resultRaw, err := tool.Execute(json.RawMessage(`{"extensions":[".gd"]}`))
+	if err != nil {
+		t.Fatalf("execute godot-project-list-resources: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	resourcesRaw, ok := result["resources"].([]any)
+	if !ok || len(resourcesRaw) != 1 {
+		t.Fatalf("expected one filtered resource, got %T %v", result["resources"], result["resources"])
+	}
+	entry, ok := resourcesRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected resource entry map, got %T", resourcesRaw[0])
+	}
+	if entry["extension"] != ".gd" {
+		t.Fatalf("expected extension .gd, got %v", entry["extension"])
+	}
+}
 
 func TestGetEditorStateTool_UsesRuntimeSnapshot(t *testing.T) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)

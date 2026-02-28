@@ -103,3 +103,27 @@ func TestPingEditorRuntimeTool_TouchesSnapshot(t *testing.T) {
 		t.Fatalf("expected snapshot unchanged, got %s", stored.Snapshot.RootSummary.ActiveScene)
 	}
 }
+
+func TestRuntimeHealthTool_ReturnsHealthSnapshot(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+
+	runtimebridge.DefaultStore().Upsert("session-1", runtimebridge.Snapshot{}, time.Now().UTC())
+	tool := NewRuntimeHealthTool()
+
+	resultRaw, err := tool.Execute(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("execute runtime health tool: %v", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if _, ok := result["freshness"].(map[string]any); !ok {
+		t.Fatalf("expected freshness map, got %T", result["freshness"])
+	}
+	if _, ok := result["command_broker"].(map[string]any); !ok {
+		t.Fatalf("expected command_broker map, got %T", result["command_broker"])
+	}
+}

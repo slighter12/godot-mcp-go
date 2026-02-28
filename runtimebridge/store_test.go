@@ -6,7 +6,7 @@ import (
 )
 
 func TestStoreLatestFreshAndStale(t *testing.T) {
-	store := NewStore(10 * time.Second)
+	store := NewStore(10*time.Second, 0)
 	now := time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
 	store.Upsert("session-a", Snapshot{RootSummary: RootSummary{ActiveScene: "res://Main.tscn"}}, now)
 
@@ -28,7 +28,7 @@ func TestStoreLatestFreshAndStale(t *testing.T) {
 }
 
 func TestStoreRemoveSessionUpdatesLatest(t *testing.T) {
-	store := NewStore(10 * time.Second)
+	store := NewStore(10*time.Second, 0)
 	now := time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
 	store.Upsert("session-a", Snapshot{}, now)
 	store.Upsert("session-b", Snapshot{}, now.Add(1*time.Second))
@@ -44,7 +44,7 @@ func TestStoreRemoveSessionUpdatesLatest(t *testing.T) {
 }
 
 func TestStoreTouchRefreshesSnapshot(t *testing.T) {
-	store := NewStore(10 * time.Second)
+	store := NewStore(10*time.Second, 0)
 	now := time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
 	store.Upsert("session-a", Snapshot{
 		RootSummary: RootSummary{ActiveScene: "res://Main.tscn"},
@@ -68,7 +68,7 @@ func TestStoreTouchRefreshesSnapshot(t *testing.T) {
 }
 
 func TestStoreFreshForSession_IsSessionScoped(t *testing.T) {
-	store := NewStore(10 * time.Second)
+	store := NewStore(10*time.Second, 0)
 	now := time.Date(2026, 2, 18, 12, 0, 0, 0, time.UTC)
 
 	store.Upsert("session-a", Snapshot{RootSummary: RootSummary{ActiveScene: "res://A.tscn"}}, now)

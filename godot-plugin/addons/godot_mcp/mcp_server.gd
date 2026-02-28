@@ -95,7 +95,11 @@ func connect_streamable_http(url: String) -> void:
         "method": "initialize",
         "params": {
             "protocolVersion": negotiated_protocol_version,
-            "capabilities": {},
+            "capabilities": {
+                "godot": {
+                    "mutating": true
+                }
+            },
             "clientInfo": {
                 "name": "godot-mcp",
                 "version": "0.1.0"

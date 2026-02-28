@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 )
 
@@ -254,6 +255,25 @@ func TestPromptCatalogAutoReloadLifecycle_StopClearsRunner(t *testing.T) {
 	server.promptCatalogAutoReloadMu.Unlock()
 	if cancel != nil || done != nil {
 		t.Fatal("expected auto-reload runner to be fully cleared after stop")
+	}
+}
+
+func TestAddPromptCatalogRecursiveWatches_PropagatesNilWatcherError(t *testing.T) {
+	if _, err := addPromptCatalogRecursiveWatches(nil, t.TempDir()); err == nil {
+		t.Fatal("expected error for nil watcher")
+	}
+}
+
+func TestAddPromptCatalogRecursiveWatches_PropagatesMissingPathError(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("new watcher: %v", err)
+	}
+	defer watcher.Close()
+
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := addPromptCatalogRecursiveWatches(watcher, missing); err == nil {
+		t.Fatal("expected error for missing path")
 	}
 }
 

@@ -32,6 +32,12 @@
     "enabled": true,
     "paths": [],
     "allowed_roots": [],
+    "watch": {
+      "mode": "poll"
+    },
+    "governance": {
+      "roots": []
+    },
     "auto_reload": {
       "enabled": false,
       "interval_seconds": 5
@@ -47,5 +53,9 @@
     "permission_mode": "allow_all",
     "allowed_tools": [],
     "emit_progress_notifications": true
+  },
+  "runtime_bridge": {
+    "stale_after_seconds": 10,
+    "stale_grace_ms": 1500
   }
 }

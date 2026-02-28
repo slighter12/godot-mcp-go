@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
@@ -195,6 +197,8 @@ func readGodotResource(path string) (any, error) {
 		return map[string]any{"name": "godot-mcp", "version": "0.1.0", "type": "godot"}, nil
 	case "godot://policy/godot-checks":
 		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
+	case "godot://runtime/metrics":
+		return runtimebridge.HealthSnapshot(time.Now().UTC()), nil
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}

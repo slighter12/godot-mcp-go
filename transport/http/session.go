@@ -20,6 +20,7 @@ type Session struct {
 	LastSeen    time.Time
 	Initialized bool
 	ProtocolVer string
+	Mutating    bool
 	Transport   *StreamableHTTPTransport
 }
 
@@ -171,6 +172,32 @@ func (sm *SessionManager) SetProtocolVersion(sessionID string, version string) b
 	session.ProtocolVer = version
 	session.LastSeen = time.Now()
 	return true
+}
+
+// SetMutatingAllowed stores whether this session negotiated mutating tool permission.
+func (sm *SessionManager) SetMutatingAllowed(sessionID string, allowed bool) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	session.Mutating = allowed
+	session.LastSeen = time.Now()
+	return true
+}
+
+// IsMutatingAllowed checks whether a session negotiated mutating tool permission.
+func (sm *SessionManager) IsMutatingAllowed(sessionID string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	return session.Mutating
 }
 
 // GetProtocolVersion returns the negotiated protocol version for a session.
