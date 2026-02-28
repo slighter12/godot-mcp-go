@@ -100,29 +100,6 @@ func normalizePromptRenderOptions(options PromptRenderOptions) PromptRenderOptio
 	return normalized
 }
 
-func normalizeToolCallOptions(options ToolCallOptions) ToolCallOptions {
-	normalized := options
-	normalized.PermissionMode = strings.ToLower(strings.TrimSpace(normalized.PermissionMode))
-	if normalized.PermissionMode == "" {
-		normalized.PermissionMode = ToolPermissionAllowAll
-	}
-	allowed := make([]string, 0, len(normalized.AllowedTools))
-	seen := make(map[string]struct{}, len(normalized.AllowedTools))
-	for _, toolName := range normalized.AllowedTools {
-		trimmed := strings.TrimSpace(toolName)
-		if trimmed == "" {
-			continue
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		allowed = append(allowed, trimmed)
-	}
-	normalized.AllowedTools = allowed
-	return normalized
-}
-
 func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Response {
 	sortedTools := append([]mcp.Tool(nil), tools...)
 	sort.Slice(sortedTools, func(i, j int) bool {
@@ -608,7 +585,6 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 	if toolName == "" {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
 	}
-	options = normalizeToolCallOptions(options)
 	sessionID := strings.TrimSpace(callContext.SessionID)
 	status := "invalid_params"
 	startedAt := time.Now()
@@ -686,8 +662,8 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 }
 
 func validateToolCallPermission(toolName string, options ToolCallOptions) *tooltypes.SemanticError {
-	switch options.PermissionMode {
-	case ToolPermissionAllowAll:
+	switch strings.ToLower(strings.TrimSpace(options.PermissionMode)) {
+	case "", ToolPermissionAllowAll:
 		return nil
 	case ToolPermissionReadOnly:
 		if isReadOnlyToolName(toolName) {
