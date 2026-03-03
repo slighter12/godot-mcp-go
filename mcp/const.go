@@ -9,11 +9,10 @@ type MessageType string
 
 // Message protocol types
 const (
-	TypeInit         MessageType = "init"
-	TypeToolCall     MessageType = "tool_call"
-	TypeResult       MessageType = "result"
-	TypeError        MessageType = "error"
-	TypePing         MessageType = "ping"
-	TypePong         MessageType = "pong"
-	TypeToolProgress MessageType = "tool_progress"
+	TypeInit     MessageType = "init"
+	TypeToolCall MessageType = "tool_call"
+	TypeResult   MessageType = "result"
+	TypeError    MessageType = "error"
+	TypePing     MessageType = "ping"
+	TypePong     MessageType = "pong"
 )

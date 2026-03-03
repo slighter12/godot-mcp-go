@@ -19,6 +19,7 @@ var negotiated_protocol_version: String = DEFAULT_PROTOCOL_VERSION
 
 var is_connected: bool = false
 var request_in_flight: bool = false
+var disconnect_delete_in_flight: bool = false
 var pending_messages: Array[Dictionary] = []
 var pending_connect_url: String = ""
 var ignore_post_result_once: bool = false
@@ -114,6 +115,16 @@ func _on_post_request_completed(result: int, response_code: int, headers: Packed
 
     if ignore_post_result_once:
         ignore_post_result_once = false
+        _flush_reconnect()
+        _flush_pending_messages()
+        return
+
+    if disconnect_delete_in_flight:
+        disconnect_delete_in_flight = false
+        if result != HTTPRequest.RESULT_SUCCESS:
+            print("MCP Client: Session delete request failed: ", result)
+        elif response_code != 204 and response_code != 200 and response_code != 404:
+            print("MCP Client: Session delete returned unexpected status: ", response_code)
         _flush_reconnect()
         _flush_pending_messages()
         return
@@ -265,9 +276,9 @@ func _build_outgoing_message_summary(message: Dictionary, payload_bytes: int) ->
         var params = message.get("params", {})
         if params is Dictionary:
             var tool_name = str(params.get("name", ""))
-            if tool_name == "godot-runtime-sync":
+            if tool_name == "godot.runtime.sync":
                 return _summarize_sync_runtime_call(request_id, params, payload_bytes)
-            if tool_name == "godot-runtime-ack":
+            if tool_name == "godot.runtime.ack":
                 return _summarize_ack_command_call(request_id, params, payload_bytes)
             return "tools/call id=%s name=%s bytes=%d" % [request_id, tool_name, payload_bytes]
 
@@ -302,7 +313,7 @@ func _summarize_sync_runtime_call(request_id: String, params: Dictionary, payloa
             if scene_tree is Dictionary:
                 root_child_count = int(scene_tree.get("child_count", -1))
 
-    return "tools/call id=%s name=godot-runtime-sync scene=%s root=%s nodes=%d root_children=%d bytes=%d" % [
+    return "tools/call id=%s name=godot.runtime.sync scene=%s root=%s nodes=%d root_children=%d bytes=%d" % [
         request_id,
         active_scene,
         root_name,
@@ -320,7 +331,7 @@ func _summarize_ack_command_call(request_id: String, params: Dictionary, payload
         command_id = str(arguments.get("command_id", ""))
         success = bool(arguments.get("success", false))
 
-    return "tools/call id=%s name=godot-runtime-ack command_id=%s success=%s bytes=%d" % [
+    return "tools/call id=%s name=godot.runtime.ack command_id=%s success=%s bytes=%d" % [
         request_id,
         command_id,
         str(success),
@@ -708,12 +719,34 @@ func _fail_connect(message: String) -> void:
 func disconnect_from_server() -> void:
     is_connecting = false
     pending_connect_url = ""
+    var session_to_close = session_id
     if request_in_flight and post_http_connection:
         ignore_post_result_once = true
         post_http_connection.cancel_request()
     request_in_flight = false
+    if session_to_close != "" and not ignore_post_result_once:
+        _send_disconnect_delete(session_to_close)
     _drop_pending_messages("plugin disconnect requested")
     _mark_disconnected()
+
+func _send_disconnect_delete(target_session_id: String) -> void:
+    if post_http_connection == null:
+        return
+    var trimmed_session = target_session_id.strip_edges()
+    if trimmed_session == "":
+        return
+    var headers = [
+        "Accept: application/json",
+        "MCP-Protocol-Version: " + negotiated_protocol_version,
+        "MCP-Session-Id: " + trimmed_session
+    ]
+    request_in_flight = true
+    disconnect_delete_in_flight = true
+    var request_err = post_http_connection.request(streamable_http_url, headers, HTTPClient.METHOD_DELETE, "")
+    if request_err != OK:
+        request_in_flight = false
+        disconnect_delete_in_flight = false
+        print("MCP Client: Failed to send session delete request: ", request_err)
 
 func _mark_disconnected() -> void:
     _stop_sse_stream()

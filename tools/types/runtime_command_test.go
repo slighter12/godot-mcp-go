@@ -14,7 +14,7 @@ func TestDispatchRuntimeCommand_EmitsProgressWhenEnabled(t *testing.T) {
 	broker := runtimebridge.DefaultCommandBroker()
 	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
 				CommandID: commandID,
@@ -39,6 +39,7 @@ func TestDispatchRuntimeCommand_EmitsProgressWhenEnabled(t *testing.T) {
 			"session_id":                  "session-1",
 			"session_initialized":         true,
 			"emit_progress_notifications": true,
+			"progress_token":              "req-123",
 		},
 	})
 	if err != nil {
@@ -47,7 +48,7 @@ func TestDispatchRuntimeCommand_EmitsProgressWhenEnabled(t *testing.T) {
 
 	_, err = DispatchRuntimeCommand(RuntimeCommandDispatchOptions{
 		RawArgs:                  rawArgs,
-		CommandName:              "godot-project-run",
+		CommandName:              "godot.project.run",
 		Timeout:                  500 * time.Millisecond,
 		SessionRequiredMessage:   "session required",
 		BridgeUnavailableMessage: "bridge unavailable",
@@ -74,7 +75,7 @@ func TestDispatchRuntimeCommand_DoesNotEmitProgressWhenDisabled(t *testing.T) {
 	broker := runtimebridge.DefaultCommandBroker()
 	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
 				CommandID: commandID,
@@ -107,7 +108,7 @@ func TestDispatchRuntimeCommand_DoesNotEmitProgressWhenDisabled(t *testing.T) {
 
 	_, err = DispatchRuntimeCommand(RuntimeCommandDispatchOptions{
 		RawArgs:                  rawArgs,
-		CommandName:              "godot-project-run",
+		CommandName:              "godot.project.run",
 		Timeout:                  500 * time.Millisecond,
 		SessionRequiredMessage:   "session required",
 		BridgeUnavailableMessage: "bridge unavailable",

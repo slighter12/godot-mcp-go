@@ -578,14 +578,14 @@ func TestBuildToolCallResponse_SanitizesExecutionError(t *testing.T) {
 
 	manager := tools.NewManager()
 	if err := manager.RegisterTool(&failingTool{
-		name: "failing-tool",
+		name: "godot.test.failing",
 		err:  errors.New("walk /Users/slighter12/private/game: permission denied"),
 	}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
-		"name":      "failing-tool",
+		"name":      "godot.test.failing",
 		"arguments": map[string]any{},
 	}), manager, nil)
 
@@ -626,7 +626,7 @@ func TestBuildToolCallResponse_ToolNotFoundStillReturnsInvalidParams(t *testing.
 	manager := tools.NewManager()
 
 	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
-		"name":      "missing-tool",
+		"name":      "godot.test.missing",
 		"arguments": map[string]any{},
 	}), manager, nil)
 
@@ -640,12 +640,12 @@ func TestBuildToolCallResponse_ToolNotFoundStillReturnsInvalidParams(t *testing.
 
 func TestBuildToolCallResponse_SemanticErrorUsesIsErrorPayload(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&semanticFailingTool{name: "semantic-tool"}); err != nil {
+	if err := manager.RegisterTool(&semanticFailingTool{name: "godot.test.semantic"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponse(mustRequest(t, "tools/call", map[string]any{
-		"name":      "semantic-tool",
+		"name":      "godot.test.semantic",
 		"arguments": map[string]any{},
 	}), manager, nil)
 	if resp == nil {
@@ -673,12 +673,12 @@ func TestBuildToolCallResponse_SemanticErrorUsesIsErrorPayload(t *testing.T) {
 
 func TestBuildToolCallResponseWithContext_InjectsMCPContext(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&contextEchoTool{name: "context-echo"}); err != nil {
+	if err := manager.RegisterTool(&contextEchoTool{name: "godot.test.context.echo"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContext(mustRequest(t, "tools/call", map[string]any{
-		"name":      "context-echo",
+		"name":      "godot.test.context.echo",
 		"arguments": map[string]any{},
 	}), manager, nil, ToolCallContext{
 		SessionID:          "session-123",
@@ -705,12 +705,12 @@ func TestBuildToolCallResponseWithContext_InjectsMCPContext(t *testing.T) {
 
 func TestBuildToolCallResponseWithOptions_RejectsMissingRequiredArguments(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.test.schema"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name":      "schema-echo",
+		"name":      "godot.test.schema",
 		"arguments": map[string]any{},
 	}), manager, nil, ToolCallContext{}, ToolCallOptions{
 		SchemaValidationEnabled: true,
@@ -733,12 +733,12 @@ func TestBuildToolCallResponseWithOptions_RejectsMissingRequiredArguments(t *tes
 
 func TestBuildToolCallResponseWithOptions_RejectsUnknownArguments(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.test.schema"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name": "schema-echo",
+		"name": "godot.test.schema",
 		"arguments": map[string]any{
 			"input": "ok",
 			"extra": "bad",
@@ -765,18 +765,18 @@ func TestBuildToolCallResponseWithOptions_RejectsUnknownArguments(t *testing.T) 
 
 func TestBuildToolCallResponseWithOptions_AllowListDeniesNonAllowedTool(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "schema-echo"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.test.schema"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name": "schema-echo",
+		"name": "godot.test.schema",
 		"arguments": map[string]any{
 			"input": "ok",
 		},
 	}), manager, nil, ToolCallContext{}, ToolCallOptions{
 		PermissionMode: ToolPermissionAllowList,
-		AllowedTools:   []string{"another-tool"},
+		AllowedTools:   []string{"godot.test.another"},
 	})
 	if resp == nil || resp.Error != nil {
 		t.Fatalf("expected tool result payload, got %+v", resp)
@@ -793,12 +793,12 @@ func TestBuildToolCallResponseWithOptions_AllowListDeniesNonAllowedTool(t *testi
 
 func TestBuildToolCallResponseWithOptions_ReadOnlyBlocksMutatingTools(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-script-create"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.script.create"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name": "godot-script-create",
+		"name": "godot.script.create",
 		"arguments": map[string]any{
 			"input": "ok",
 		},
@@ -820,12 +820,12 @@ func TestBuildToolCallResponseWithOptions_ReadOnlyBlocksMutatingTools(t *testing
 
 func TestBuildToolCallResponseWithContext_MutatingCapabilityRequired(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-scene-save"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.scene.save"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name": "godot-scene-save",
+		"name": "godot.scene.save",
 		"arguments": map[string]any{
 			"input": "ok",
 		},
@@ -854,12 +854,12 @@ func TestBuildToolCallResponseWithContext_MutatingCapabilityRequired(t *testing.
 
 func TestBuildToolCallResponseWithContext_MutatingAllowedPasses(t *testing.T) {
 	manager := tools.NewManager()
-	if err := manager.RegisterTool(&schemaEchoTool{name: "godot-scene-save"}); err != nil {
+	if err := manager.RegisterTool(&schemaEchoTool{name: "godot.scene.save"}); err != nil {
 		t.Fatalf("register tool: %v", err)
 	}
 
 	resp := BuildToolCallResponseWithContextAndOptions(mustRequest(t, "tools/call", map[string]any{
-		"name": "godot-scene-save",
+		"name": "godot.scene.save",
 		"arguments": map[string]any{
 			"input": "ok",
 		},

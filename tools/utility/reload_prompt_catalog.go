@@ -17,7 +17,7 @@ func NewReloadPromptCatalogTool(reload PromptCatalogReloader) *ReloadPromptCatal
 	return &ReloadPromptCatalogTool{reload: reload}
 }
 
-func (t *ReloadPromptCatalogTool) Name() string { return "godot-prompts-reload" }
+func (t *ReloadPromptCatalogTool) Name() string { return "godot.prompts.reload" }
 
 func (t *ReloadPromptCatalogTool) Description() string {
 	return "Reloads prompt catalog entries from configured SKILL.md paths"

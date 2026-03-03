@@ -10,6 +10,8 @@ PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
 log_file="$(mktemp /tmp/godot-mcp-go-session-isolation.log.XXXXXX)"
 init_headers_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.headers.XXXXXX)"
 init_headers_b="$(mktemp /tmp/godot-mcp-go-session-isolation.b.headers.XXXXXX)"
+init_headers_invalid="$(mktemp /tmp/godot-mcp-go-session-isolation.invalid.headers.XXXXXX)"
+init_body_invalid="$(mktemp /tmp/godot-mcp-go-session-isolation.invalid.body.XXXXXX)"
 sync_body_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.sync.body.XXXXXX)"
 sync_body_b="$(mktemp /tmp/godot-mcp-go-session-isolation.b.sync.body.XXXXXX)"
 state_body_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.state.body.XXXXXX)"
@@ -21,7 +23,7 @@ cleanup() {
     kill "$server_pid" >/dev/null 2>&1 || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -f "$log_file" "$init_headers_a" "$init_headers_b" "$sync_body_a" "$sync_body_b" "$state_body_a" "$state_body_b" "$runtime_config"
+  rm -f "$log_file" "$init_headers_a" "$init_headers_b" "$init_headers_invalid" "$init_body_invalid" "$sync_body_a" "$sync_body_b" "$state_body_a" "$state_body_b" "$runtime_config"
 }
 trap cleanup EXIT
 
@@ -103,6 +105,25 @@ test -n "$session_a"
 test -n "$session_b"
 test "$session_a" != "$session_b"
 
+status_invalid_init="$(curl -sS -D "$init_headers_invalid" -o "$init_body_invalid" -w "%{http_code}" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -X POST "$SERVER_URL" \
+  --data '{"jsonrpc":"2.0","id":"init-invalid","method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"bad-client","version":"0.1.0"}}}')"
+test "$status_invalid_init" = "200"
+invalid_session="$(extract_session_id "$init_headers_invalid")"
+test -z "$invalid_session"
+compact_invalid_init="$(tr -d '[:space:]' < "$init_body_invalid")"
+require_contains "$compact_invalid_init" '"code":-32602' "invalid initialize should return invalid params"
+status_after_invalid="$(curl -sS -o /dev/null -w "%{http_code}" \
+  -H 'Content-Type: application/json' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H "MCP-Session-Id: session-invalid-init" \
+  -X POST "$SERVER_URL" \
+  --data '{"jsonrpc":"2.0","id":"list-after-invalid-init","method":"tools/list","params":{}}')"
+test "$status_after_invalid" = "404"
+
 status_notify_a="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H 'Content-Type: application/json' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
@@ -124,7 +145,7 @@ status_sync_a="$(curl -sS -o "$sync_body_a" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_a" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"sync-a","method":"tools/call","params":{"name":"godot-runtime-sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionA.tscn","active_script":"res://scripts/A.gd"},"scene_tree":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0},"node_details":{"/RootA":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0}}}}}}')"
+  --data '{"jsonrpc":"2.0","id":"sync-a","method":"tools/call","params":{"name":"godot.runtime.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionA.tscn","active_script":"res://scripts/A.gd"},"scene_tree":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0},"node_details":{"/RootA":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0}}}}}}')"
 test "$status_sync_a" = "200"
 
 status_sync_b="$(curl -sS -o "$sync_body_b" -w "%{http_code}" \
@@ -132,7 +153,7 @@ status_sync_b="$(curl -sS -o "$sync_body_b" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_b" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"sync-b","method":"tools/call","params":{"name":"godot-runtime-sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionB.tscn","active_script":"res://scripts/B.gd"},"scene_tree":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0},"node_details":{"/RootB":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0}}}}}}')"
+  --data '{"jsonrpc":"2.0","id":"sync-b","method":"tools/call","params":{"name":"godot.runtime.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionB.tscn","active_script":"res://scripts/B.gd"},"scene_tree":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0},"node_details":{"/RootB":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0}}}}}}')"
 test "$status_sync_b" = "200"
 
 compact_sync_a="$(tr -d '[:space:]' < "$sync_body_a")"
@@ -145,7 +166,7 @@ status_state_a="$(curl -sS -o "$state_body_a" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_a" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"state-a","method":"tools/call","params":{"name":"godot-editor-get-state","arguments":{}}}')"
+  --data '{"jsonrpc":"2.0","id":"state-a","method":"tools/call","params":{"name":"godot.editor.state.get","arguments":{}}}')"
 test "$status_state_a" = "200"
 
 status_state_b="$(curl -sS -o "$state_body_b" -w "%{http_code}" \
@@ -153,7 +174,7 @@ status_state_b="$(curl -sS -o "$state_body_b" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_b" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"state-b","method":"tools/call","params":{"name":"godot-editor-get-state","arguments":{}}}')"
+  --data '{"jsonrpc":"2.0","id":"state-b","method":"tools/call","params":{"name":"godot.editor.state.get","arguments":{}}}')"
 test "$status_state_b" = "200"
 
 compact_state_a="$(tr -d '[:space:]' < "$state_body_a")"

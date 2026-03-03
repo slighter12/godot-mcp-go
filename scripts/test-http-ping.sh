@@ -39,6 +39,14 @@ curl -sS -D "$init_headers" \
 session_id="$(awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$init_headers" | tail -n1)"
 test -n "$session_id"
 
+status_notify="$(curl -sS -o /dev/null -w "%{http_code}" \
+  -H 'Content-Type: application/json' \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+  -H "MCP-Session-Id: $session_id" \
+  -X POST "$SERVER_URL" \
+  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}')"
+test "$status_notify" = "202"
+
 status_ping="$(curl -sS -o "$ping_body_file" -w "%{http_code}" \
   -H 'Content-Type: application/json' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \

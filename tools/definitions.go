@@ -19,3 +19,19 @@ func GetAllTools() []types.Tool {
 	all = append(all, utility.GetAllTools()...)
 	return all
 }
+
+// GetStdioTools returns tools that are transport-compatible for stdio mode.
+// Runtime bridge and mutating command tools are intentionally excluded.
+func GetStdioTools() []types.Tool {
+	return []types.Tool{
+		&scene.ListProjectScenesTool{},
+		&scene.ReadSceneTool{},
+		&script.ListProjectScriptsTool{},
+		&script.ReadScriptTool{},
+		&script.AnalyzeScriptTool{},
+		&project.GetProjectSettingsTool{},
+		&project.ListProjectResourcesTool{},
+		&utility.ListOfferingsTool{},
+		utility.NewRuntimeHealthTool(),
+	}
+}

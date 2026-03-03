@@ -167,7 +167,6 @@ func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, ar
 		"method":  "notifications/godot/command",
 		"params": map[string]any{
 			"command_id": commandID,
-			"commandId":  commandID,
 			"name":       commandName,
 			"arguments":  arguments,
 		},

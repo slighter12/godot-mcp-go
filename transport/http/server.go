@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/slighter12/godot-mcp-go/config"
+	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
@@ -68,7 +69,15 @@ func (s *Server) Start() error {
 	s.initializePromptCatalog()
 	s.startPromptCatalogWatchers()
 	defer s.stopPromptCatalogWatchers()
-	s.toolManager.RegisterDefaultTools()
+	useStdio := os.Getenv("MCP_USE_STDIO") == "true"
+	if useStdio {
+		if err := s.registerStdioBaseTools(); err != nil {
+			logger.Error("Failed to register stdio base tools", "error", err)
+			return err
+		}
+	} else {
+		s.toolManager.RegisterDefaultTools()
+	}
 	if err := s.registerRuntimeTools(); err != nil {
 		logger.Error("Failed to register runtime tools", "error", err)
 		return err
@@ -85,12 +94,21 @@ func (s *Server) Start() error {
 	logger.Info("Default server registered successfully", "server_id", "default")
 	go s.startCleanupGoroutine()
 	s.setupEcho()
-	useStdio := os.Getenv("MCP_USE_STDIO") == "true"
 	if useStdio {
 		return s.startStdioServer()
 	} else {
 		return s.startStreamableHTTPServer()
 	}
+}
+
+func (s *Server) registerStdioBaseTools() error {
+	s.toolManager = tools.NewManager()
+	for _, tool := range tools.GetStdioTools() {
+		if err := s.toolManager.RegisterTool(tool); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) setupEcho() {
@@ -275,13 +293,12 @@ func (s *Server) SendRuntimeCommandProgressNotification(event tooltypes.RuntimeC
 	if strings.TrimSpace(event.SessionID) == "" {
 		return
 	}
+	if !notifications.IsValidProgressToken(event.ProgressToken) {
+		return
+	}
 	_ = s.SendJSONRPCNotificationToSession(event.SessionID, map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "notifications/tools/progress",
-		"params": map[string]any{
-			"tool":     strings.TrimSpace(event.CommandName),
-			"progress": event.Progress,
-			"message":  strings.TrimSpace(event.Message),
-		},
+		"method":  "notifications/progress",
+		"params":  notifications.ProgressParams(event.ProgressToken, event.Progress, event.Message),
 	})
 }

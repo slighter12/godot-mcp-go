@@ -115,13 +115,3 @@ type PongMessage struct {
 	ClientID string `json:"client_id,omitempty"`
 	ServerID string `json:"server_id,omitempty"`
 }
-
-// ToolProgressMessage represents a tool progress update
-type ToolProgressMessage struct {
-	Type     string  `json:"type"`
-	ClientID string  `json:"client_id,omitempty"`
-	ServerID string  `json:"server_id,omitempty"`
-	Tool     string  `json:"tool"`
-	Progress float64 `json:"progress"`
-	Message  string  `json:"message,omitempty"`
-}

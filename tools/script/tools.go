@@ -15,7 +15,7 @@ const scriptCommandTimeout = 8 * time.Second
 
 type ListProjectScriptsTool struct{}
 
-func (t *ListProjectScriptsTool) Name() string        { return "godot-script-list" }
+func (t *ListProjectScriptsTool) Name() string        { return "godot.script.list" }
 func (t *ListProjectScriptsTool) Description() string { return "Lists all scripts in the project" }
 func (t *ListProjectScriptsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Project Scripts"}
@@ -34,7 +34,7 @@ func (t *ListProjectScriptsTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ReadScriptTool struct{}
 
-func (t *ReadScriptTool) Name() string        { return "godot-script-read" }
+func (t *ReadScriptTool) Name() string        { return "godot.script.read" }
 func (t *ReadScriptTool) Description() string { return "Reads a specific script" }
 func (t *ReadScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}}, Required: []string{"path"}, Title: "Read Script"}
@@ -64,7 +64,7 @@ func (t *ReadScriptTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ModifyScriptTool struct{}
 
-func (t *ModifyScriptTool) Name() string        { return "godot-script-modify" }
+func (t *ModifyScriptTool) Name() string        { return "godot.script.modify" }
 func (t *ModifyScriptTool) Description() string { return "Modifies a script" }
 func (t *ModifyScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}, "content": map[string]any{"type": "string", "description": "New script content"}}, Required: []string{"path", "content"}, Title: "Modify Script"}
@@ -75,7 +75,7 @@ func (t *ModifyScriptTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type CreateScriptTool struct{}
 
-func (t *CreateScriptTool) Name() string        { return "godot-script-create" }
+func (t *CreateScriptTool) Name() string        { return "godot.script.create" }
 func (t *CreateScriptTool) Description() string { return "Creates a new script" }
 func (t *CreateScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -95,7 +95,7 @@ func (t *CreateScriptTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type AnalyzeScriptTool struct{}
 
-func (t *AnalyzeScriptTool) Name() string        { return "godot-script-analyze" }
+func (t *AnalyzeScriptTool) Name() string        { return "godot.script.analyze" }
 func (t *AnalyzeScriptTool) Description() string { return "Analyzes a script" }
 func (t *AnalyzeScriptTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Script path"}}, Required: []string{"path"}, Title: "Analyze Script"}

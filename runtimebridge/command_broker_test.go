@@ -12,7 +12,7 @@ func TestCommandBrokerDispatchAndAck(t *testing.T) {
 	broker := DefaultCommandBroker()
 	SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			broker.Ack(sessionID, CommandAck{
 				CommandID: commandID,
@@ -24,7 +24,7 @@ func TestCommandBrokerDispatchAndAck(t *testing.T) {
 	})
 	defer SetNotificationSender(nil)
 
-	ack, ok, reason := broker.DispatchAndWait("session-1", "godot-project-run", map[string]any{}, 2*time.Second)
+	ack, ok, reason := broker.DispatchAndWait("session-1", "godot.project.run", map[string]any{}, 2*time.Second)
 	if !ok {
 		t.Fatalf("expected command ack, reason=%s", reason)
 	}
@@ -37,7 +37,7 @@ func TestCommandBrokerDispatchWithoutSender(t *testing.T) {
 	ResetDefaultCommandBrokerForTests(2 * time.Second)
 	SetNotificationSender(nil)
 
-	_, ok, reason := DefaultCommandBroker().DispatchAndWait("session-1", "godot-project-run", map[string]any{}, 2*time.Second)
+	_, ok, reason := DefaultCommandBroker().DispatchAndWait("session-1", "godot.project.run", map[string]any{}, 2*time.Second)
 	if ok {
 		t.Fatal("expected dispatch failure without notification sender")
 	}
@@ -51,7 +51,7 @@ func BenchmarkCommandBrokerDispatchAndAckParallel(b *testing.B) {
 	broker := DefaultCommandBroker()
 	SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			_ = broker.Ack(sessionID, CommandAck{
 				CommandID: commandID,
@@ -66,7 +66,7 @@ func BenchmarkCommandBrokerDispatchAndAckParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, ok, reason := broker.DispatchAndWait("bench-session", "godot-project-run", map[string]any{}, 500*time.Millisecond)
+			_, ok, reason := broker.DispatchAndWait("bench-session", "godot.project.run", map[string]any{}, 500*time.Millisecond)
 			if !ok {
 				b.Fatalf("expected ack in benchmark, reason=%s", reason)
 			}
@@ -79,7 +79,7 @@ func BenchmarkCommandBrokerConcurrentSessions(b *testing.B) {
 	broker := DefaultCommandBroker()
 	SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			_ = broker.Ack(sessionID, CommandAck{
 				CommandID: commandID,
@@ -110,7 +110,7 @@ func BenchmarkCommandBrokerConcurrentSessions(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			sessionID := nextSessionID()
-			_, ok, reason := broker.DispatchAndWait(sessionID, "godot-project-run", map[string]any{}, 500*time.Millisecond)
+			_, ok, reason := broker.DispatchAndWait(sessionID, "godot.project.run", map[string]any{}, 500*time.Millisecond)
 			if !ok {
 				b.Fatalf("expected ack in benchmark, reason=%s", reason)
 			}

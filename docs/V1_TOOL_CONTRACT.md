@@ -6,50 +6,64 @@ This document defines the public tool contract for `godot-mcp-go`.
 
 Canonical tool names:
 
+- Pattern: `^[A-Za-z0-9._-]{1,128}$`
+- Shape: `godot.<domain>.<action>` or `godot.<domain>.<object>.<action>`
+
 ### Scene
 
-- `godot-scene-list`
-- `godot-scene-read`
-- `godot-scene-create`
-- `godot-scene-save`
-- `godot-scene-apply`
+- `godot.scene.list`
+- `godot.scene.read`
+- `godot.scene.create`
+- `godot.scene.save`
+- `godot.scene.apply`
 
 ### Node
 
-- `godot-node-get-tree`
-- `godot-node-get-properties`
-- `godot-node-create`
-- `godot-node-delete`
-- `godot-node-modify`
+- `godot.node.tree.get`
+- `godot.node.properties.get`
+- `godot.node.create`
+- `godot.node.delete`
+- `godot.node.modify`
 
 ### Script
 
-- `godot-script-list`
-- `godot-script-read`
-- `godot-script-create`
-- `godot-script-modify`
-- `godot-script-analyze`
+- `godot.script.list`
+- `godot.script.read`
+- `godot.script.create`
+- `godot.script.modify`
+- `godot.script.analyze`
 
 ### Project
 
-- `godot-project-get-settings`
-- `godot-project-list-resources`
-- `godot-editor-get-state`
-- `godot-project-run`
-- `godot-project-stop`
+- `godot.project.settings.get`
+- `godot.project.resources.list`
+- `godot.editor.state.get`
+- `godot.project.run`
+- `godot.project.stop`
 
 ### Utility
 
-- `godot-offerings-list`
-- `godot-runtime-get-health`
-- `godot-runtime-sync` (internal bridge)
-- `godot-runtime-ping` (internal bridge)
-- `godot-runtime-ack` (internal bridge)
-- `godot-prompts-reload`
+- `godot.offerings.list`
+- `godot.runtime.health.get`
+- `godot.runtime.sync` (internal bridge)
+- `godot.runtime.ping` (internal bridge)
+- `godot.runtime.ack` (internal bridge)
+- `godot.prompts.reload`
 
 ## Name Binding Policy
 
 Canonical names are strictly required. Legacy aliases are rejected with `tool not found`.
+
+## Session Lifecycle Gate
+
+For both transports, tool execution requires lifecycle completion:
+
+1. `initialize` succeeds with `protocolVersion=2025-11-25`
+2. `initialized` or `notifications/initialized` is received
+3. regular methods are accepted
+
+Before lifecycle completion, regular requests return JSON-RPC `invalid_request` with message `Session is not initialized`.
+If `initialized`/`notifications/initialized` is sent before successful `initialize`, server returns JSON-RPC `invalid_request`.
 
 ## Mutating Capability Gate
 
@@ -63,10 +77,10 @@ Mutating tools require session-scoped capability negotiation:
 
 Mutating tools covered by this gate:
 
-- `godot-project-run`, `godot-project-stop`
-- `godot-scene-create`, `godot-scene-save`, `godot-scene-apply`
-- `godot-node-create`, `godot-node-delete`, `godot-node-modify`
-- `godot-script-create`, `godot-script-modify`
+- `godot.project.run`, `godot.project.stop`
+- `godot.scene.create`, `godot.scene.save`, `godot.scene.apply`
+- `godot.node.create`, `godot.node.delete`, `godot.node.modify`
+- `godot.script.create`, `godot.script.modify`
 
 ## Transport Support Matrix
 
@@ -104,7 +118,7 @@ Optional metadata fields when provided by runtime ack:
 
 ## Project Tool Contracts
 
-### `godot-project-get-settings`
+### `godot.project.settings.get`
 
 Input:
 
@@ -116,7 +130,7 @@ Output:
 - `settings`: array of `{key, section, value, raw}`
 - optional `nextCursor`
 
-### `godot-project-list-resources`
+### `godot.project.resources.list`
 
 Input:
 
@@ -131,7 +145,7 @@ Output:
 
 ## Script Create Conflict Policy
 
-`godot-script-create` supports:
+`godot.script.create` supports:
 
 - `replace` (optional boolean, default `false`)
 
@@ -151,3 +165,13 @@ When target file exists and `replace=false`, response returns semantic conflict 
 - `emit_progress_notifications`
 
 Controls are additive and do not change canonical naming.
+
+### Internal Bridge Permission Exemption
+
+Runtime bridge internal tools bypass `permission_mode` filtering to preserve session health:
+
+- `godot.runtime.sync`
+- `godot.runtime.ping`
+- `godot.runtime.ack`
+
+All other tools continue to follow `allow_all` / `read_only` / `allow_list` policy rules.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20251125"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -26,16 +27,7 @@ const maxJSONRPCBodyBytes = 1 << 20
 const (
 	headerSessionID       = "MCP-Session-Id"
 	headerProtocolVersion = "MCP-Protocol-Version"
-	legacyProtocolVersion = "2025-03-26"
 )
-
-var supportedProtocolVersions = map[string]struct{}{
-	"2024-11-05":          {},
-	legacyProtocolVersion: {},
-	"2025-06-18":          {},
-	"2025-11-25":          {},
-	"2025-06-14":          {}, // legacy compatibility for older clients.
-}
 
 func RegisterRoutes(e *echo.Echo, s *Server) {
 	e.GET("/", s.handleHTTPInfo)
@@ -65,6 +57,9 @@ func (s *Server) handleOptions(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
+	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
+		return c.JSON(http.StatusBadRequest, protocolErr)
+	}
 
 	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
 	defer limitedBody.Close()
@@ -89,11 +84,6 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	}
 
 	sessionID := c.Request().Header.Get(headerSessionID)
-	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	if requestedProtocolVersion != "" && !isSupportedProtocolVersion(requestedProtocolVersion) {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unsupported MCP-Protocol-Version header", nil))
-	}
-
 	hasInitialize := false
 	hasNonInitialize := false
 	for _, req := range requests {
@@ -104,6 +94,10 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		}
 	}
 
+	if hasInitialize && hasNonInitialize {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+	}
+
 	if len(requests) > 0 {
 		if hasInitialize {
 			if sessionID == "" {
@@ -112,8 +106,7 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 					logger.Error("Failed to generate session ID", "error", err)
 					return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInternalError), "Internal error", nil))
 				}
-				s.sessionManager.CreateSession(sessionID)
-				logger.Debug("Generated new MCP session")
+				logger.Debug("Generated new MCP session id")
 			} else if !s.sessionManager.TouchSession(sessionID) {
 				return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
 			}
@@ -139,19 +132,9 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		}
 	}
 
-	requireProtocolHeader := false
-	if hasNonInitialize || acceptedOneWay {
-		requireProtocolHeader = s.requireProtocolVersionHeader(sessionID)
-	}
-	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
-		if requestedProtocolVersion == "" && requireProtocolHeader {
-			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
-		}
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
-	}
-
 	responses := make([]any, 0, len(requests)+len(prebuiltResponses))
 	responses = append(responses, prebuiltResponses...)
+	initializeSucceeded := false
 
 	for _, request := range requests {
 		logger.Debug("Streamable HTTP request received", "method", request.Method, "id", request.ID)
@@ -166,10 +149,19 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		if request.ID == nil || response == nil {
 			continue
 		}
+		if request.Method == "initialize" {
+			if rpcResp, ok := response.(*jsonrpc.Response); ok && rpcResp.Error == nil {
+				initializeSucceeded = true
+			}
+		}
 		responses = append(responses, response)
 	}
 
-	if sessionID != "" {
+	shouldAttachSessionHeader := sessionID != "" && s.sessionManager.HasSession(sessionID)
+	if hasInitialize {
+		shouldAttachSessionHeader = shouldAttachSessionHeader && initializeSucceeded
+	}
+	if shouldAttachSessionHeader {
 		c.Response().Header().Set(headerSessionID, sessionID)
 	}
 
@@ -185,6 +177,9 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
 	logger.Info("Streamable HTTP GET request", "remote_addr", c.RealIP())
+	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
+		return c.JSON(http.StatusBadRequest, protocolErr)
+	}
 
 	sessionID := c.Request().Header.Get(headerSessionID)
 	if sessionID == "" {
@@ -192,15 +187,6 @@ func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
 	}
 	if !s.sessionManager.HasSession(sessionID) {
 		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-	}
-
-	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	requireProtocolHeader := s.requireProtocolVersionHeader(sessionID)
-	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
-		if requestedProtocolVersion == "" && requireProtocolHeader {
-			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
-		}
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
 	}
 
 	if !acceptsEventStream(c.Request().Header.Get(echo.HeaderAccept)) {
@@ -243,20 +229,15 @@ func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPDelete(c echo.Context) error {
 	logger.Info("Streamable HTTP DELETE request", "remote_addr", c.RealIP())
+	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
+		return c.JSON(http.StatusBadRequest, protocolErr)
+	}
 	sessionID := c.Request().Header.Get(headerSessionID)
 	if sessionID == "" {
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
 	}
 	if !s.sessionManager.HasSession(sessionID) {
 		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-	}
-	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	requireProtocolHeader := s.requireProtocolVersionHeader(sessionID)
-	if !s.isProtocolVersionAccepted(sessionID, requestedProtocolVersion, requireProtocolHeader) {
-		if requestedProtocolVersion == "" && requireProtocolHeader {
-			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil))
-		}
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil))
 	}
 	s.sessionManager.RemoveSession(sessionID)
 	return c.NoContent(http.StatusNoContent)
@@ -271,13 +252,25 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
 		}
+		if strings.TrimSpace(sessionID) == "" {
+			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil), nil
+		}
+		if !s.sessionManager.IsInitializeAccepted(sessionID) {
+			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
+		}
 		logger.Debug("Handling initialized notification")
-		if sessionID != "" {
-			s.sessionManager.MarkInitialized(sessionID)
+		if !s.sessionManager.MarkInitialized(sessionID) {
+			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
 		}
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
+		if strings.TrimSpace(sessionID) == "" {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil), nil
+		}
+		if !s.sessionManager.IsInitializeAccepted(sessionID) || !s.sessionManager.IsInitialized(sessionID) {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Session is not initialized", nil), nil
+		}
 		if msg.Method == "tools/call" {
 			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
 				SessionID:          sessionID,
@@ -291,8 +284,11 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 
 func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Response, error) {
 	logger.Debug("Handling init message", "request_id", msg.ID)
-	if sessionID != "" {
-		s.sessionManager.CreateSession(sessionID)
+	if err := mcpv20251125.ValidateInitializeProtocolVersion(msg.Params); err != nil {
+		if errors.Is(err, mcpv20251125.ErrMissingProtocolVersion) {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrMissingProtocolVersion.Error(), nil), nil
+		}
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrInvalidProtocolVersion.Error(), nil), nil
 	}
 
 	tools, err := s.registry.GetServerTools("default")
@@ -301,7 +297,12 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 		return nil, err
 	}
 
-	negotiatedVersion := negotiateProtocolVersion(msg.Params)
+	if sessionID != "" {
+		s.sessionManager.CreateSession(sessionID)
+		s.sessionManager.MarkInitializeAccepted(sessionID)
+	}
+
+	negotiatedVersion := mcpv20251125.ProtocolVersion
 	mutatingAllowed := negotiatedMutatingCapability(msg.Params)
 	if sessionID != "" {
 		s.sessionManager.SetProtocolVersion(sessionID, negotiatedVersion)
@@ -354,45 +355,6 @@ func generateSessionID() (string, error) {
 	return "session_" + hex.EncodeToString(buf), nil
 }
 
-func (s *Server) isProtocolVersionAccepted(sessionID string, requestedVersion string, requireHeader bool) bool {
-	if requestedVersion != "" {
-		if !isSupportedProtocolVersion(requestedVersion) {
-			return false
-		}
-
-		if sessionID != "" {
-			if negotiatedVersion, ok := s.sessionManager.GetProtocolVersion(sessionID); ok && negotiatedVersion != "" && negotiatedVersion != requestedVersion {
-				return false
-			}
-		}
-		return true
-	}
-
-	return !requireHeader
-}
-
-func (s *Server) requireProtocolVersionHeader(sessionID string) bool {
-	if sessionID == "" {
-		return true
-	}
-	negotiatedVersion, ok := s.sessionManager.GetProtocolVersion(sessionID)
-	if !ok {
-		return true
-	}
-	return strings.TrimSpace(negotiatedVersion) == ""
-}
-
-func isSupportedProtocolVersion(version string) bool {
-	if version == "" {
-		return false
-	}
-	if version == mcp.ProtocolVersion {
-		return true
-	}
-	_, ok := supportedProtocolVersions[version]
-	return ok
-}
-
 func acceptsEventStream(acceptHeader string) bool {
 	for part := range strings.SplitSeq(acceptHeader, ",") {
 		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
@@ -401,21 +363,6 @@ func acceptsEventStream(acceptHeader string) bool {
 		}
 	}
 	return false
-}
-
-func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
-	var params struct {
-		ProtocolVersion string `json:"protocolVersion"`
-	}
-	preferred := mcp.ProtocolVersion
-	if err := json.Unmarshal(paramsRaw, &params); err != nil {
-		return preferred
-	}
-
-	if isSupportedProtocolVersion(params.ProtocolVersion) {
-		return params.ProtocolVersion
-	}
-	return preferred
 }
 
 func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {
@@ -433,4 +380,15 @@ func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {
 	}
 
 	return false
+}
+
+func validateHTTPProtocolHeader(c echo.Context) *jsonrpc.Response {
+	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
+	if requestedProtocolVersion == "" {
+		return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil)
+	}
+	if !mcpv20251125.IsSupportedProtocolHeader(requestedProtocolVersion) {
+		return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil)
+	}
+	return nil
 }

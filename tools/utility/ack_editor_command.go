@@ -28,7 +28,7 @@ func NewAckEditorCommandTool() *AckEditorCommandTool {
 	return &AckEditorCommandTool{}
 }
 
-func (t *AckEditorCommandTool) Name() string { return "godot-runtime-ack" }
+func (t *AckEditorCommandTool) Name() string { return "godot.runtime.ack" }
 
 func (t *AckEditorCommandTool) Description() string {
 	return "Acknowledges completion of an internal Godot runtime command"

@@ -16,7 +16,7 @@ const nodeCommandTimeout = 8 * time.Second
 // GetSceneTreeTool returns the scene tree structure.
 type GetSceneTreeTool struct{}
 
-func (t *GetSceneTreeTool) Name() string        { return "godot-node-get-tree" }
+func (t *GetSceneTreeTool) Name() string        { return "godot.node.tree.get" }
 func (t *GetSceneTreeTool) Description() string { return "Returns the scene tree structure" }
 func (t *GetSceneTreeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Get Scene Tree"}
@@ -55,7 +55,7 @@ func (t *GetSceneTreeTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type GetNodePropertiesTool struct{}
 
-func (t *GetNodePropertiesTool) Name() string        { return "godot-node-get-properties" }
+func (t *GetNodePropertiesTool) Name() string        { return "godot.node.properties.get" }
 func (t *GetNodePropertiesTool) Description() string { return "Gets properties of a specific node" }
 func (t *GetNodePropertiesTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}}, Required: []string{"node"}, Title: "Get Node Properties"}
@@ -135,7 +135,7 @@ func (t *GetNodePropertiesTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type CreateNodeTool struct{}
 
-func (t *CreateNodeTool) Name() string        { return "godot-node-create" }
+func (t *CreateNodeTool) Name() string        { return "godot.node.create" }
 func (t *CreateNodeTool) Description() string { return "Creates a new node" }
 func (t *CreateNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -155,7 +155,7 @@ func (t *CreateNodeTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type DeleteNodeTool struct{}
 
-func (t *DeleteNodeTool) Name() string        { return "godot-node-delete" }
+func (t *DeleteNodeTool) Name() string        { return "godot.node.delete" }
 func (t *DeleteNodeTool) Description() string { return "Deletes a node" }
 func (t *DeleteNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}}, Required: []string{"node"}, Title: "Delete Node"}
@@ -166,7 +166,7 @@ func (t *DeleteNodeTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ModifyNodeTool struct{}
 
-func (t *ModifyNodeTool) Name() string        { return "godot-node-modify" }
+func (t *ModifyNodeTool) Name() string        { return "godot.node.modify" }
 func (t *ModifyNodeTool) Description() string { return "Updates node properties" }
 func (t *ModifyNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}, "properties": map[string]any{"type": "object", "description": "Properties to update"}}, Required: []string{"node", "properties"}, Title: "Modify Node"}

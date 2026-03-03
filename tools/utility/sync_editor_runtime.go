@@ -26,7 +26,7 @@ func NewSyncEditorRuntimeTool() *SyncEditorRuntimeTool {
 	return &SyncEditorRuntimeTool{}
 }
 
-func (t *SyncEditorRuntimeTool) Name() string { return "godot-runtime-sync" }
+func (t *SyncEditorRuntimeTool) Name() string { return "godot.runtime.sync" }
 
 func (t *SyncEditorRuntimeTool) Description() string {
 	return "Synchronizes Godot editor runtime snapshot (internal bridge tool)"

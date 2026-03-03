@@ -27,7 +27,7 @@ func TestReadScriptTool_ReadsFileContent(t *testing.T) {
 	rawArgs, _ := json.Marshal(map[string]any{"path": "res://scripts/Player.gd"})
 	resultRaw, err := tool.Execute(rawArgs)
 	if err != nil {
-		t.Fatalf("execute godot-script-read: %v", err)
+		t.Fatalf("execute godot.script.read: %v", err)
 	}
 
 	var result map[string]any

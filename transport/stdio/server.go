@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20251125"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -22,6 +23,8 @@ type StdioServer struct {
 	promptCatalog       *promptcatalog.Registry
 	promptRenderOptions shared.PromptRenderOptions
 	toolCallOptions     shared.ToolCallOptions
+	initializeAccepted  bool
+	initialized         bool
 }
 
 // NewStdioServer creates a new stdio server
@@ -147,40 +150,51 @@ func (s *StdioServer) handleMessage(msg jsonrpc.Request) (any, error) {
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
 		}
+		if !s.initializeAccepted {
+			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
+		}
 		logger.Debug("Handling initialized notification")
+		s.initialized = true
 		return nil, nil
 	case "notifications/initialized":
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
 		}
+		if !s.initializeAccepted {
+			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
+		}
 		logger.Debug("Handling notifications/initialized notification")
+		s.initialized = true
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown stdio message", "method", msg.Method)
+		if !s.initializeAccepted || !s.initialized {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Session is not initialized", nil), nil
+		}
 		return shared.DispatchStandardMethodWithOptions(msg, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions, s.toolCallOptions), nil
 	}
 }
 
 func (s *StdioServer) handleInit(msg jsonrpc.Request) (*jsonrpc.Response, error) {
-	// Call the list scenes tool to include basic bootstrap context in legacy field.
-	result, err := s.toolManager.CallTool("godot-scene-list", map[string]any{})
-	if err != nil {
-		return nil, err
+	if err := mcpv20251125.ValidateInitializeProtocolVersion(msg.Params); err != nil {
+		if err == mcpv20251125.ErrMissingProtocolVersion {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrMissingProtocolVersion.Error(), nil), nil
+		}
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrInvalidProtocolVersion.Error(), nil), nil
 	}
+	s.initializeAccepted = true
+	s.initialized = false
 
 	response := map[string]any{
 		"type":            string(mcp.TypeInit),
 		"version":         "0.1.0",
 		"server_id":       "default",
 		"tools":           s.toolManager.GetTools(),
-		"protocolVersion": negotiateProtocolVersion(msg.Params),
+		"protocolVersion": mcpv20251125.ProtocolVersion,
 		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled(), false),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
 			"version": "0.1.0",
-		},
-		"data": map[string]any{
-			"scenes": result,
 		},
 	}
 
@@ -202,27 +216,4 @@ func readGodotResource(path string) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown resource path: %s", path)
 	}
-}
-
-func negotiateProtocolVersion(paramsRaw json.RawMessage) string {
-	var params struct {
-		ProtocolVersion string `json:"protocolVersion"`
-	}
-	preferred := mcp.ProtocolVersion
-	if err := json.Unmarshal(paramsRaw, &params); err != nil {
-		return preferred
-	}
-
-	supported := map[string]struct{}{
-		"2024-11-05": {},
-		"2025-03-26": {},
-		"2025-06-18": {},
-		"2025-11-25": {},
-		"2025-06-14": {}, // legacy compatibility for older clients.
-		preferred:    {},
-	}
-	if _, ok := supported[params.ProtocolVersion]; ok {
-		return params.ProtocolVersion
-	}
-	return preferred
 }
