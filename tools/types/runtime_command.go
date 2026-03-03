@@ -14,10 +14,11 @@ type RuntimeCommandInvalidJSONErrorBuilder func(error) error
 type RuntimeCommandProgressNotifier func(RuntimeCommandProgressEvent)
 
 type RuntimeCommandProgressEvent struct {
-	SessionID   string
-	CommandName string
-	Progress    float64
-	Message     string
+	SessionID     string
+	CommandName   string
+	Progress      float64
+	Message       string
+	ProgressToken any
 }
 
 type RuntimeCommandDispatchOptions struct {
@@ -118,9 +119,10 @@ func emitRuntimeCommandProgress(ctx MCPContext, commandName string, progress flo
 	}
 
 	notifier(RuntimeCommandProgressEvent{
-		SessionID:   ctx.SessionID,
-		CommandName: commandName,
-		Progress:    progress,
-		Message:     message,
+		SessionID:     ctx.SessionID,
+		CommandName:   commandName,
+		Progress:      progress,
+		Message:       message,
+		ProgressToken: ctx.ProgressToken,
 	})
 }

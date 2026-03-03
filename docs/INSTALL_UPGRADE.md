@@ -22,15 +22,18 @@ Current line introduces the following compatibility changes:
 
 1. Mutating tools require capability negotiation:
    - Send `initialize.params.capabilities.godot.mutating=true`
-2. `godot-script-create` supports `replace` (default `false`)
+2. `godot.script.create` supports `replace` (default `false`)
    - Existing file + `replace=false` returns conflict semantic reason
 3. Prompt rendering mode adds `advanced` with governance enforcement
 4. Runtime observability is exposed through:
-   - tool: `godot-runtime-get-health`
+   - tool: `godot.runtime.health.get`
    - resource: `godot://runtime/metrics`
 5. Project tools now return real paginated payloads:
-   - `godot-project-get-settings`
-   - `godot-project-list-resources`
+   - `godot.project.settings.get`
+   - `godot.project.resources.list`
+6. Protocol compatibility is strict:
+   - HTTP requires `MCP-Protocol-Version: 2025-11-25`
+   - stdio requires `initialize.params.protocolVersion=2025-11-25`
 
 ## Transport Notes
 
@@ -39,8 +42,8 @@ Current line introduces the following compatibility changes:
   - initialized session
   - mutating capability negotiation
   - active runtime bridge
-- `stdio` supports read/non-runtime operations.
-- Progress notifications (`notifications/tools/progress`) are best-effort.
+- `stdio` supports read/non-runtime operations and requires strict initialize protocol version.
+- Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`.
 
 ## Tool Controls
 

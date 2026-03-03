@@ -20,7 +20,7 @@ const sceneCommandTimeout = 8 * time.Second
 
 type ListProjectScenesTool struct{}
 
-func (t *ListProjectScenesTool) Name() string        { return "godot-scene-list" }
+func (t *ListProjectScenesTool) Name() string        { return "godot.scene.list" }
 func (t *ListProjectScenesTool) Description() string { return "Lists all scenes in the project" }
 func (t *ListProjectScenesTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Project Scenes"}
@@ -60,7 +60,7 @@ func (t *ListProjectScenesTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ReadSceneTool struct{}
 
-func (t *ReadSceneTool) Name() string        { return "godot-scene-read" }
+func (t *ReadSceneTool) Name() string        { return "godot.scene.read" }
 func (t *ReadSceneTool) Description() string { return "Reads a specific scene" }
 func (t *ReadSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"path": map[string]any{"type": "string", "description": "Scene path"}}, Required: []string{"path"}, Title: "Read Scene"}
@@ -94,7 +94,7 @@ func (t *ReadSceneTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type CreateSceneTool struct{}
 
-func (t *CreateSceneTool) Name() string        { return "godot-scene-create" }
+func (t *CreateSceneTool) Name() string        { return "godot.scene.create" }
 func (t *CreateSceneTool) Description() string { return "Creates a new scene" }
 func (t *CreateSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -114,7 +114,7 @@ func (t *CreateSceneTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type SaveSceneTool struct{}
 
-func (t *SaveSceneTool) Name() string        { return "godot-scene-save" }
+func (t *SaveSceneTool) Name() string        { return "godot.scene.save" }
 func (t *SaveSceneTool) Description() string { return "Saves the current scene" }
 func (t *SaveSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Save Scene"}
@@ -125,7 +125,7 @@ func (t *SaveSceneTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ApplySceneTool struct{}
 
-func (t *ApplySceneTool) Name() string        { return "godot-scene-apply" }
+func (t *ApplySceneTool) Name() string        { return "godot.scene.apply" }
 func (t *ApplySceneTool) Description() string { return "Applies a scene to the current project" }
 func (t *ApplySceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{

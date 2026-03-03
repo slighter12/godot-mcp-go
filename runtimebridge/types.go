@@ -2,7 +2,7 @@ package runtimebridge
 
 import "time"
 
-// RootSummary captures the editor-facing root context used by godot-editor-get-state.
+// RootSummary captures the editor-facing root context used by godot.editor.state.get.
 type RootSummary struct {
 	ProjectPath  string `json:"project_path,omitempty"`
 	ActiveScene  string `json:"active_scene,omitempty"`
@@ -13,7 +13,7 @@ type RootSummary struct {
 	ChildCount   int    `json:"child_count,omitempty"`
 }
 
-// CompactNode is a reduced scene tree representation for godot-node-get-tree.
+// CompactNode is a reduced scene tree representation for godot.node.tree.get.
 type CompactNode struct {
 	Path       string        `json:"path"`
 	Name       string        `json:"name"`
@@ -22,7 +22,7 @@ type CompactNode struct {
 	Children   []CompactNode `json:"children,omitempty"`
 }
 
-// NodeDetail is the whitelist payload for godot-node-get-properties.
+// NodeDetail is the whitelist payload for godot.node.properties.get.
 type NodeDetail struct {
 	Path       string   `json:"path"`
 	Name       string   `json:"name"`

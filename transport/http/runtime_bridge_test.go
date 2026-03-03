@@ -3,6 +3,8 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
+	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
@@ -72,7 +75,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-a",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "godot-runtime-sync",
+			"name": "godot.runtime.sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://A.tscn"},
@@ -93,7 +96,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-b",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "godot-runtime-sync",
+			"name": "godot.runtime.sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://B.tscn"},
@@ -114,7 +117,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "state-a",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name":      "godot-editor-get-state",
+			"name":      "godot.editor.state.get",
 			"arguments": map[string]any{},
 		},
 	}, sessionA, "2025-11-25")
@@ -137,10 +140,11 @@ func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 
 	sessionID := "session-sync"
 	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "godot-runtime-sync",
+		"name": "godot.runtime.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -183,7 +187,7 @@ func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 	}
 }
 
-func TestSyncEditorRuntimeTool_RejectsUninitializedSession(t *testing.T) {
+func TestSyncEditorRuntimeTool_RejectsBeforeInitializedLifecycleGate(t *testing.T) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
 	server := newTestHTTPServer(t, true)
 
@@ -191,7 +195,7 @@ func TestSyncEditorRuntimeTool_RejectsUninitializedSession(t *testing.T) {
 	server.sessionManager.CreateSession(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "godot-runtime-sync",
+		"name": "godot.runtime.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -216,16 +220,14 @@ func TestSyncEditorRuntimeTool_RejectsUninitializedSession(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected jsonrpc response, got %T", respAny)
 	}
-	if resp.Error != nil {
-		t.Fatalf("expected tool result response, got %+v", resp.Error)
+	if resp.Error == nil {
+		t.Fatalf("expected invalid request lifecycle gate error, got result %#v", resp.Result)
 	}
-	result := mustMap(t, resp.Result)
-	if result["isError"] != true {
-		t.Fatalf("expected isError=true, got %v", result["isError"])
+	if resp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
+		t.Fatalf("expected invalid request code %d, got %d", int(jsonrpc.ErrInvalidRequest), resp.Error.Code)
 	}
-	errPayload := mustMap(t, result["error"])
-	if errPayload["kind"] != "not_available" {
-		t.Fatalf("expected not_available kind, got %v", errPayload["kind"])
+	if resp.Error.Message != "Session is not initialized" {
+		t.Fatalf("expected session not initialized message, got %q", resp.Error.Message)
 	}
 }
 
@@ -235,6 +237,7 @@ func TestPingEditorRuntimeTool_WithInitializedSessionAndSnapshot(t *testing.T) {
 
 	sessionID := "session-ping"
 	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
 	runtimebridge.DefaultStore().Upsert(sessionID, runtimebridge.Snapshot{
 		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Main.tscn"},
@@ -245,7 +248,7 @@ func TestPingEditorRuntimeTool_WithInitializedSessionAndSnapshot(t *testing.T) {
 	}, time.Now().UTC().Add(-9*time.Second))
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "godot-runtime-ping",
+		"name":      "godot.runtime.ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -281,10 +284,11 @@ func TestPingEditorRuntimeTool_RequiresExistingSnapshot(t *testing.T) {
 
 	sessionID := "session-ping-missing"
 	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "godot-runtime-ping",
+		"name":      "godot.runtime.ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -318,6 +322,136 @@ func TestPingEditorRuntimeTool_RequiresExistingSnapshot(t *testing.T) {
 	}
 }
 
+func TestRuntimeBridgeReadOnlyPolicy_AllowsInternalToolChain(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	server := newTestHTTPServer(t, true)
+	server.config.ToolControls.PermissionMode = "read_only"
+
+	sessionID := "session-read-only-internal"
+	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitializeAccepted(sessionID)
+	server.sessionManager.MarkInitialized(sessionID)
+
+	syncParams, err := json.Marshal(map[string]any{
+		"name": "godot.runtime.sync",
+		"arguments": map[string]any{
+			"snapshot": map[string]any{
+				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
+				"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+				"node_details": map[string]any{
+					"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal sync params: %v", err)
+	}
+	syncRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      "sync",
+		Method:  "tools/call",
+		Params:  syncParams,
+	}, sessionID)
+	if handleErr != nil {
+		t.Fatalf("handle sync message: %v", handleErr)
+	}
+	syncResp, ok := syncRespAny.(*jsonrpc.Response)
+	if !ok || syncResp.Error != nil {
+		t.Fatalf("expected sync success response, got %#v", syncRespAny)
+	}
+	syncResult := mustMap(t, syncResp.Result)
+	if syncResult["isError"] != false {
+		t.Fatalf("expected sync isError=false, got %v", syncResult["isError"])
+	}
+
+	editorStateParams, err := json.Marshal(map[string]any{
+		"name":      "godot.editor.state.get",
+		"arguments": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal editor state params: %v", err)
+	}
+	editorStateRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      "state",
+		Method:  "tools/call",
+		Params:  editorStateParams,
+	}, sessionID)
+	if handleErr != nil {
+		t.Fatalf("handle editor state message: %v", handleErr)
+	}
+	editorStateResp, ok := editorStateRespAny.(*jsonrpc.Response)
+	if !ok || editorStateResp.Error != nil {
+		t.Fatalf("expected editor state success response, got %#v", editorStateRespAny)
+	}
+	editorStateResult := mustMap(t, editorStateResp.Result)
+	if editorStateResult["isError"] != false {
+		t.Fatalf("expected editor state isError=false, got %v", editorStateResult["isError"])
+	}
+
+	pingParams, err := json.Marshal(map[string]any{
+		"name":      "godot.runtime.ping",
+		"arguments": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal ping params: %v", err)
+	}
+	pingRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      "ping",
+		Method:  "tools/call",
+		Params:  pingParams,
+	}, sessionID)
+	if handleErr != nil {
+		t.Fatalf("handle ping message: %v", handleErr)
+	}
+	pingResp, ok := pingRespAny.(*jsonrpc.Response)
+	if !ok || pingResp.Error != nil {
+		t.Fatalf("expected ping success response, got %#v", pingRespAny)
+	}
+	pingResult := mustMap(t, pingResp.Result)
+	if pingResult["isError"] != false {
+		t.Fatalf("expected ping isError=false, got %v", pingResult["isError"])
+	}
+
+	ackParams, err := json.Marshal(map[string]any{
+		"name": "godot.runtime.ack",
+		"arguments": map[string]any{
+			"command_id": "cmd-nonexistent",
+			"success":    true,
+			"result":     map[string]any{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal ack params: %v", err)
+	}
+	ackRespAny, handleErr := server.handleMessage(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      "ack",
+		Method:  "tools/call",
+		Params:  ackParams,
+	}, sessionID)
+	if handleErr != nil {
+		t.Fatalf("handle ack message: %v", handleErr)
+	}
+	ackResp, ok := ackRespAny.(*jsonrpc.Response)
+	if !ok || ackResp.Error != nil {
+		t.Fatalf("expected ack tool response, got %#v", ackRespAny)
+	}
+	ackResult := mustMap(t, ackResp.Result)
+	if ackResult["isError"] != true {
+		t.Fatalf("expected ack isError=true for unknown command id, got %v", ackResult["isError"])
+	}
+	ackErr := mustMap(t, ackResult["error"])
+	if ackErr["kind"] != tooltypes.SemanticKindNotAvailable {
+		t.Fatalf("expected ack kind %q, got %v", tooltypes.SemanticKindNotAvailable, ackErr["kind"])
+	}
+	if ackErr["reason"] != "unknown_or_expired_command" {
+		t.Fatalf("expected ack reason unknown_or_expired_command, got %v", ackErr["reason"])
+	}
+}
+
 func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
 	server := newTestHTTPServer(t, true)
@@ -327,6 +461,7 @@ func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 	for i := 0; i < sessionCount; i++ {
 		sessionID := fmt.Sprintf("session-stress-%02d", i)
 		server.sessionManager.CreateSession(sessionID)
+		server.sessionManager.MarkInitializeAccepted(sessionID)
 		server.sessionManager.MarkInitialized(sessionID)
 		sessionIDs = append(sessionIDs, sessionID)
 	}
@@ -339,7 +474,7 @@ func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 			defer wg.Done()
 
 			syncParams, err := json.Marshal(map[string]any{
-				"name": "godot-runtime-sync",
+				"name": "godot.runtime.sync",
 				"arguments": map[string]any{
 					"snapshot": map[string]any{
 						"root_summary": map[string]any{
@@ -379,7 +514,7 @@ func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 			}
 
 			stateParams, err := json.Marshal(map[string]any{
-				"name":      "godot-editor-get-state",
+				"name":      "godot.editor.state.get",
 				"arguments": map[string]any{},
 			})
 			if err != nil {
@@ -436,6 +571,66 @@ func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 	}
 }
 
+func TestSendRuntimeCommandProgressNotification_UsesCanonicalMethod(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.config.ToolControls.EmitProgressNotifications = true
+
+	sessionID := "session-progress-method"
+	server.sessionManager.CreateSession(sessionID)
+	rec := httptest.NewRecorder()
+	transport := NewStreamableHTTPTransport(rec, rec)
+	if !server.sessionManager.SetTransport(sessionID, transport) {
+		t.Fatalf("failed to bind transport for session %q", sessionID)
+	}
+
+	server.SendRuntimeCommandProgressNotification(tooltypes.RuntimeCommandProgressEvent{
+		SessionID:     sessionID,
+		CommandName:   "godot.project.run",
+		Progress:      0.4,
+		Message:       "dispatching runtime command",
+		ProgressToken: "req-progress-1",
+	})
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "\"method\":\"notifications/progress\"") {
+		t.Fatalf("expected notifications/progress, got %q", body)
+	}
+	if strings.Contains(body, "notifications/tools/progress") {
+		t.Fatalf("expected no legacy progress notification method, got %q", body)
+	}
+	if !strings.Contains(body, "\"progressToken\":\"req-progress-1\"") {
+		t.Fatalf("expected progress token payload, got %q", body)
+	}
+	if !strings.Contains(body, "\"total\":1") {
+		t.Fatalf("expected total=1 payload, got %q", body)
+	}
+}
+
+func TestSendRuntimeCommandProgressNotification_DropsInvalidToken(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.config.ToolControls.EmitProgressNotifications = true
+
+	sessionID := "session-progress-invalid"
+	server.sessionManager.CreateSession(sessionID)
+	rec := httptest.NewRecorder()
+	transport := NewStreamableHTTPTransport(rec, rec)
+	if !server.sessionManager.SetTransport(sessionID, transport) {
+		t.Fatalf("failed to bind transport for session %q", sessionID)
+	}
+
+	server.SendRuntimeCommandProgressNotification(tooltypes.RuntimeCommandProgressEvent{
+		SessionID:     sessionID,
+		CommandName:   "godot.project.run",
+		Progress:      0.4,
+		Message:       "dispatching runtime command",
+		ProgressToken: "",
+	})
+
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected no progress notification for invalid token, got %q", rec.Body.String())
+	}
+}
+
 func BenchmarkHandleMessageGetEditorStateParallel(b *testing.B) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
 	initHTTPTestLogger.Do(func() {
@@ -457,13 +652,14 @@ func BenchmarkHandleMessageGetEditorStateParallel(b *testing.B) {
 
 	sessionID := "session-bench-state"
 	server.sessionManager.CreateSession(sessionID)
+	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
 	runtimebridge.DefaultStore().Upsert(sessionID, runtimebridge.Snapshot{
 		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Bench.tscn"},
 	}, time.Now().UTC())
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "godot-editor-get-state",
+		"name":      "godot.editor.state.get",
 		"arguments": map[string]any{},
 	})
 	if err != nil {

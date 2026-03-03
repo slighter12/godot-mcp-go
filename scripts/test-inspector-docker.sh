@@ -6,6 +6,7 @@ SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERVER_PORT}/mcp}"
 INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
 
 log_file="$(mktemp /tmp/godot-mcp-go-inspector.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector.config.XXXXXX.json)"
@@ -55,7 +56,7 @@ run_inspector() {
   shift
   attempt=1
   while [ "$attempt" -le 5 ]; do
-    if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint node "$INSPECTOR_IMAGE" /app/cli/build/index.js "$INSPECTOR_SERVER_URL" --transport http --method "$method" "$@" >/dev/null; then
+    if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint node "$INSPECTOR_IMAGE" /app/cli/build/index.js "$INSPECTOR_SERVER_URL" --transport http --header "MCP-Protocol-Version: $PROTOCOL_VERSION" --method "$method" "$@" >/dev/null; then
       return 0
     fi
     attempt=$((attempt + 1))
@@ -69,6 +70,6 @@ run_inspector() {
 run_inspector tools/list
 run_inspector resources/list
 run_inspector prompts/list
-run_inspector tools/call --tool-name godot-offerings-list
+run_inspector tools/call --tool-name godot.offerings.list
 
 echo "Inspector docker checks passed"

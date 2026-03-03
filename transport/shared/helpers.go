@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
-	"time"
 
+	"github.com/slighter12/godot-mcp-go/internal/application/toolpipeline"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -67,37 +67,6 @@ var advancedTemplateControlTokens = map[string]struct{}{
 	"template": {},
 	"define":   {},
 	"block":    {},
-}
-
-// readOnlyToolNames enumerates tool calls that are allowed when permission_mode=read_only.
-// Unknown tool names are denied by default in read_only mode.
-var readOnlyToolNames = map[string]struct{}{
-	"godot-offerings-list":         {},
-	"godot-runtime-get-health":     {},
-	"godot-project-get-settings":   {},
-	"godot-project-list-resources": {},
-	"godot-editor-get-state":       {},
-	"godot-node-get-tree":          {},
-	"godot-node-get-properties":    {},
-	"godot-scene-list":             {},
-	"godot-scene-read":             {},
-	"godot-script-list":            {},
-	"godot-script-read":            {},
-	"godot-script-analyze":         {},
-	"godot-runtime-ping":           {},
-}
-
-var mutatingToolNames = map[string]struct{}{
-	"godot-project-run":   {},
-	"godot-project-stop":  {},
-	"godot-scene-create":  {},
-	"godot-scene-save":    {},
-	"godot-scene-apply":   {},
-	"godot-node-create":   {},
-	"godot-node-delete":   {},
-	"godot-node-modify":   {},
-	"godot-script-create": {},
-	"godot-script-modify": {},
 }
 
 type ToolCallOptions struct {
@@ -392,11 +361,6 @@ func DispatchStandardMethodWithOptions(msg jsonrpc.Request, toolManager *tools.M
 		return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{}, toolCallOptions)
 	case "ping":
 		return BuildPingResponse(msg)
-	case "tools/progress":
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil)
-		}
-		return nil
 	default:
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
@@ -775,158 +739,23 @@ func BuildToolCallResponseWithContext(msg jsonrpc.Request, toolManager *tools.Ma
 }
 
 func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager *tools.Manager, readResource func(string) (any, error), callContext ToolCallContext, options ToolCallOptions) *jsonrpc.Response {
-	var toolCall struct {
-		Name      string         `json:"name"`
-		Tool      string         `json:"tool"`
-		Arguments map[string]any `json:"arguments"`
-	}
-	if err := json.Unmarshal(msg.Params, &toolCall); err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
-	}
-
-	toolName := strings.TrimSpace(toolCall.Name)
-	if toolName == "" {
-		toolName = strings.TrimSpace(toolCall.Tool)
-	}
-	if toolName == "" {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
-	}
-	sessionID := strings.TrimSpace(callContext.SessionID)
-	status := "invalid_params"
-	startedAt := time.Now()
-	defer func() {
-		emitToolCallLog(
-			"tools.call.end",
-			"tool", toolName,
-			"session", sessionID,
-			"status", status,
-			"duration_ms", time.Since(startedAt).Milliseconds(),
-		)
-	}()
-	emitToolCallLog(
-		"tools.call.start",
-		"tool", toolName,
-		"session", sessionID,
-		"emit_progress_notifications", options.EmitProgressNotifications,
-	)
-
-	arguments := toolCall.Arguments
-	if arguments == nil {
-		arguments = map[string]any{}
-	}
-
-	if strings.HasPrefix(toolName, "godot://") {
-		if err := validateToolCallPermission(toolName, options); err != nil {
-			status = "permission_denied"
-			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(toolName, err))
-		}
-		if readResource == nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource handler is not configured", nil)
-		}
-		result, err := readResource(toolName)
-		if err != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-		}
-		status = "ok"
-		return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(toolName, result))
-	}
-
-	canonicalToolName := toolName
-	tool, found := toolManager.GetTool(toolName)
-	if found && tool != nil {
-		canonicalToolName = tool.Name()
-	}
-	if found && tool != nil {
-		if isMutatingToolName(canonicalToolName) && !callContext.MutatingAllowed {
-			status = "mutating_capability_required"
-			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, tooltypes.NewSemanticError(
-				tooltypes.SemanticKindNotSupported,
-				"Mutating tools require initialize.params.capabilities.godot.mutating=true",
-				map[string]any{
-					"reason": "mutating_capability_required",
-				},
-			)))
-		}
-		if err := validateToolCallPermission(canonicalToolName, options); err != nil {
-			status = "permission_denied"
-			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, err))
-		}
-		if options.SchemaValidationEnabled {
-			if err := validateToolArguments(tool.InputSchema(), arguments, options.RejectUnknownArguments); err != nil {
-				status = "schema_validation_failed"
-				return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, err))
-			}
-		}
-	}
-
-	arguments = enrichToolCallArguments(arguments, callContext, options)
-	result, err := toolManager.CallTool(canonicalToolName, arguments)
-	if err != nil {
-		if semanticErr, ok := tooltypes.AsSemanticError(err); ok {
-			status = "semantic_error"
-			return jsonrpc.NewResponse(msg.ID, buildToolSemanticErrorResult(canonicalToolName, semanticErr))
-		}
-		if tools.IsToolNotFound(err) {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
-		}
-		status = "execution_error"
-		return jsonrpc.NewResponse(msg.ID, buildToolExecutionErrorResult(canonicalToolName))
-	}
-
-	status = "ok"
-	return jsonrpc.NewResponse(msg.ID, BuildToolSuccessResult(canonicalToolName, result))
-}
-
-func validateToolCallPermission(toolName string, options ToolCallOptions) *tooltypes.SemanticError {
-	switch strings.ToLower(strings.TrimSpace(options.PermissionMode)) {
-	case "", ToolPermissionAllowAll:
-		return nil
-	case ToolPermissionReadOnly:
-		if isReadOnlyToolName(toolName) {
-			return nil
-		}
-		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by permission policy", map[string]any{
-			"reason":          "permission_denied",
-			"permission_mode": options.PermissionMode,
-		})
-	case ToolPermissionAllowList:
-		for _, allowedToolName := range options.AllowedTools {
-			if allowedToolName == toolName {
-				return nil
-			}
-		}
-		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by permission policy", map[string]any{
-			"reason":          "permission_denied",
-			"permission_mode": options.PermissionMode,
-		})
-	default:
-		logger.Warn("Unknown tool permission mode, denying tool call", "permission_mode", options.PermissionMode, "tool", toolName)
-		return tooltypes.NewSemanticError(tooltypes.SemanticKindNotSupported, "Tool call is blocked by unknown permission policy", map[string]any{
-			"reason":          "permission_denied",
-			"permission_mode": options.PermissionMode,
-		})
-	}
-}
-
-func isReadOnlyToolName(toolName string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(toolName))
-	if trimmed == "" {
-		return false
-	}
-	if strings.HasPrefix(trimmed, "godot://") {
-		return true
-	}
-	_, ok := readOnlyToolNames[trimmed]
-	return ok
-}
-
-func isMutatingToolName(toolName string) bool {
-	trimmed := strings.ToLower(strings.TrimSpace(toolName))
-	if trimmed == "" {
-		return false
-	}
-	_, ok := mutatingToolNames[trimmed]
-	return ok
+	return toolpipeline.Execute(toolpipeline.ExecuteInput{
+		Message:      msg,
+		ToolManager:  toolManager,
+		ReadResource: readResource,
+		Context: toolpipeline.ToolCallContext{
+			SessionID:          callContext.SessionID,
+			SessionInitialized: callContext.SessionInitialized,
+			MutatingAllowed:    callContext.MutatingAllowed,
+		},
+		Options: toolpipeline.ToolCallOptions{
+			SchemaValidationEnabled:   options.SchemaValidationEnabled,
+			RejectUnknownArguments:    options.RejectUnknownArguments,
+			PermissionMode:            options.PermissionMode,
+			AllowedTools:              options.AllowedTools,
+			EmitProgressNotifications: options.EmitProgressNotifications,
+		},
+	})
 }
 
 func validateToolArguments(schema mcp.InputSchema, arguments map[string]any, rejectUnknown bool) *tooltypes.SemanticError {
@@ -1095,15 +924,41 @@ func buildToolSemanticErrorResult(toolName string, semanticErr *tooltypes.Semant
 	}
 }
 
-func enrichToolCallArguments(arguments map[string]any, callContext ToolCallContext, options ToolCallOptions) map[string]any {
+func enrichToolCallArguments(arguments map[string]any, callContext ToolCallContext, options ToolCallOptions, progressToken any, hasProgressToken bool) map[string]any {
 	enriched := make(map[string]any, len(arguments)+1)
 	maps.Copy(enriched, arguments)
-	enriched["_mcp"] = map[string]any{
+	context := map[string]any{
 		"session_id":                  strings.TrimSpace(callContext.SessionID),
 		"session_initialized":         callContext.SessionInitialized,
 		"emit_progress_notifications": options.EmitProgressNotifications,
 	}
+	if hasProgressToken {
+		context["progress_token"] = progressToken
+	}
+	enriched["_mcp"] = context
 	return enriched
+}
+
+func extractProgressToken(meta map[string]any) (any, bool, error) {
+	if len(meta) == 0 {
+		return nil, false, nil
+	}
+	rawToken, exists := meta["progressToken"]
+	if !exists {
+		return nil, false, nil
+	}
+	switch token := rawToken.(type) {
+	case string:
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return nil, false, errors.New("Invalid progressToken in tools/call _meta")
+		}
+		return token, true, nil
+	case float64:
+		return token, true, nil
+	default:
+		return nil, false, errors.New("Invalid progressToken in tools/call _meta")
+	}
 }
 
 func ToolContentFromResult(result any) []map[string]any {

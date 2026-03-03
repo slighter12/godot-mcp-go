@@ -11,7 +11,7 @@ import (
 
 type ListOfferingsTool struct{}
 
-func (t *ListOfferingsTool) Name() string        { return "godot-offerings-list" }
+func (t *ListOfferingsTool) Name() string        { return "godot.offerings.list" }
 func (t *ListOfferingsTool) Description() string { return "Lists available offerings" }
 func (t *ListOfferingsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Offerings"}
@@ -28,7 +28,7 @@ func NewRuntimeHealthTool() *RuntimeHealthTool {
 	return &RuntimeHealthTool{}
 }
 
-func (t *RuntimeHealthTool) Name() string { return "godot-runtime-get-health" }
+func (t *RuntimeHealthTool) Name() string { return "godot.runtime.health.get" }
 
 func (t *RuntimeHealthTool) Description() string {
 	return "Returns runtime bridge freshness and command broker health metrics"

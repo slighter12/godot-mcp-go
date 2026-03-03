@@ -50,7 +50,7 @@ func TestToolManager(t *testing.T) {
 
 	// Test tool registration
 	testTool := &TestTool{
-		name:        "testTool",
+		name:        "godot.test.echo",
 		description: "Test tool",
 		schema: mcp.InputSchema{
 			Type:       "object",
@@ -65,7 +65,7 @@ func TestToolManager(t *testing.T) {
 	manager.RegisterTool(testTool)
 
 	// Test tool execution
-	result, err := manager.CallTool("testTool", map[string]any{})
+	result, err := manager.CallTool("godot.test.echo", map[string]any{})
 	if err != nil {
 		t.Errorf("CallTool failed: %v", err)
 	}
@@ -74,14 +74,14 @@ func TestToolManager(t *testing.T) {
 	}
 
 	// Test non-existent tool
-	_, err = manager.CallTool("nonExistentTool", map[string]any{})
+	_, err = manager.CallTool("godot.test.missing", map[string]any{})
 	if err == nil {
 		t.Error("Expected error for non-existent tool")
 	}
 
 	// Test tool error handling
 	errorTool := &TestTool{
-		name:        "errorTool",
+		name:        "godot.test.error",
 		description: "Error tool",
 		schema: mcp.InputSchema{
 			Type:       "object",
@@ -94,7 +94,7 @@ func TestToolManager(t *testing.T) {
 	}
 	manager.RegisterTool(errorTool)
 
-	_, err = manager.CallTool("errorTool", map[string]any{})
+	_, err = manager.CallTool("godot.test.error", map[string]any{})
 	if err == nil {
 		t.Error("Expected error from errorTool")
 	}
@@ -105,7 +105,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 
 	// Register a tool that takes some time to execute
 	slowTool := &TestTool{
-		name:        "slowTool",
+		name:        "godot.test.slow",
 		description: "Slow tool",
 		schema: mcp.InputSchema{
 			Type:       "object",
@@ -124,7 +124,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {
-			result, err := manager.CallTool("slowTool", map[string]any{})
+			result, err := manager.CallTool("godot.test.slow", map[string]any{})
 			if err != nil {
 				t.Errorf("Concurrent CallTool failed: %v", err)
 			}
@@ -137,7 +137,7 @@ func TestConcurrentToolExecution(t *testing.T) {
 }
 
 func TestSummarizeToolArgsForLog(t *testing.T) {
-	if got := summarizeToolArgsForLog("godot-runtime-ping", json.RawMessage(`{"k":"v"}`)); got == `{"k":"v"}` {
+	if got := summarizeToolArgsForLog("godot.runtime.ping", json.RawMessage(`{"k":"v"}`)); got == `{"k":"v"}` {
 		t.Fatalf("expected ping args to be summarized, got raw payload")
 	}
 

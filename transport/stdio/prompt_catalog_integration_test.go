@@ -22,7 +22,15 @@ func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			server := newTestStdioServer(tc.enabled)
-			respAny, err := server.handleMessage(jsonrpc.Request{ID: 1, Method: "initialize"})
+			respAny, err := server.handleMessage(jsonrpc.Request{
+				ID:     1,
+				Method: "initialize",
+				Params: mustRaw(t, map[string]any{
+					"protocolVersion": "2025-11-25",
+					"capabilities":    map[string]any{},
+					"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+				}),
+			})
 			if err != nil {
 				t.Fatalf("handle initialize: %v", err)
 			}
@@ -56,6 +64,7 @@ func TestStdioPromptsFlow(t *testing.T) {
 		Description: "desc",
 		Template:    "Review {{scene_path}}",
 	})
+	ensureStdioInitialized(t, server)
 
 	listRespAny, err := server.handleMessage(jsonrpc.Request{ID: 1, Method: "prompts/list", Params: mustRaw(t, map[string]any{})})
 	if err != nil {
@@ -107,6 +116,7 @@ func TestStdioPromptsGetRejectsNonStringArguments(t *testing.T) {
 		Description: "desc",
 		Template:    "Review {{scene_path}}",
 	})
+	ensureStdioInitialized(t, server)
 
 	getRespAny, err := server.handleMessage(jsonrpc.Request{
 		ID:     2,
@@ -140,6 +150,7 @@ func TestStdioPromptsGetRejectsNonStringArguments(t *testing.T) {
 
 func TestStdioPromptsNotSupportedWhenCatalogDisabled(t *testing.T) {
 	server := newTestStdioServer(false)
+	ensureStdioInitialized(t, server)
 
 	listRespAny, err := server.handleMessage(jsonrpc.Request{
 		ID:     1,
@@ -174,6 +185,7 @@ func TestStdioPromptsGetStrictModeRejectsMissingArguments(t *testing.T) {
 		Description: "desc",
 		Template:    "Review {{scene_path}} and {{line}}",
 	})
+	ensureStdioInitialized(t, server)
 
 	getRespAny, err := server.handleMessage(jsonrpc.Request{
 		ID:     2,
@@ -208,6 +220,37 @@ func newTestStdioServer(promptCatalogEnabled bool) *StdioServer {
 	server := NewStdioServer(toolManager)
 	server.AttachPromptCatalog(promptcatalog.NewRegistry(promptCatalogEnabled))
 	return server
+}
+
+func ensureStdioInitialized(t *testing.T, server *StdioServer) {
+	t.Helper()
+	initRespAny, err := server.handleMessage(jsonrpc.Request{
+		ID:     "init",
+		Method: "initialize",
+		Params: mustRaw(t, map[string]any{
+			"protocolVersion": "2025-11-25",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+		}),
+	})
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	initResp, ok := initRespAny.(*jsonrpc.Response)
+	if !ok || initResp.Error != nil {
+		t.Fatalf("expected successful initialize response, got %#v", initRespAny)
+	}
+
+	notifyResp, err := server.handleMessage(jsonrpc.Request{
+		Method: "notifications/initialized",
+		Params: mustRaw(t, map[string]any{}),
+	})
+	if err != nil {
+		t.Fatalf("notifications/initialized failed: %v", err)
+	}
+	if notifyResp != nil {
+		t.Fatalf("expected nil response for notifications/initialized, got %#v", notifyResp)
+	}
 }
 
 func mustRaw(t *testing.T, value any) json.RawMessage {

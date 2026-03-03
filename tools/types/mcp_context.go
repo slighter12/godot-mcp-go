@@ -7,6 +7,7 @@ type MCPContext struct {
 	SessionID          string
 	SessionInitialized bool
 	EmitProgress       bool
+	ProgressToken      any
 }
 
 func ExtractMCPContext(arguments map[string]any) MCPContext {
@@ -26,6 +27,15 @@ func ExtractMCPContext(arguments map[string]any) MCPContext {
 	}
 	if emitProgress, ok := rawContext["emit_progress_notifications"].(bool); ok {
 		ctx.EmitProgress = emitProgress
+	}
+	switch token := rawContext["progress_token"].(type) {
+	case string:
+		token = strings.TrimSpace(token)
+		if token != "" {
+			ctx.ProgressToken = token
+		}
+	case float64:
+		ctx.ProgressToken = token
 	}
 	return ctx
 }

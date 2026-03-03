@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/slighter12/godot-mcp-go/internal/domain/toolspec"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/tools/types"
@@ -48,6 +49,9 @@ func (m *Manager) RegisterTool(tool types.Tool) error {
 	name := tool.Name()
 	if name == "" {
 		return errors.New("tool name cannot be empty")
+	}
+	if !toolspec.ValidateToolName(name) {
+		return fmt.Errorf("invalid canonical tool name: %s", name)
 	}
 
 	m.tools[name] = tool
@@ -93,7 +97,7 @@ func summarizeToolArgsForLog(name string, args json.RawMessage) string {
 	}
 
 	switch name {
-	case "godot-runtime-sync", "godot-runtime-ping":
+	case "godot.runtime.sync", "godot.runtime.ping":
 		return fmt.Sprintf("<omitted:%d bytes>", len(args))
 	}
 
@@ -233,44 +237,17 @@ func ListScenesTool(args map[string]any) (any, error) {
 
 // getToolDescription returns the description for a given tool
 func getToolDescription(name string) string {
-	switch name {
-	case "listScenes":
-		return "Lists all available scenes in the project"
-	case "applyScene":
-		return "Applies a scene to the current project"
-	default:
-		return ""
-	}
+	_ = name
+	return ""
 }
 
 // getToolSchema returns the input schema for a given tool
 func getToolSchema(name string) mcp.InputSchema {
-	switch name {
-	case "listScenes":
-		return mcp.InputSchema{
-			Type:       "object",
-			Properties: map[string]any{},
-			Required:   []string{},
-			Title:      "List Scenes",
-		}
-	case "applyScene":
-		return mcp.InputSchema{
-			Type: "object",
-			Properties: map[string]any{
-				"scene": map[string]any{
-					"type":        "string",
-					"description": "The name of the scene to apply",
-				},
-			},
-			Required: []string{"scene"},
-			Title:    "Apply Scene",
-		}
-	default:
-		return mcp.InputSchema{
-			Type:       "object",
-			Properties: map[string]any{},
-			Required:   []string{},
-			Title:      "",
-		}
+	_ = name
+	return mcp.InputSchema{
+		Type:       "object",
+		Properties: map[string]any{},
+		Required:   []string{},
+		Title:      "",
 	}
 }

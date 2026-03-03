@@ -35,7 +35,7 @@ func TestAckEditorCommandTool_AcknowledgesPendingCommand(t *testing.T) {
 	capturedCommandID := ""
 	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		if id, ok := params["commandId"].(string); ok {
+		if id, ok := params["command_id"].(string); ok {
 			capturedCommandID = id
 		}
 		return true
@@ -49,7 +49,7 @@ func TestAckEditorCommandTool_AcknowledgesPendingCommand(t *testing.T) {
 	}
 	resultCh := make(chan dispatchResult, 1)
 	go func() {
-		ack, ok, reason := broker.DispatchAndWait("session-1", "godot-project-run", map[string]any{}, 2*time.Second)
+		ack, ok, reason := broker.DispatchAndWait("session-1", "godot.project.run", map[string]any{}, 2*time.Second)
 		resultCh <- dispatchResult{ack: ack, ok: ok, reason: reason}
 	}()
 
@@ -72,7 +72,7 @@ func TestAckEditorCommandTool_AcknowledgesPendingCommand(t *testing.T) {
 		},
 	})
 	if _, err := tool.Execute(raw); err != nil {
-		t.Fatalf("execute godot-runtime-ack: %v", err)
+		t.Fatalf("execute godot.runtime.ack: %v", err)
 	}
 
 	select {

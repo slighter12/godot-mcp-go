@@ -32,7 +32,7 @@ func TestGetProjectSettingsTool_ReturnsParsedEntries(t *testing.T) {
 	tool := &GetProjectSettingsTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"section_prefix":"application"}`))
 	if err != nil {
-		t.Fatalf("execute godot-project-get-settings: %v", err)
+		t.Fatalf("execute godot.project.settings.get: %v", err)
 	}
 
 	var result map[string]any
@@ -67,7 +67,7 @@ func TestListProjectResourcesTool_FiltersByExtension(t *testing.T) {
 	tool := &ListProjectResourcesTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"extensions":[".gd"]}`))
 	if err != nil {
-		t.Fatalf("execute godot-project-list-resources: %v", err)
+		t.Fatalf("execute godot.project.resources.list: %v", err)
 	}
 
 	var result map[string]any
@@ -99,7 +99,7 @@ func TestGetEditorStateTool_UsesRuntimeSnapshot(t *testing.T) {
 	tool := &GetEditorStateTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute godot-editor-get-state: %v", err)
+		t.Fatalf("execute godot.editor.state.get: %v", err)
 	}
 
 	var result map[string]any
@@ -128,7 +128,7 @@ func TestGetEditorStateTool_IsSessionScoped(t *testing.T) {
 	tool := &GetEditorStateTool{}
 	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
 	if err != nil {
-		t.Fatalf("execute godot-editor-get-state: %v", err)
+		t.Fatalf("execute godot.editor.state.get: %v", err)
 	}
 
 	var result map[string]any
@@ -164,7 +164,7 @@ func TestRunProject_DispatchesRuntimeCommand(t *testing.T) {
 	broker := runtimebridge.DefaultCommandBroker()
 	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		commandID, _ := params["commandId"].(string)
+		commandID, _ := params["command_id"].(string)
 		go func() {
 			broker.Ack(sessionID, runtimebridge.CommandAck{
 				CommandID: commandID,
@@ -187,7 +187,7 @@ func TestRunProject_DispatchesRuntimeCommand(t *testing.T) {
 
 	resultRaw, err := tool.Execute(raw)
 	if err != nil {
-		t.Fatalf("execute godot-project-run: %v", err)
+		t.Fatalf("execute godot.project.run: %v", err)
 	}
 
 	var result map[string]any

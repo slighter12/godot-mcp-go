@@ -8,29 +8,37 @@ const MIN_RUNTIME_CHANGE_POLL_SECONDS := 0.1
 const MAX_RUNTIME_TREE_DEPTH := 12
 const MAX_RUNTIME_NODE_COUNT := 2000
 
-var mcp_client: Node
-var mcp_interface: Node
+var mcp_client: StreamableHTTPClient
+var mcp_interface: MCPProtocolAdapter
+var connection_state_machine: ConnectionStateMachine
+var runtime_snapshot_collector: RuntimeSnapshotCollector
+var runtime_command_dispatcher: RuntimeCommandDispatcher
+var tool_catalog: ToolCatalog
 var settings_dialog: AcceptDialog
 var runtime_heartbeat_timer: Timer
 var runtime_change_timer: Timer
 var current_streamable_http_url: String = "http://localhost:9080/mcp"
 var runtime_heartbeat_seconds: float = DEFAULT_RUNTIME_HEARTBEAT_SECONDS
 var runtime_change_poll_seconds: float = DEFAULT_RUNTIME_CHANGE_POLL_SECONDS
-var last_snapshot_fingerprint: String = ""
 
 func _enter_tree():
     print("Godot MCP Plugin: Entering tree...")
 
-    # Create MCP client node.
-    mcp_client = preload("res://addons/godot_mcp/mcp_server.gd").new()
+    connection_state_machine = ConnectionStateMachine.new()
+    runtime_snapshot_collector = RuntimeSnapshotCollector.new()
+    runtime_command_dispatcher = RuntimeCommandDispatcher.new()
+    tool_catalog = ToolCatalog.new()
+
+    # Create MCP transport client node.
+    mcp_client = preload("res://addons/godot_mcp/streamable_http_client.gd").new()
     mcp_client.name = "mcp_client"
     add_child(mcp_client)
 
-    # Create MCP interface node.
-    mcp_interface = preload("res://addons/godot_mcp/mcp_interface.gd").new()
+    # Create MCP protocol adapter node.
+    mcp_interface = preload("res://addons/godot_mcp/mcp_protocol_adapter.gd").new()
     mcp_interface.name = "mcp_interface"
     add_child(mcp_interface)
-    mcp_interface.set_mcp_client(mcp_client)
+    mcp_interface.set_client(mcp_client)
 
     # Connect signals.
     mcp_client.connected.connect(Callable(self, "_on_mcp_connected"))
@@ -101,6 +109,10 @@ func _exit_tree():
 
     if settings_dialog:
         settings_dialog.queue_free()
+    connection_state_machine = null
+    runtime_snapshot_collector = null
+    runtime_command_dispatcher = null
+    tool_catalog = null
     print("Godot MCP Plugin: Cleanup complete")
 
 func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
@@ -121,19 +133,24 @@ func _disconnect_signal_if_connected(source: Object, signal_name: StringName, ha
 
 func _on_mcp_connected():
     print("Godot MCP Plugin: Connected to MCP server")
-    last_snapshot_fingerprint = ""
+    if connection_state_machine != null:
+        connection_state_machine.mark_connected()
     _sync_runtime_snapshot(true)
-    if mcp_interface != null and mcp_interface.tools.has("godot-runtime-get-health"):
-        mcp_interface.call_tool("godot-runtime-get-health", {})
+    if mcp_interface != null and mcp_interface.has_tool("godot.runtime.health.get"):
+        mcp_interface.call_tool("godot.runtime.health.get", {})
 
 func _on_mcp_disconnected():
     print("Godot MCP Plugin: Disconnected from MCP server")
+    if connection_state_machine != null:
+        connection_state_machine.mark_disconnected()
 
 func _on_mcp_error(error: String):
     print("Godot MCP Plugin: Error: ", error)
 
 func _on_mcp_message_received(message: Dictionary):
     mcp_interface.handle_message(message)
+    if tool_catalog != null and mcp_interface != null:
+        tool_catalog.replace_all(mcp_interface.get_tools())
 
 func _on_settings_pressed():
     print("MCP Plugin: Opening settings dialog")
@@ -149,80 +166,41 @@ func _on_runtime_sync_failed(error_message: String):
 
 func _on_runtime_command_received(command_id: String, command_name: String, arguments: Dictionary) -> void:
     var editor_interface = get_editor_interface()
-    if editor_interface == null:
-        mcp_interface.ack_runtime_command(command_id, false, {}, "Editor interface unavailable")
-        return
-
-    if command_name == "godot-project-run":
-        if not editor_interface.has_method("play_main_scene"):
-            mcp_interface.ack_runtime_command(command_id, false, {}, "play_main_scene is not available")
+    if runtime_command_dispatcher != null:
+        var mutating_handlers := {
+            "godot.scene.create": func(command_arguments: Dictionary, _editor: EditorInterface) -> Dictionary:
+                return _handle_scene_create(command_arguments),
+            "godot.scene.save": func(_command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+                return _handle_scene_save(target_editor),
+            "godot.scene.apply": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+                return _handle_scene_apply(target_editor, command_arguments),
+            "godot.node.create": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+                return _handle_node_create(target_editor, command_arguments),
+            "godot.node.delete": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+                return _handle_node_delete(target_editor, command_arguments),
+            "godot.node.modify": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+                return _handle_node_modify(target_editor, command_arguments),
+            "godot.script.create": func(command_arguments: Dictionary, _editor: EditorInterface) -> Dictionary:
+                return _handle_script_create(command_arguments),
+            "godot.script.modify": func(command_arguments: Dictionary, _editor: EditorInterface) -> Dictionary:
+                return _handle_script_modify(command_arguments),
+        }
+        var handled := runtime_command_dispatcher.dispatch(
+            command_id,
+            command_name,
+            arguments,
+            editor_interface,
+            mcp_interface,
+            mutating_handlers,
+            Callable(self, "_sync_runtime_snapshot")
+        )
+        if handled:
             return
-        editor_interface.play_main_scene()
-        _sync_runtime_snapshot(true)
-        mcp_interface.ack_runtime_command(command_id, true, {"running": true, "command": command_name}, "")
-        return
-
-    if command_name == "godot-project-stop":
-        if not editor_interface.has_method("stop_playing_scene"):
-            mcp_interface.ack_runtime_command(command_id, false, {}, "stop_playing_scene is not available")
-            return
-        editor_interface.stop_playing_scene()
-        _sync_runtime_snapshot(true)
-        mcp_interface.ack_runtime_command(command_id, true, {"running": false, "command": command_name}, "")
-        return
-
-    if command_name == "godot-scene-create":
-        var scene_create_payload = _handle_scene_create(arguments)
-        _ack_runtime_command_with_payload(command_id, scene_create_payload)
-        _sync_runtime_snapshot_if_success(scene_create_payload)
-        return
-
-    if command_name == "godot-scene-save":
-        var scene_save_payload = _handle_scene_save(editor_interface)
-        _ack_runtime_command_with_payload(command_id, scene_save_payload)
-        _sync_runtime_snapshot_if_success(scene_save_payload)
-        return
-
-    if command_name == "godot-scene-apply":
-        var scene_apply_payload = _handle_scene_apply(editor_interface, arguments)
-        _ack_runtime_command_with_payload(command_id, scene_apply_payload)
-        _sync_runtime_snapshot_if_success(scene_apply_payload)
-        return
-
-    if command_name == "godot-node-create":
-        var node_create_payload = _handle_node_create(editor_interface, arguments)
-        _ack_runtime_command_with_payload(command_id, node_create_payload)
-        _sync_runtime_snapshot_if_success(node_create_payload)
-        return
-
-    if command_name == "godot-node-delete":
-        var node_delete_payload = _handle_node_delete(editor_interface, arguments)
-        _ack_runtime_command_with_payload(command_id, node_delete_payload)
-        _sync_runtime_snapshot_if_success(node_delete_payload)
-        return
-
-    if command_name == "godot-node-modify":
-        var node_modify_payload = _handle_node_modify(editor_interface, arguments)
-        _ack_runtime_command_with_payload(command_id, node_modify_payload)
-        _sync_runtime_snapshot_if_success(node_modify_payload)
-        return
-
-    if command_name == "godot-script-create":
-        var script_create_payload = _handle_script_create(arguments)
-        _ack_runtime_command_with_payload(command_id, script_create_payload)
-        _sync_runtime_snapshot_if_success(script_create_payload)
-        return
-
-    if command_name == "godot-script-modify":
-        var script_modify_payload = _handle_script_modify(arguments)
-        _ack_runtime_command_with_payload(command_id, script_modify_payload)
-        _sync_runtime_snapshot_if_success(script_modify_payload)
-        return
 
     mcp_interface.ack_runtime_command(command_id, false, {}, "Unsupported runtime command: " + command_name)
 
 func _on_mcp_tool_result(tool_name: String, result: Dictionary) -> void:
-    if tool_name != "godot-runtime-get-health":
+    if tool_name != "godot.runtime.health.get":
         return
     _apply_runtime_bridge_health(result)
 
@@ -617,7 +595,7 @@ func _on_runtime_heartbeat_timeout() -> void:
     if mcp_interface == null:
         return
 
-    if last_snapshot_fingerprint == "":
+    if connection_state_machine == null or not connection_state_machine.has_snapshot_fingerprint():
         _sync_runtime_snapshot(true)
         return
 
@@ -636,10 +614,10 @@ func _sync_runtime_snapshot(force: bool) -> void:
         return
 
     var snapshot = _build_runtime_snapshot()
-    var fingerprint = JSON.stringify(snapshot).sha256_text()
-    if force or fingerprint != last_snapshot_fingerprint:
+    if connection_state_machine == null or connection_state_machine.should_sync(snapshot, force):
         if mcp_interface.sync_runtime_snapshot(snapshot):
-            last_snapshot_fingerprint = fingerprint
+            if connection_state_machine != null:
+                connection_state_machine.mark_snapshot_synced(snapshot)
 
 func _resolve_interval_setting(value: Variant, min_value: float, fallback_value: float) -> float:
     var interval := fallback_value
@@ -671,47 +649,9 @@ func _apply_runtime_bridge_health(health: Dictionary) -> void:
         runtime_change_timer.wait_time = runtime_change_poll_seconds
 
 func _build_runtime_snapshot() -> Dictionary:
-    var editor_interface = get_editor_interface()
-    if editor_interface == null:
-        return {
-            "root_summary": {
-                "project_path": ProjectSettings.globalize_path("res://")
-            },
-            "scene_tree": {},
-            "node_details": {}
-        }
-
-    var edited_root = editor_interface.get_edited_scene_root()
-    var root_summary = {
-        "project_path": ProjectSettings.globalize_path("res://"),
-        "active_scene": "",
-        "active_script": _resolve_active_script_path(editor_interface),
-        "root_path": "",
-        "root_name": "",
-        "root_type": "",
-        "child_count": 0
-    }
-    var scene_tree: Dictionary = {}
-    var node_details: Dictionary = {}
-
-    if edited_root != null:
-        root_summary["active_scene"] = _resolve_active_scene_path(edited_root)
-        root_summary["root_path"] = str(edited_root.get_path())
-        root_summary["root_name"] = str(edited_root.name)
-        root_summary["root_type"] = str(edited_root.get_class())
-        root_summary["child_count"] = int(edited_root.get_child_count())
-
-        var node_counter := [0]
-        scene_tree = _build_compact_tree(edited_root, 0, node_counter)
-
-        var details_counter := [0]
-        _collect_node_details(edited_root, node_details, 0, details_counter)
-
-    return {
-        "root_summary": root_summary,
-        "scene_tree": scene_tree,
-        "node_details": node_details
-    }
+    if runtime_snapshot_collector == null:
+        runtime_snapshot_collector = RuntimeSnapshotCollector.new()
+    return runtime_snapshot_collector.build_snapshot(get_editor_interface())
 
 func _resolve_active_scene_path(edited_root: Node) -> String:
     if edited_root == null:

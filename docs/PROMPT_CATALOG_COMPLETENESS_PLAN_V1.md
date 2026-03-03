@@ -109,7 +109,7 @@ All semantic errors include `error.data.kind`.
 ## Notifications and Capabilities
 
 - Streamable HTTP target protocol: `2025-11-25`
-- Prompt reload entrypoint: `godot-prompts-reload`
+- Prompt reload entrypoint: `godot.prompts.reload`
 - `notifications/prompts/list_changed` emits only when visible list metadata changes
 - stdio transport does not emit prompt list changed notifications
 

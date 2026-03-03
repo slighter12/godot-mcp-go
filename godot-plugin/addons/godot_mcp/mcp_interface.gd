@@ -3,6 +3,7 @@ extends Node
 signal tool_called(tool_name: String, arguments: Dictionary)
 signal tool_result(tool_name: String, result: Dictionary)
 signal tool_error(tool_name: String, error: String)
+signal tool_progress(tool_name: String, progress: float, total: float, message: String, progress_token: Variant)
 signal runtime_sync_failed(error: String)
 signal runtime_command_received(command_id: String, command_name: String, arguments: Dictionary)
 
@@ -82,11 +83,11 @@ func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
         return false
     if runtime_sync_in_flight:
         return false
-    if not tools.has("godot-runtime-sync"):
+    if not tools.has("godot.runtime.sync"):
         return false
 
     runtime_sync_in_flight = true
-    var request_id = _send_tools_call_request("godot-runtime-sync", {
+    var request_id = _send_tools_call_request("godot.runtime.sync", {
         "snapshot": snapshot
     }, {
         "kind": "runtime_sync"
@@ -99,18 +100,18 @@ func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
     return true
 
 func can_ping_runtime_bridge() -> bool:
-    return tools.has("godot-runtime-ping")
+    return tools.has("godot.runtime.ping")
 
 func ping_runtime_bridge() -> void:
     if mcp_client == null:
         return
     if runtime_ping_in_flight:
         return
-    if not tools.has("godot-runtime-ping"):
+    if not tools.has("godot.runtime.ping"):
         return
 
     runtime_ping_in_flight = true
-    var request_id = _send_tools_call_request("godot-runtime-ping", {}, {
+    var request_id = _send_tools_call_request("godot.runtime.ping", {}, {
         "kind": "runtime_ping"
     })
     if request_id == "":
@@ -150,9 +151,12 @@ func _handle_server_notification(message: Dictionary):
         if not tools_request_in_progress:
             _request_tools_list("")
         return
+    if method == "notifications/progress":
+        _handle_progress_notification(_as_dictionary(message.get("params", {})))
+        return
     if method == "notifications/godot/command":
         var params = _as_dictionary(message.get("params", {}))
-        var command_id = str(params.get("command_id", params.get("commandId", ""))).strip_edges()
+        var command_id = str(params.get("command_id", "")).strip_edges()
         var command_name = str(params.get("name", "")).strip_edges()
         var arguments = _as_dictionary(params.get("arguments", {}))
         if command_id != "" and command_name != "":
@@ -219,10 +223,10 @@ func _handle_tools_list_result(result: Variant):
     tools = tools_refresh_buffer.duplicate(true)
     tools_refresh_buffer.clear()
     tools_request_in_progress = false
-    if tools.has("godot-runtime-get-health"):
-        _send_tools_call_request("godot-runtime-get-health", {}, {
+    if tools.has("godot.runtime.health.get"):
+        _send_tools_call_request("godot.runtime.health.get", {}, {
             "kind": "tool_call",
-            "tool_name": "godot-runtime-get-health"
+            "tool_name": "godot.runtime.health.get"
         })
 
 func _handle_tool_call_result(result: Variant, pending: Dictionary):
@@ -261,21 +265,44 @@ func _handle_runtime_ping_result(result: Variant):
 func _handle_runtime_ack_result(result: Variant):
     _handle_runtime_tool_result(result, "Invalid runtime command ack result payload", false, false)
 
-func _build_tools_call_request(request_id: String, tool_name: String, arguments: Dictionary) -> Dictionary:
+func _handle_progress_notification(params: Dictionary) -> void:
+    var progress_token: Variant = params.get("progressToken", null)
+    var tool_name := ""
+    if progress_token is String:
+        var token = str(progress_token)
+        var pending = _as_dictionary(pending_requests.get(token, {}))
+        tool_name = str(pending.get("tool_name", "")).strip_edges()
+
+    var progress := float(params.get("progress", 0.0))
+    var total := float(params.get("total", 1.0))
+    var message := str(params.get("message", "")).strip_edges()
+    emit_signal("tool_progress", tool_name, progress, total, message, progress_token)
+
+func _build_tools_call_request(request_id: String, tool_name: String, arguments: Dictionary, progress_token: String = "") -> Dictionary:
+    var params := {
+        "name": tool_name,
+        "arguments": arguments
+    }
+    var trimmed_progress_token := progress_token.strip_edges()
+    if trimmed_progress_token != "":
+        params["_meta"] = {
+            "progressToken": trimmed_progress_token
+        }
+
     return {
         "jsonrpc": "2.0",
         "id": request_id,
         "method": "tools/call",
-        "params": {
-            "name": tool_name,
-            "arguments": arguments
-        }
+        "params": params
     }
 
 func _send_tools_call_request(tool_name: String, arguments: Dictionary, pending: Dictionary) -> String:
     var request_id = _new_request_id()
-    pending_requests[request_id] = pending
-    var request = _build_tools_call_request(request_id, tool_name, arguments)
+    var pending_with_metadata := pending.duplicate(true)
+    pending_with_metadata["tool_name"] = tool_name
+    pending_with_metadata["progress_token"] = request_id
+    pending_requests[request_id] = pending_with_metadata
+    var request = _build_tools_call_request(request_id, tool_name, arguments, request_id)
     if not mcp_client.send_message(request):
         pending_requests.erase(request_id)
         return ""
@@ -303,7 +330,7 @@ func _handle_runtime_tool_result(result: Variant, invalid_payload_message: Strin
 func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "v1") -> void:
     if mcp_client == null:
         return
-    if not tools.has("godot-runtime-ack"):
+    if not tools.has("godot.runtime.ack"):
         return
 
     var arguments = {
@@ -322,7 +349,7 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
     var trimmed_schema_version = schema_version.strip_edges()
     if trimmed_schema_version != "":
         arguments["schema_version"] = trimmed_schema_version
-    var request_id = _send_tools_call_request("godot-runtime-ack", arguments, {
+    var request_id = _send_tools_call_request("godot.runtime.ack", arguments, {
         "kind": "runtime_ack"
     })
     if request_id == "":

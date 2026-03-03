@@ -521,13 +521,13 @@ func TestPromptCatalogNormalizeAndValidate(t *testing.T) {
 func TestToolControlsNormalizeAndValidate(t *testing.T) {
 	cfg := NewConfig()
 	cfg.ToolControls.PermissionMode = " ALLOW_LIST "
-	cfg.ToolControls.AllowedTools = []string{" godot-scene-read ", "godot-scene-read", "", "godot-script-read "}
+	cfg.ToolControls.AllowedTools = []string{" godot.scene.read ", "godot.scene.read", "", "godot.script.read "}
 	cfg.Normalize()
 
 	if cfg.ToolControls.PermissionMode != "allow_list" {
 		t.Fatalf("Expected allow_list permission mode after normalize, got %q", cfg.ToolControls.PermissionMode)
 	}
-	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot-scene-read" || cfg.ToolControls.AllowedTools[1] != "godot-script-read" {
+	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot.scene.read" || cfg.ToolControls.AllowedTools[1] != "godot.script.read" {
 		t.Fatalf("Unexpected normalized allowed tools: %#v", cfg.ToolControls.AllowedTools)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -604,7 +604,7 @@ func TestLoadConfigToolControlsEnvOverrides(t *testing.T) {
 			"schema_validation_enabled": true,
 			"reject_unknown_arguments": false,
 			"permission_mode": "allow_all",
-			"allowed_tools": ["godot-scene-read"],
+			"allowed_tools": ["godot.scene.read"],
 			"emit_progress_notifications": true
 		}
 	}`, logPath)
@@ -616,7 +616,7 @@ func TestLoadConfigToolControlsEnvOverrides(t *testing.T) {
 	t.Setenv("MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED", "false")
 	t.Setenv("MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS", "true")
 	t.Setenv("MCP_TOOL_CONTROLS_PERMISSION_MODE", "ALLOW_LIST")
-	t.Setenv("MCP_TOOL_CONTROLS_ALLOWED_TOOLS", " godot-script-read, godot-script-read ,godot-scene-read ")
+	t.Setenv("MCP_TOOL_CONTROLS_ALLOWED_TOOLS", " godot.script.read, godot.script.read ,godot.scene.read ")
 	t.Setenv("MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS", "false")
 
 	cfg, err := LoadConfig(configPath)
@@ -633,7 +633,7 @@ func TestLoadConfigToolControlsEnvOverrides(t *testing.T) {
 	if cfg.ToolControls.PermissionMode != "allow_list" {
 		t.Fatalf("Expected permission mode allow_list, got %q", cfg.ToolControls.PermissionMode)
 	}
-	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot-script-read" || cfg.ToolControls.AllowedTools[1] != "godot-scene-read" {
+	if len(cfg.ToolControls.AllowedTools) != 2 || cfg.ToolControls.AllowedTools[0] != "godot.script.read" || cfg.ToolControls.AllowedTools[1] != "godot.scene.read" {
 		t.Fatalf("Unexpected allowed tools: %#v", cfg.ToolControls.AllowedTools)
 	}
 	if cfg.ToolControls.EmitProgressNotifications {

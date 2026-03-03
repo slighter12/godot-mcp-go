@@ -15,13 +15,14 @@ type SessionManager struct {
 
 // Session represents an MCP session
 type Session struct {
-	ID          string
-	Created     time.Time
-	LastSeen    time.Time
-	Initialized bool
-	ProtocolVer string
-	Mutating    bool
-	Transport   *StreamableHTTPTransport
+	ID                 string
+	Created            time.Time
+	LastSeen           time.Time
+	InitializeAccepted bool
+	Initialized        bool
+	ProtocolVer        string
+	Mutating           bool
+	Transport          *StreamableHTTPTransport
 }
 
 // NewSessionManager creates a new session manager
@@ -143,9 +144,40 @@ func (sm *SessionManager) MarkInitialized(sessionID string) bool {
 	if !exists {
 		return false
 	}
+	if !session.InitializeAccepted {
+		return false
+	}
 	session.Initialized = true
 	session.LastSeen = time.Now()
 	return true
+}
+
+// MarkInitializeAccepted marks a session as having completed initialize successfully.
+// It resets initialized until notifications/initialized is received.
+func (sm *SessionManager) MarkInitializeAccepted(sessionID string) bool {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	session.InitializeAccepted = true
+	session.Initialized = false
+	session.LastSeen = time.Now()
+	return true
+}
+
+// IsInitializeAccepted checks whether initialize completed successfully for a session.
+func (sm *SessionManager) IsInitializeAccepted(sessionID string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	return session.InitializeAccepted
 }
 
 // IsInitialized checks whether the session exists and completed initialized notification.

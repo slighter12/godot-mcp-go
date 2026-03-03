@@ -29,6 +29,11 @@ func TestStdioServer(t *testing.T) {
 	// Test init message
 	initMsg := jsonrpc.Request{
 		Method: "initialize",
+		Params: json.RawMessage(`{
+			"protocolVersion": "2025-11-25",
+			"capabilities": {},
+			"clientInfo": {"name":"test","version":"0.1.0"}
+		}`),
 	}
 	response, err := server.handleMessage(initMsg)
 	if err != nil {
@@ -36,6 +41,17 @@ func TestStdioServer(t *testing.T) {
 	}
 	if response == nil {
 		t.Error("handleInit returned nil response")
+	}
+
+	initializedMsg := jsonrpc.Request{
+		Method: "notifications/initialized",
+	}
+	response, err = server.handleMessage(initializedMsg)
+	if err != nil {
+		t.Errorf("handle initialized notification failed: %v", err)
+	}
+	if response != nil {
+		t.Errorf("initialized notification should not return response, got %T", response)
 	}
 
 	// Test ping message
@@ -54,7 +70,7 @@ func TestStdioServer(t *testing.T) {
 	toolCallMsg := jsonrpc.Request{
 		Method: "tools/call",
 		Params: json.RawMessage(`{
-			"tool": "godot-scene-list",
+			"tool": "godot.scene.list",
 			"arguments": {}
 		}`),
 	}
@@ -78,22 +94,6 @@ func TestStdioServer(t *testing.T) {
 		t.Error("handleToolsList returned nil response")
 	}
 
-	// Test progress message
-	progressMsg := jsonrpc.Request{
-		Method: "tools/progress",
-		Params: json.RawMessage(`{
-			"tool": "godot-scene-list",
-			"progress": 0.5,
-			"message": "Processing..."
-		}`),
-	}
-	response, err = server.handleMessage(progressMsg)
-	if err != nil {
-		t.Errorf("handleProgress failed: %v", err)
-	}
-	if response != nil {
-		t.Error("handleProgress should return nil response")
-	}
 }
 
 func TestMessageValidation(t *testing.T) {
@@ -104,7 +104,7 @@ func TestMessageValidation(t *testing.T) {
 	// Create a stdio server
 	server := NewStdioServer(toolManager)
 
-	// Test invalid message type
+	// Test invalid message type before initialization gate
 	invalidTypeMsg := jsonrpc.Request{
 		Method: "invalid_type",
 	}
@@ -112,11 +112,42 @@ func TestMessageValidation(t *testing.T) {
 	if err != nil {
 		t.Errorf("handleMessage returned unexpected error for invalid notification method: %v", err)
 	}
-	if response != nil {
-		t.Error("handleMessage should return nil response for unknown notification method")
+	rpcResp, ok := response.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatal("expected invalid request response before session initialization")
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
+		t.Fatalf("expected invalid request, got %d", rpcResp.Error.Code)
 	}
 
-	// Unknown request method with id should return method-not-found error response.
+	// Complete stdio handshake for standard method validation.
+	initResp, err := server.handleMessage(jsonrpc.Request{
+		ID:     "init",
+		Method: "initialize",
+		Params: json.RawMessage(`{
+			"protocolVersion": "2025-11-25",
+			"capabilities": {},
+			"clientInfo": {"name":"test","version":"0.1.0"}
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("initialize failed: %v", err)
+	}
+	initRPCResp, ok := initResp.(*jsonrpc.Response)
+	if !ok || initRPCResp.Error != nil {
+		t.Fatalf("expected successful initialize response, got %#v", initResp)
+	}
+	notifyResp, err := server.handleMessage(jsonrpc.Request{
+		Method: "notifications/initialized",
+	})
+	if err != nil {
+		t.Fatalf("initialized notification failed: %v", err)
+	}
+	if notifyResp != nil {
+		t.Fatalf("expected nil response for initialized notification, got %#v", notifyResp)
+	}
+
+	// Unknown request method with id should return method-not-found error response after initialization.
 	unknownRequestMsg := jsonrpc.Request{
 		ID:     "req-1",
 		Method: "invalid_type",
@@ -148,11 +179,116 @@ func TestMessageValidation(t *testing.T) {
 	if response == nil {
 		t.Fatal("handleMessage should return error response for invalid payload format")
 	}
-	rpcResp, ok := response.(*jsonrpc.Response)
+	rpcResp, ok = response.(*jsonrpc.Response)
 	if !ok {
 		t.Fatal("handleMessage should return jsonrpc.Response for invalid payload format")
 	}
 	if rpcResp.Error == nil {
 		t.Error("invalid payload should produce JSON-RPC error response")
 	}
+}
+
+func TestInitializedNotificationBeforeInitializeRejected(t *testing.T) {
+	toolManager := tools.NewManager()
+	toolManager.RegisterDefaultTools()
+	server := NewStdioServer(toolManager)
+
+	resp, err := server.handleMessage(jsonrpc.Request{
+		Method: "notifications/initialized",
+	})
+	if err != nil {
+		t.Fatalf("handleMessage returned error: %v", err)
+	}
+	rpcResp, ok := resp.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatalf("expected invalid request response, got %T", resp)
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
+		t.Fatalf("expected invalid request code, got %d", rpcResp.Error.Code)
+	}
+}
+
+func TestInitializedNotificationWithIDRejected(t *testing.T) {
+	toolManager := tools.NewManager()
+	toolManager.RegisterDefaultTools()
+	server := NewStdioServer(toolManager)
+
+	resp, err := server.handleMessage(jsonrpc.Request{
+		ID:     "invalid-notify-id",
+		Method: "notifications/initialized",
+	})
+	if err != nil {
+		t.Fatalf("handleMessage returned error: %v", err)
+	}
+	rpcResp, ok := resp.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatalf("expected invalid request response, got %T", resp)
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
+		t.Fatalf("expected invalid request code, got %d", rpcResp.Error.Code)
+	}
+	if rpcResp.Error.Message != "Invalid request" {
+		t.Fatalf("expected invalid request message, got %q", rpcResp.Error.Message)
+	}
+}
+
+func TestStandardMethodsRequireInitializedInStdio(t *testing.T) {
+	toolManager := tools.NewManager()
+	toolManager.RegisterDefaultTools()
+	server := NewStdioServer(toolManager)
+
+	resp, err := server.handleMessage(jsonrpc.Request{
+		ID:     "tools-list-before-init",
+		Method: "tools/list",
+		Params: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("handleMessage returned error: %v", err)
+	}
+	rpcResp, ok := resp.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatalf("expected invalid request response, got %T", resp)
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
+		t.Fatalf("expected invalid request code, got %d", rpcResp.Error.Code)
+	}
+}
+
+func TestInitializeRequiresExactProtocolVersion(t *testing.T) {
+	toolManager := tools.NewManager()
+	toolManager.RegisterDefaultTools()
+	server := NewStdioServer(toolManager)
+
+	resp, err := server.handleMessage(jsonrpc.Request{
+		ID:     "init-missing",
+		Method: "initialize",
+		Params: json.RawMessage(`{"capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}`),
+	})
+	if err != nil {
+		t.Fatalf("handleMessage returned error: %v", err)
+	}
+	rpcResp, ok := resp.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatalf("expected JSON-RPC error response, got %T", resp)
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected invalid params, got %d", rpcResp.Error.Code)
+	}
+
+	resp, err = server.handleMessage(jsonrpc.Request{
+		ID:     "init-wrong",
+		Method: "initialize",
+		Params: json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}`),
+	})
+	if err != nil {
+		t.Fatalf("handleMessage returned error: %v", err)
+	}
+	rpcResp, ok = resp.(*jsonrpc.Response)
+	if !ok || rpcResp.Error == nil {
+		t.Fatalf("expected JSON-RPC error response, got %T", resp)
+	}
+	if rpcResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected invalid params, got %d", rpcResp.Error.Code)
+	}
+
 }

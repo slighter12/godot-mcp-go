@@ -14,24 +14,37 @@ This document is the canonical implementation status for the repository.
 ### Completed
 
 - Project setup and module layout
-- MCP initialization and protocol negotiation (`2025-11-25` target)
+- MCP initialization with strict protocol validation (`2025-11-25` only)
 - Dual transport support (`stdio`, `streamable_http`)
-- Session lifecycle, protocol header validation, SSE transport lifecycle
-- Tool manager and canonical `godot-*` name binding
+- Session lifecycle gate (`initialize` -> `notifications/initialized` -> regular methods), protocol header validation, SSE transport lifecycle
+- Tool manager and canonical `godot.*` name binding
+- Layered server boundary:
+  - `internal/protocol` for MCP frame/version validation
+  - `internal/application/toolpipeline` for `tools/call` orchestration
+  - `internal/domain/toolspec` for naming and permission policy
+  - `internal/infra/notifications` for standard progress payloads
 - Runtime bridge snapshot store with stale + grace freshness policy
-- Runtime bridge internal tools (`godot-runtime-sync`, `godot-runtime-ping`, `godot-runtime-ack`)
+- Runtime bridge internal tools (`godot.runtime.sync`, `godot.runtime.ping`, `godot.runtime.ack`)
 - Runtime command broker with dispatch/ack/timeout observability metrics
-- Runtime-backed read tools (`godot-editor-get-state`, `godot-node-get-tree`, `godot-node-get-properties`)
+- Runtime-backed read tools (`godot.editor.state.get`, `godot.node.tree.get`, `godot.node.properties.get`)
 - Runtime mutating command bridge for project/scene/node/script tools
 - Session-scoped mutating capability gate (`initialize.params.capabilities.godot.mutating=true`)
-- Project tool completeness (`godot-project-get-settings`, `godot-project-list-resources`) with deterministic pagination
+- Project tool completeness (`godot.project.settings.get`, `godot.project.resources.list`) with deterministic pagination
 - Script create overwrite policy (`replace=false` default, semantic conflict reason)
 - Prompt catalog strict rendering mode and advanced rendering mode
 - Prompt catalog watch modes (`poll` + `event`) with automatic fallback behavior
 - Prompt catalog governance tiers for advanced rendering (`restricted`, `trusted`)
 - Policy metadata and runtime metrics resources (`godot://policy/godot-checks`, `godot://runtime/metrics`)
-- Runtime health tool (`godot-runtime-get-health`)
+- Runtime health tool (`godot.runtime.health.get`)
 - Tool controls (schema validation, unknown argument rejection, read-only/allow-list permission modes)
+- Runtime bridge internal permission bypass (`godot.runtime.sync`, `godot.runtime.ping`, `godot.runtime.ack`)
+- Plugin modularized entry/wiring:
+  - `connection_state_machine.gd`
+  - `streamable_http_client.gd`
+  - `mcp_protocol_adapter.gd`
+  - `runtime_snapshot_collector.gd`
+  - `runtime_command_dispatcher.gd`
+  - `tool_catalog.gd`
 - CI and manual verification scripts (Go tests, HTTP smoke/ping/delete/session isolation, Inspector docker)
 
 ### Release State
@@ -46,7 +59,19 @@ This document is the canonical implementation status for the repository.
 3. `make test-http-ping`
 4. `make test-http-delete`
 5. `make test-http-session-isolation`
-6. `make test-inspector-docker`
+6. `make test-http-protocol-header`
+7. `make test-http-allow-list-runtime-bridge`
+8. `make test-lifecycle-initialized-id`
+9. `make test-inspector-docker`
+10. `make test-inspector-header-negative`
+
+## Acceptance Failure Criteria
+
+- Any JSON-RPC lifecycle deviation from `initialize -> notifications/initialized -> regular methods`
+- Any transport mismatch between stdio and streamable HTTP for lifecycle error semantics
+- Any permission regression where non-internal tools bypass `permission_mode`
+- Any runtime bridge regression where `godot.runtime.sync`, `godot.runtime.ping`, or `godot.runtime.ack` is blocked by `read_only` / `allow_list`
+- Any protocol version acceptance outside `2025-11-25`
 
 ## Update Rules
 

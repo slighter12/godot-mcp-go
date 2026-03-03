@@ -5,14 +5,14 @@ A Go implementation of an MCP server for Godot with `stdio` and Streamable HTTP 
 ## Features
 
 - Dual transport support: `stdio` and `streamable_http`
-- Canonical `godot-*` tool contract
+- Canonical `godot.*` tool contract
 - Session-scoped runtime bridge with stale + grace freshness policy
 - Session mutating capability gate (`capabilities.godot.mutating=true`)
 - Prompt catalog with `legacy`, `strict`, and `advanced` rendering modes
 - Prompt source governance tiers (`restricted`, `trusted`)
 - Prompt source watch modes (`poll`, `event` with fallback)
 - Runtime observability:
-  - tool: `godot-runtime-get-health`
+  - tool: `godot.runtime.health.get`
   - resource: `godot://runtime/metrics`
 - Tool controls: schema validation, unknown argument rejection, permission policy, progress notifications
 
@@ -49,12 +49,32 @@ Endpoints:
 
 - MCP: `http://localhost:9080/mcp`
 - Info: `http://localhost:9080/`
+- Required header: `MCP-Protocol-Version: 2025-11-25`
 
 ### Stdio
 
 ```bash
 MCP_USE_STDIO=true ./godot-mcp-go
 ```
+
+Initialize requests over stdio must include `params.protocolVersion="2025-11-25"`.
+
+## Protocol and Progress Contract
+
+- Supported protocol version is strict: `2025-11-25` only.
+- Tool progress is emitted only as `notifications/progress`.
+- Progress notifications require `tools/call` `_meta.progressToken`.
+
+## Streamable HTTP Lifecycle
+
+Streamable HTTP requests are strictly lifecycle-gated:
+
+1. `initialize` must succeed.
+2. Client must send `notifications/initialized`.
+3. Only then regular methods are accepted (`tools/*`, `resources/*`, `prompts/*`, `ping`).
+
+If `initialize` fails validation, the server does not create a usable new session and does not return `MCP-Session-Id`.
+If `initialized` is sent before successful `initialize`, server returns JSON-RPC `invalid_request`.
 
 ## Mutating Capability Negotiation
 
@@ -179,44 +199,50 @@ Default config shape:
 
 ### Scene
 
-- `godot-scene-list`
-- `godot-scene-read`
-- `godot-scene-create`
-- `godot-scene-save`
-- `godot-scene-apply`
+- `godot.scene.list`
+- `godot.scene.read`
+- `godot.scene.create`
+- `godot.scene.save`
+- `godot.scene.apply`
 
 ### Node
 
-- `godot-node-get-tree`
-- `godot-node-get-properties`
-- `godot-node-create`
-- `godot-node-delete`
-- `godot-node-modify`
+- `godot.node.tree.get`
+- `godot.node.properties.get`
+- `godot.node.create`
+- `godot.node.delete`
+- `godot.node.modify`
 
 ### Script
 
-- `godot-script-list`
-- `godot-script-read`
-- `godot-script-create` (`replace` optional, default `false`)
-- `godot-script-modify`
-- `godot-script-analyze`
+- `godot.script.list`
+- `godot.script.read`
+- `godot.script.create` (`replace` optional, default `false`)
+- `godot.script.modify`
+- `godot.script.analyze`
 
 ### Project
 
-- `godot-project-get-settings` (paginated)
-- `godot-project-list-resources` (paginated)
-- `godot-editor-get-state`
-- `godot-project-run`
-- `godot-project-stop`
+- `godot.project.settings.get` (paginated)
+- `godot.project.resources.list` (paginated)
+- `godot.editor.state.get`
+- `godot.project.run`
+- `godot.project.stop`
 
 ### Utility
 
-- `godot-offerings-list`
-- `godot-runtime-get-health`
-- `godot-runtime-sync` (internal)
-- `godot-runtime-ping` (internal)
-- `godot-runtime-ack` (internal)
-- `godot-prompts-reload`
+- `godot.offerings.list`
+- `godot.runtime.health.get`
+- `godot.runtime.sync` (internal)
+- `godot.runtime.ping` (internal)
+- `godot.runtime.ack` (internal)
+- `godot.prompts.reload`
+
+Internal runtime bridge tools are exempt from `tool_controls.permission_mode` filtering:
+
+- `godot.runtime.sync`
+- `godot.runtime.ping`
+- `godot.runtime.ack`
 
 ## Resources
 
