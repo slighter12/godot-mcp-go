@@ -149,10 +149,11 @@ Output:
 
 - `replace` (optional boolean, default `false`)
 
-When target file exists and `replace=false`, response returns semantic conflict reason:
+When target file exists and `replace=false`, the runtime ack envelope returns:
 
-- `error.kind=invalid_params`
-- `error.reason=script_exists_requires_replace`
+- `success=false`
+- `reason=script_exists_requires_replace`
+- `error` contains the human-readable conflict message
 
 ## Tool Controls
 

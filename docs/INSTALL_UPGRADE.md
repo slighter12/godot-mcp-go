@@ -8,9 +8,9 @@
 go build
 ```
 
-1. Place or link plugin into your Godot project `addons/godot_mcp`.
+2. Place or link plugin into your Godot project `addons/godot_mcp`.
 
-2. Start server (default Streamable HTTP):
+3. Start server (default Streamable HTTP):
 
 ```bash
 ./godot-mcp-go
@@ -66,6 +66,12 @@ Current line introduces the following compatibility changes:
 ```json
 {
   "prompt_catalog": {
+    "paths": [
+      "/abs/path/to/prompt-sources"
+    ],
+    "allowed_roots": [
+      "/abs/path/to/prompt-sources"
+    ],
     "watch": { "mode": "poll" },
     "governance": {
       "roots": [
@@ -80,6 +86,10 @@ Current line introduces the following compatibility changes:
 }
 ```
 
+Use this only when you want the MCP server itself to expose file-backed prompt sources through prompt catalog endpoints.
+
+This prompt catalog feature is separate from the repository `skills/` directory. The bundled companion skills are external agent-side artifacts that call this server through the `godot.*` MCP tools; the server does not load them as built-in prompt catalog content.
+
 ## Runtime Bridge Config Additions
 
 ```json
@@ -91,11 +101,17 @@ Current line introduces the following compatibility changes:
 }
 ```
 
+## Project Root Resolution
+
+File-backed read tools (`godot.scene.list`, `godot.scene.read`, `godot.script.read`, `godot.script.list`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) resolve paths against:
+
+1. `GODOT_PROJECT_ROOT`, when set
+2. otherwise the server process working directory, searching upward for `project.godot`
+
+If the server is started outside the target Godot project tree, set `GODOT_PROJECT_ROOT=/abs/path/to/project` before using file-backed reads.
+
+Scene mutating tools (`godot.scene.create`, `godot.scene.save`, `godot.scene.apply`) are runtime-backed operations and still require an initialized HTTP session, mutating capability negotiation, and a healthy runtime bridge.
+
 ## Validation Checklist
 
-1. `go test ./...`
-2. `make test-http-smoke`
-3. `make test-http-ping`
-4. `make test-http-delete`
-5. `make test-http-session-isolation`
-6. `make test-inspector-docker`
+See `docs/DEVELOPMENT.md` — Verification Gate section for the full test matrix.

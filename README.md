@@ -10,7 +10,7 @@ A Go implementation of an MCP server for Godot with `stdio` and Streamable HTTP 
 - Session mutating capability gate (`capabilities.godot.mutating=true`)
 - Prompt catalog with `legacy`, `strict`, and `advanced` rendering modes
 - Prompt source governance tiers (`restricted`, `trusted`)
-- Prompt source watch modes (`poll`, `event` with fallback)
+- Prompt source watch modes (`poll`, `event`)
 - Runtime observability:
   - tool: `godot.runtime.health.get`
   - resource: `godot://runtime/metrics`
@@ -278,14 +278,34 @@ godot-mcp-go/
 ├── tools/
 ├── transport/
 ├── godot-plugin/
+├── skills/
 └── main.go
 ```
+
+## Skills Library
+
+The `skills/` directory contains companion AI agent skills for **consumers** of this MCP server. They are not runtime features of the server itself, not part of the MCP tool contract, and not contributor workflow docs for developing this repository.
+
+These skills are external prompt/skill artifacts used by an agent that already supports skills. The relationship is:
+
+- the skill decides the workflow
+- the skill calls this server through the `godot.*` MCP tools
+- the server does not load, expose, or execute the skills as built-in MCP functionality
+
+Available skills:
+
+- **`skills/godot-game-dev-workflow`** — Vertical-slice workflow for Godot 4 gameplay feature work, bug fixes, and refactors. See [`SKILL.md`](skills/godot-game-dev-workflow/SKILL.md) for usage and reference docs.
+
+## Limitations
+
+- **The bundled skill currently targets 2D-oriented workflows.** The current `godot-game-dev-workflow` references, recipes, and docs routing focus on common 2D gameplay tasks. This limitation applies to the companion skill content, not to the existence of the underlying `godot.*` MCP tools themselves. 3D-specific skill guidance is planned for a future release.
 
 ## Documentation
 
 - `docs/DEVELOPMENT.md`
-- `docs/V1_TOOL_CONTRACT.md`
-- `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`
+- `docs/TOOL_CONTRACT.md`
+- `docs/RUNTIME_COMMAND_PROTOCOL.md`
+- `docs/PROMPT_CATALOG_COMPLETENESS_PLAN.md`
 - `docs/INSTALL_UPGRADE.md`
 
 ## License
