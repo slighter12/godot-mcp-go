@@ -7,7 +7,7 @@ This document is the canonical implementation status for the repository.
 | Document | Owns | Does Not Own |
 | --- | --- | --- |
 | `docs/DEVELOPMENT.md` | Cross-project delivery status, release readiness, verification gates | Prompt payload field-level schema details |
-| `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md` | Prompt catalog runtime contract details and policy behavior | Non-prompt roadmap and packaging sequence |
+| `docs/PROMPT_CATALOG_COMPLETENESS_PLAN.md` | Prompt catalog runtime contract details and policy behavior | Non-prompt roadmap and packaging sequence |
 
 ## Status Snapshot
 
@@ -30,9 +30,9 @@ This document is the canonical implementation status for the repository.
 - Runtime mutating command bridge for project/scene/node/script tools
 - Session-scoped mutating capability gate (`initialize.params.capabilities.godot.mutating=true`)
 - Project tool completeness (`godot.project.settings.get`, `godot.project.resources.list`) with deterministic pagination
-- Script create overwrite policy (`replace=false` default, semantic conflict reason)
+- Script create overwrite policy (`replace=false` default, conflict reason surfaced in runtime ack`)
 - Prompt catalog strict rendering mode and advanced rendering mode
-- Prompt catalog watch modes (`poll` + `event`) with automatic fallback behavior
+- Prompt catalog watch modes (`poll` + `event`)
 - Prompt catalog governance tiers for advanced rendering (`restricted`, `trusted`)
 - Policy metadata and runtime metrics resources (`godot://policy/godot-checks`, `godot://runtime/metrics`)
 - Runtime health tool (`godot.runtime.health.get`)
@@ -76,5 +76,5 @@ This document is the canonical implementation status for the repository.
 ## Update Rules
 
 - Update this file when delivery status or verification gates change.
-- Keep prompt contract payload details in `docs/PROMPT_CATALOG_COMPLETENESS_PLAN_V1.md`.
+- Keep prompt contract payload details in `docs/PROMPT_CATALOG_COMPLETENESS_PLAN.md`.
 - Keep user-facing migration steps in `docs/INSTALL_UPGRADE.md`.

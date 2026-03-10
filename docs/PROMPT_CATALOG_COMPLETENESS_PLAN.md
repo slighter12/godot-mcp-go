@@ -91,7 +91,7 @@ Governance behavior for advanced mode:
 `prompt_catalog.watch.mode` behavior:
 
 - `poll`: uses polling fingerprint reload (`auto_reload.*`)
-- `event`: uses fsnotify event watch; on watcher init failure, runtime falls back to polling mode
+- `event`: uses fsnotify event watch
 
 Both modes share the same reload pipeline and list-changed emission logic.
 
