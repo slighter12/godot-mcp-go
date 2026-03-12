@@ -37,7 +37,7 @@ Use this reference when the task changes scene ownership, node hierarchy, reusab
 ## Node Hierarchy And Reuse
 
 - Avoid unnecessarily deep scene trees. Split a subtree into a reusable subscene when depth or mixed responsibilities make the scene harder to maintain.
-- Use descriptive node names that reflect role instead of leaving default generated names in place.
+- Use descriptive `PascalCase` node names that reflect role instead of leaving default generated names in place.
 - Prefer groups for stable category-style tagging, not for transient state management.
 
 ## Reuse And Global Patterns

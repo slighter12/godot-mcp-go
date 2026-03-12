@@ -6,7 +6,7 @@ Use this reference when the task depends on script structure, language conventio
 
 - Keep one script focused on one owner or one responsibility boundary.
 - Prefer type hints for new or modified variables, parameters, and return values when the surrounding code already uses typed GDScript or the type meaning is not obvious.
-- Use `snake_case` for variables and functions, `UPPER_SNAKE_CASE` for constants, and `_leading_underscore` for private members.
+- Use `PascalCase` for class names, `snake_case` for variables and functions, `UPPER_SNAKE_CASE` for constants, and `_leading_underscore` for private members.
 - Use `@export` for inspector-facing values that are likely to be tuned.
 - Use `@onready` for stable child-node references instead of repeated `get_node()` calls.
 - Prefer named constants or exported values over unexplained literals.
