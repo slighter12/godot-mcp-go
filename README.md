@@ -284,7 +284,10 @@ godot-mcp-go/
 
 ## Skills Library
 
-The `skills/` directory contains companion AI agent skills for **consumers** of this MCP server. They are not runtime features of the server itself, not part of the MCP tool contract, and not contributor workflow docs for developing this repository.
+The `skills/` directory contains companion AI agent skills for
+**consumers** of this MCP server. They are not runtime features of the
+server itself, not part of the MCP tool contract, and not contributor
+workflow docs for developing this repository.
 
 These skills are external prompt/skill artifacts used by an agent that already supports skills. The relationship is:
 
@@ -294,11 +297,28 @@ These skills are external prompt/skill artifacts used by an agent that already s
 
 Available skills:
 
-- **`skills/godot-game-dev-workflow`** — Vertical-slice workflow for Godot 4 gameplay feature work, bug fixes, and refactors. See [`SKILL.md`](skills/godot-game-dev-workflow/SKILL.md) for usage and reference docs.
+- **`skills/policy-godot`** — Cross-project Godot 4 design and review policy for
+  2D and early 3D architectural decisions. It covers scene ownership,
+  physics/collision decisions, UI/input ownership, signals, resources,
+  gameplay patterns, Rust/gdext boundaries, and engineering-quality
+  review/debug guidance. Use it as the general design reference before
+  choosing a repo-specific execution flow.
+- **`skills/godot-game-dev-workflow`** — Vertical-slice workflow for Godot 4
+  gameplay feature work, bug fixes, and refactors through this repository's
+  `godot.*` MCP tools. It is the execution layer for this server, currently
+  centered on common 2D-oriented gameplay slices and tool recipes. It depends
+  on `skills/policy-godot` for design guidance. See
+  [`SKILL.md`](skills/godot-game-dev-workflow/SKILL.md) for workflow usage.
 
 ## Limitations
 
-- **The bundled skill currently targets 2D-oriented workflows.** The current `godot-game-dev-workflow` references, recipes, and docs routing focus on common 2D gameplay tasks. This limitation applies to the companion skill content, not to the existence of the underlying `godot.*` MCP tools themselves. 3D-specific skill guidance is planned for a future release.
+- **The workflow skill currently targets 2D-oriented execution examples.** The
+  current `godot-game-dev-workflow` references, playbooks, and recipes focus on
+  common 2D gameplay tasks. This limitation applies to the workflow skill, not
+  to the underlying `godot.*` MCP tools themselves. `skills/policy-godot`
+  already provides broader cross-project architectural guidance, including
+  early 3D-oriented design decisions, but its lane-specific examples are still
+  less complete than the 2D workflow coverage.
 
 ## Documentation
 

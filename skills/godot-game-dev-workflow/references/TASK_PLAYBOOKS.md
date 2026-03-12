@@ -4,76 +4,181 @@ Use these playbooks to keep work scoped to one gameplay slice and one clear owne
 
 ## Player Ability Or Movement
 
-Example:
+When this lane applies:
 
-- Add a player double jump.
+- Add or adjust a player ability, controller mechanic, or movement rule such as double jump, dash, or coyote time.
 
-Flow:
+Primary policy refs:
 
-1. Inspect the player scene root, movement script, exported tuning, and relevant input action.
-2. Identify the existing owner of jump state, velocity updates, and landing reset.
-3. Extend the current owner instead of adding a parallel movement system.
-4. Verify with one player scenario and one adjacent regression check such as wall jump, ledge contact, or animation timing.
-5. Leave one next slice such as animation polish or VFX, not both.
+- `../../policy-godot/references/GODOT_GAMEPLAY_PATTERNS.md`
+- `../../policy-godot/references/GODOT_PHYSICS_AND_COLLISION.md`
+- `../../policy-godot/references/GODOT_GDSCRIPT.md`
+
+Primary MCP reads:
+
+- `godot.scene.read`
+- `godot.script.read`
+- `godot.project.settings.get` when input actions matter
+
+Mutation boundary:
+
+- Extend the existing controller owner.
+- Change one movement or ability path at a time.
+- Avoid adding a parallel controller, new global state, or a new state machine.
+
+Verification focus:
+
+- Primary scenario such as jump, dash, or landing behavior.
+- Adjacent regression such as wall contact, animation timing, or input buffering.
+- Owner and callback sanity on the final movement path.
 
 ## Collision Or Interaction Bug
 
-Example:
+When this lane applies:
 
-- Character passes through wall.
+- Resolve pass-through, trigger, pickup, overlap, hurtbox, hitbox, or body-type bugs.
 
-Flow:
+Primary policy refs:
 
-1. Inspect collision nodes, masks/layers, body type, and the movement callback that advances the actor.
-2. Check whether the issue is data setup, node wiring, or movement logic before editing.
-3. Fix one root cause only.
-4. Verify the exact repro path plus one nearby interaction such as slopes, triggers, or pickups.
-5. Report one follow-up hardening step if risk remains.
+- `../../policy-godot/references/GODOT_PHYSICS_AND_COLLISION.md`
+- `../../policy-godot/references/GODOT_SCENE_STRUCTURE.md`
+- `../../policy-godot/references/GODOT_ENGINEERING_QUALITY.md`
+
+Primary MCP reads:
+
+- `godot.scene.read`
+- `godot.script.read`
+- `godot.node.tree.get`
+- `godot.node.properties.get`
+
+Mutation boundary:
+
+- Fix one root cause only: node type, callback, movement helper, layers/masks, monitoring, or owner wiring.
+- Avoid mixing setup fixes with broader architecture rewrites.
+
+Verification focus:
+
+- Exact repro path.
+- One adjacent interaction such as slopes, pickups, detection, or damage zones.
+- Physics owner, body type, and callback sanity after the change.
 
 ## Scene Composition Or Content Setup
 
-Example:
-- Add a new interactable object.
+When this lane applies:
 
-Flow:
-1. Inspect the target scene hierarchy and an existing comparable object.
-2. Reuse the current composition pattern before adding custom wiring.
-3. Add the minimal node tree, collision/input setup, and script hook.
-4. Verify placement, trigger path, and feedback to the player.
-5. Report the next polish or content-authoring step.
+- Add a new interactable, reusable object, level chunk, or content-facing node tree.
+
+Primary policy refs:
+
+- `../../policy-godot/references/GODOT_SCENE_STRUCTURE.md`
+- `../../policy-godot/references/GODOT_RESOURCE_MANAGEMENT.md`
+- `../../policy-godot/references/GODOT_SIGNALS.md`
+
+Primary MCP reads:
+
+- `godot.scene.read`
+- `godot.project.resources.list`
+- `godot.node.tree.get` when runtime context matters
+
+Mutation boundary:
+
+- Reuse an existing composition pattern or subscene when possible.
+- Add only the minimal node tree, resource wiring, and script hook needed for the slice.
+- Avoid introducing new wrapper scenes or global coordination by default.
+
+Verification focus:
+
+- Placement and ownership in the target scene.
+- Trigger or interaction path.
+- Reuse sanity: no unnecessary duplication of existing assets or patterns.
 
 ## UI Or HUD Sync
 
-Example:
-- Update health HUD after damage.
+When this lane applies:
 
-Flow:
-1. Inspect the UI scene, the gameplay data source, and current signal or callback flow.
-2. Keep data ownership in gameplay code and presentation ownership in UI code.
-3. Add or fix one update path only.
-4. Verify the gameplay event, the visual update, and absence of duplicate or stale updates.
-5. Report the next UI refinement step.
+- Sync HUD, prompt, or UI widgets to gameplay state, or fix UI input behavior tied to gameplay events.
+
+Primary policy refs:
+
+- `../../policy-godot/references/GODOT_UI_AND_INPUT.md`
+- `../../policy-godot/references/GODOT_SIGNALS.md`
+- `../../policy-godot/references/GODOT_GAMEPLAY_PATTERNS.md`
+
+Primary MCP reads:
+
+- `godot.scene.read`
+- `godot.script.read`
+- `godot.node.tree.get` when runtime ownership is unclear
+
+Mutation boundary:
+
+- Keep gameplay as the source of truth and UI as presentation.
+- Add or fix one signal or callback path at a time.
+- Avoid moving gameplay rules into `Control` code.
+
+Verification focus:
+
+- One gameplay event reaching one UI update path.
+- No duplicate connections or stale cached state.
+- Correct UI/input ownership for the final callback path.
+- Input ownership does not drift from the controller or gameplay owner into a UI callback without an explicit reason.
 
 ## Enemy Behavior Or State Transition
 
-Example:
-- Enemy should switch from patrol to chase when the player enters range.
+When this lane applies:
 
-Flow:
-1. Inspect the enemy scene, the state owner, and the detection path such as signal, group, or area overlap.
-2. Reuse the current state representation instead of introducing a new one.
-3. Implement one transition or reaction at a time.
-4. Verify entry, exit, and fallback behavior.
-5. Report the next transition or tuning slice.
+- Add or fix one enemy reaction, AI transition, detection rule, or animation-driven gameplay response.
+
+Primary policy refs:
+
+- `../../policy-godot/references/GODOT_GAMEPLAY_PATTERNS.md`
+- `../../policy-godot/references/GODOT_PHYSICS_AND_COLLISION.md`
+- `../../policy-godot/references/GODOT_SIGNALS.md`
+
+Primary MCP reads:
+
+- `godot.scene.read`
+- `godot.script.read`
+- `godot.node.tree.get` when detection ownership is unclear
+
+Mutation boundary:
+
+- Reuse the current state representation before introducing a new one.
+- Implement one transition or reaction at a time.
+- Avoid introducing a state machine unless the existing representation is already insufficient.
+
+Verification focus:
+
+- Entry, exit, and fallback behavior for the changed transition.
+- Detection ownership and signal path.
+- Animation and gameplay ownership sanity after the change.
 
 ## Refactor Without Gameplay Change
 
-Example:
-- Split a monolithic enemy behavior function.
+When this lane applies:
 
-Flow:
-1. Inspect call sites, node dependencies, and timing assumptions.
-2. Extract one coherent function boundary while preserving current inputs and outputs.
-3. Do not mix refactor work with new behavior.
-4. Verify the previous gameplay scenario still behaves the same.
-5. Report the next safe extraction candidate.
+- Extract or simplify script structure without changing behavior.
+
+Primary policy refs:
+
+- `../../policy-godot/references/GODOT_ENGINEERING_QUALITY.md`
+- `../../policy-godot/references/GODOT_GDSCRIPT.md`
+- `../../policy-godot/references/GODOT_LIFECYCLE.md`
+
+Primary MCP reads:
+
+- `godot.script.read`
+- `godot.script.analyze`
+- `godot.scene.read` when node dependencies affect the refactor
+
+Mutation boundary:
+
+- Preserve ownership, callback timing, and state boundaries.
+- Extract one coherent function or helper boundary per slice.
+- Do not mix refactor work with new gameplay behavior.
+
+Verification focus:
+
+- Previous scenario still reasons the same way.
+- No ownership or callback drift.
+- One clear next safe extraction candidate.
