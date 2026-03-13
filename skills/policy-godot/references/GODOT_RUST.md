@@ -1,6 +1,6 @@
 # Godot Rust Guidance
 
-Use this reference when the task targets Rust-based Godot code, gdext registration, native integration boundaries, or GDScript-to-Rust coordination.
+Use this reference when the task targets Rust-based Godot code, GDExtension registration, native integration boundaries, or GDScript-to-Rust coordination.
 
 ## Default Answer
 

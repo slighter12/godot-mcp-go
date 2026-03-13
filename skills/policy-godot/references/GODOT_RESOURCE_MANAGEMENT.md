@@ -7,7 +7,7 @@ Use this reference when the task touches asset loading, scene instancing, shared
 - Prefer the loading API and language boundary already used by the project.
 - In GDScript, use `preload()` for stable compile-time resources that are reused often.
 - In GDScript, use `load()` when the path is dynamic or chosen at runtime.
-- In Rust/gdext or mixed-language projects, keep resource loading and ownership on the side that already owns the mechanic or data unless there is a clear reason to move the boundary.
+- In Rust / GDExtension or mixed-language projects, keep resource loading and ownership on the side that already owns the mechanic or data unless there is a clear reason to move the boundary.
 - Avoid repeated resource loading inside `_process()` or `_physics_process()`.
 - Instance reusable scenes through `PackedScene.instantiate()`.
 - Reuse existing assets and shared resource files before duplicating content for one feature slice.

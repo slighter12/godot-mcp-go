@@ -147,7 +147,7 @@ Common routing:
 
 ## Resources, Packed Scenes, and Loading
 
-Use these pages when the task depends on `preload()`, `load()`, `PackedScene`, `Resource`, or asynchronous loading behavior. When the project is implemented in Rust/gdext, pair this section with `Godot Rust / GDExtension` below and keep the resource boundary aligned with the existing project split.
+Use these pages when the task depends on `preload()`, `load()`, `PackedScene`, `Resource`, or asynchronous loading behavior. When the project is implemented in Rust / GDExtension, pair this section with `Godot Rust / GDExtension` below and keep the resource boundary aligned with the existing project split.
 
 - `PackedScene` class reference: <https://docs.godotengine.org/en/stable/classes/class_packedscene.html>
   - Use for scene instancing behavior and saved scene data expectations.

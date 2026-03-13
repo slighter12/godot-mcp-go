@@ -1,6 +1,6 @@
 ---
 name: policy-godot
-description: "Decision-first Godot 4 policy guidance for scene ownership, physics, UI/input, signals, resources, gameplay patterns, and Rust/gdext. Use this for cross-project 2D and early 3D design and review decisions, independent of any repository-specific MCP workflow."
+description: "Decision-first Godot 4 policy guidance for scene ownership, physics, UI/input, signals, resources, gameplay patterns, and Rust / GDExtension. Use this for cross-project 2D and early 3D design and review decisions, independent of any repository-specific MCP workflow."
 ---
 
 # Godot Policy Guide
@@ -11,7 +11,7 @@ Use this skill when the request is about:
 
 - Choosing how a Godot 4 feature should be designed before deciding how to execute it.
 - Reviewing or designing scene ownership, root node choice, signals, physics behavior, UI input ownership, or resource boundaries.
-- Applying cross-project Godot guidance for 2D, early 3D architectural questions, UI, shared data, or Rust/gdext integrations.
+- Applying cross-project Godot guidance for 2D, early 3D architectural questions, UI, shared data, or Rust / GDExtension integrations.
 - Evaluating tradeoffs such as local owner vs autoload, direct call vs signal, direct instancing vs pooling, or simple transitions vs state machine.
 - Debugging or reviewing architecture, callback timing, collision setup, UI/gameplay boundaries, or refactor risk.
 - Planning animation integration, AI transitions, save/load boundaries, progression state, spawn-heavy systems, or native code boundaries.
@@ -78,7 +78,7 @@ Use these only after explaining why the default stack is insufficient:
 - AI transitions, animation ownership, save/load, progression state, or pooling questions: `references/GODOT_GAMEPLAY_PATTERNS.md`
 - Review risk, regression analysis, performance concerns, or refactor safety: `references/GODOT_ENGINEERING_QUALITY.md`
 - GDScript structure, typing, naming, or script-level maintainability: `references/GODOT_GDSCRIPT.md`
-- Rust/gdext API surface or ownership boundaries: `references/GODOT_RUST.md`
+- Rust / GDExtension API surface or ownership boundaries: `references/GODOT_RUST.md`
 
 Use the smallest relevant set of references for the current decision.
 
