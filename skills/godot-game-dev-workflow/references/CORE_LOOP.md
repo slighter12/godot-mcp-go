@@ -14,6 +14,19 @@ Output:
 - One player-facing goal.
 - One acceptance check.
 
+## Task Lane Gateway
+
+Route the task to one primary lane before selecting tools:
+
+- Controller or gameplay slice -> `../../policy-godot/references/GODOT_GAMEPLAY_PATTERNS.md`
+- Collision or physics bug -> `../../policy-godot/references/GODOT_PHYSICS_AND_COLLISION.md`
+- Scene composition or content setup -> `../../policy-godot/references/GODOT_SCENE_STRUCTURE.md`
+- UI or HUD sync -> `../../policy-godot/references/GODOT_UI_AND_INPUT.md`
+- AI or state transition -> `../../policy-godot/references/GODOT_GAMEPLAY_PATTERNS.md`
+- Refactor without behavior change -> `../../policy-godot/references/GODOT_ENGINEERING_QUALITY.md`
+
+If the task spans multiple lanes, choose the one that owns the primary acceptance check and defer the others to a later slice.
+
 ## Step 2: Confirm runtime bridge and inspect the actual owner
 
 Precondition:
@@ -21,14 +34,14 @@ Precondition:
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`.
 - Runtime-backed reads (`godot.editor.state.get`, `godot.node.tree.get`, `godot.node.properties.get`) require initialized MCP HTTP session state plus a fresh runtime snapshot.
-- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `references/SAFETY_AND_VERIFICATION.md`).
+- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
 
 Inspect:
 
 - The scene that owns the mechanic.
-- The node path or signal connection that carries the behavior.
+- The node path, signal path, or collision path that carries the behavior.
 - The script that updates the mechanic.
-- The input action, collision-related scene or script setup, animation hook, or exported declarations when relevant.
+- The input action, animation hook, exported declarations, or reusable resource when relevant.
 
 Rules:
 
@@ -52,15 +65,13 @@ Avoid:
 
 ## Step 4: Implement with Godot conventions
 
-Use these defaults unless the project already does something else:
+Use these execution defaults unless the project already does something else:
 
-- Scenes for composition and reusable entities.
-- Scripts for behavior.
-- `@export` values for tuning, `@onready` for child node references.
-- Signals or groups for cross-node communication.
-- `_physics_process()` for movement or collision-sensitive logic.
-- `_process()` for visual-only updates.
-- When the task needs GDScript syntax or Godot engine semantics, route to `references/OFFICIAL_DOCS_MAP.md` and prefer the official GDScript examples.
+- Keep the change inside one lane and one primary owner.
+- Use the lane's policy reference before inventing a new structure.
+- Prefer `@export` values for tuning and `@onready` for stable child-node references when the current project style allows them.
+- Keep physics-sensitive changes on the physics path and UI-sensitive changes on the UI path.
+- When the task needs exact GDScript syntax or engine semantics, route to `OFFICIAL_DOCS_MAP.md` and prefer the official GDScript examples.
 
 Script modification constraint:
 
@@ -74,6 +85,7 @@ Always verify with:
 
 - A state readback using `godot.script.read`, `godot.scene.read`, `godot.node.tree.get`, or `godot.node.properties.get` depending on what the tool actually exposes. For mutating runtime commands, also use the ack payload returned by the tool.
 - A logical gameplay scenario analysis: reason through the expected behavior given the code and scene state, and flag any adjacent risk.
+- An owner and callback sanity check: verify the final state still leaves one clear source of truth on the intended timing path.
 - Optionally use `godot.project.run` to launch the game for manual user testing, then confirm the result.
 
 Examples:
