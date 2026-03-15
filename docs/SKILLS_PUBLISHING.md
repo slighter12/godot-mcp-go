@@ -62,6 +62,9 @@ required for skill installation.
 
 Pinned install pattern after a release tag exists:
 
+Use a direct path to the skill under the tagged repository tree, for example
+`https://github.com/<owner>/<repo>/tree/<tag>/skills/<skill-name>`.
+
 See [`README.md`](../README.md) for the current pinned install examples and the
 active repository tag once one is published.
 
@@ -89,7 +92,8 @@ Why this is the default:
 - users need one stable point to reference when reporting issues
 - skill content and `godot.*` tool behavior evolve together in this repository
 - a shared tag keeps rollback and compatibility discussions simple
-- installs are only reproducible when the repo URL is pinned to a tag or commit SHA
+- installs are only reproducible when the source points to a tagged repository
+  tree, a commit-specific snapshot, or an equivalent fixed local checkout
 
 When communicating changes, describe them as repository-level changes first,
 then call out skill-specific notes if needed.

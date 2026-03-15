@@ -314,8 +314,8 @@ bunx skills add https://github.com/slighter12/godot-mcp-go --skill godot-game-de
 Pinned install examples:
 
 ```bash
-npx skills add https://github.com/slighter12/godot-mcp-go#v0.1.0 --skill policy-godot
-bunx skills add https://github.com/slighter12/godot-mcp-go#v0.1.0 --skill godot-game-dev-workflow
+npx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.1.0/skills/policy-godot
+bunx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.1.0/skills/godot-game-dev-workflow
 ```
 
 See [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the
