@@ -9,19 +9,19 @@ func dispatch(command_id: String, command_name: String, arguments: Dictionary, e
 		return true
 
 	if command_name == "godot.project.run":
-		if not editor_interface.has_method("play_main_scene"):
+		if not ClassDB.class_has_method("EditorInterface", "play_main_scene"):
 			protocol_adapter.ack_runtime_command(command_id, false, {}, "play_main_scene is not available")
 			return true
-		editor_interface.play_main_scene()
+		EditorInterface.play_main_scene()
 		sync_callback.call(true)
 		protocol_adapter.ack_runtime_command(command_id, true, {"running": true, "command": command_name}, "")
 		return true
 
 	if command_name == "godot.project.stop":
-		if not editor_interface.has_method("stop_playing_scene"):
+		if not ClassDB.class_has_method("EditorInterface", "stop_playing_scene"):
 			protocol_adapter.ack_runtime_command(command_id, false, {}, "stop_playing_scene is not available")
 			return true
-		editor_interface.stop_playing_scene()
+		EditorInterface.stop_playing_scene()
 		sync_callback.call(true)
 		protocol_adapter.ack_runtime_command(command_id, true, {"running": false, "command": command_name}, "")
 		return true

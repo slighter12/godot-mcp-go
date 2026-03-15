@@ -7,10 +7,11 @@ const MIN_RUNTIME_HEARTBEAT_SECONDS := 1.0
 const MIN_RUNTIME_CHANGE_POLL_SECONDS := 0.1
 const MAX_RUNTIME_TREE_DEPTH := 12
 const MAX_RUNTIME_NODE_COUNT := 2000
+const CONNECTION_STATE_MACHINE_SCRIPT := preload("res://addons/godot_mcp/connection_state_machine.gd")
 
 var mcp_client: StreamableHTTPClient
 var mcp_interface: MCPProtocolAdapter
-var connection_state_machine: ConnectionStateMachine
+var connection_state_machine
 var runtime_snapshot_collector: RuntimeSnapshotCollector
 var runtime_command_dispatcher: RuntimeCommandDispatcher
 var tool_catalog: ToolCatalog
@@ -24,7 +25,7 @@ var runtime_change_poll_seconds: float = DEFAULT_RUNTIME_CHANGE_POLL_SECONDS
 func _enter_tree():
     print("Godot MCP Plugin: Entering tree...")
 
-    connection_state_machine = ConnectionStateMachine.new()
+    connection_state_machine = CONNECTION_STATE_MACHINE_SCRIPT.new()
     runtime_snapshot_collector = RuntimeSnapshotCollector.new()
     runtime_command_dispatcher = RuntimeCommandDispatcher.new()
     tool_catalog = ToolCatalog.new()
@@ -41,18 +42,18 @@ func _enter_tree():
     mcp_interface.set_client(mcp_client)
 
     # Connect signals.
-    mcp_client.connected.connect(Callable(self, "_on_mcp_connected"))
-    mcp_client.disconnected.connect(Callable(self, "_on_mcp_disconnected"))
-    mcp_client.error.connect(Callable(self, "_on_mcp_error"))
-    mcp_client.message_received.connect(Callable(self, "_on_mcp_message_received"))
-    mcp_interface.runtime_sync_failed.connect(Callable(self, "_on_runtime_sync_failed"))
-    mcp_interface.runtime_command_received.connect(Callable(self, "_on_runtime_command_received"))
-    mcp_interface.tool_result.connect(Callable(self, "_on_mcp_tool_result"))
+    mcp_client.connected.connect(Callable(self , "_on_mcp_connected"))
+    mcp_client.disconnected.connect(Callable(self , "_on_mcp_disconnected"))
+    mcp_client.error.connect(Callable(self , "_on_mcp_error"))
+    mcp_client.message_received.connect(Callable(self , "_on_mcp_message_received"))
+    mcp_interface.runtime_sync_failed.connect(Callable(self , "_on_runtime_sync_failed"))
+    mcp_interface.runtime_command_received.connect(Callable(self , "_on_runtime_command_received"))
+    mcp_interface.tool_result.connect(Callable(self , "_on_mcp_tool_result"))
 
     # Create settings dialog.
     settings_dialog = preload("res://addons/godot_mcp/mcp_settings_dialog.tscn").instantiate()
     add_child(settings_dialog)
-    settings_dialog.connect("settings_saved", Callable(self, "_on_settings_saved"))
+    settings_dialog.connect("settings_saved", Callable(self , "_on_settings_saved"))
 
     # Add toolbar menu item.
     add_tool_menu_item("MCP Settings", _on_settings_pressed)
@@ -119,7 +120,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
     if timer == null:
         return
     timer.stop()
-    var timeout_callable := Callable(self, timeout_handler)
+    var timeout_callable := Callable(self , timeout_handler)
     if timer.timeout.is_connected(timeout_callable):
         timer.timeout.disconnect(timeout_callable)
     timer.queue_free()
@@ -127,7 +128,7 @@ func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 func _disconnect_signal_if_connected(source: Object, signal_name: StringName, handler_name: String) -> void:
     if source == null:
         return
-    var handler := Callable(self, handler_name)
+    var handler := Callable(self , handler_name)
     if source.is_connected(signal_name, handler):
         source.disconnect(signal_name, handler)
 
@@ -192,7 +193,7 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
             editor_interface,
             mcp_interface,
             mutating_handlers,
-            Callable(self, "_sync_runtime_snapshot")
+            Callable(self , "_sync_runtime_snapshot")
         )
         if handled:
             return
@@ -279,14 +280,14 @@ func _handle_scene_create(arguments: Dictionary) -> Dictionary:
         "bytes_written": content.length()
     })
 
-func _handle_scene_save(editor_interface: EditorInterface) -> Dictionary:
-    var edited_root = editor_interface.get_edited_scene_root()
+func _handle_scene_save(_editor_interface: EditorInterface) -> Dictionary:
+    var edited_root = EditorInterface.get_edited_scene_root()
     if edited_root == null:
         return _runtime_failure_result("no_edited_scene", "no edited scene is available to save")
-    if not editor_interface.has_method("save_scene"):
+    if not ClassDB.class_has_method("EditorInterface", "save_scene"):
         return _runtime_failure_result("save_scene_unavailable", "save_scene is not available")
 
-    var save_result = editor_interface.call("save_scene")
+    var save_result = EditorInterface.save_scene()
     if save_result is int and int(save_result) != OK:
         return _runtime_failure_result("save_failed", "save_scene failed (code=%d)" % int(save_result))
 
@@ -294,25 +295,23 @@ func _handle_scene_save(editor_interface: EditorInterface) -> Dictionary:
         "scene_path": _resolve_active_scene_path(edited_root)
     })
 
-func _handle_scene_apply(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+func _handle_scene_apply(_editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
     var scene_path = str(arguments.get("path", "")).strip_edges()
     if not _is_safe_res_path(scene_path, [".tscn"]):
         return _runtime_failure_result("invalid_path", "scene apply requires a safe res://*.tscn path")
     if not FileAccess.file_exists(scene_path):
         return _runtime_failure_result("scene_not_found", "scene file does not exist: " + scene_path)
-    if not editor_interface.has_method("open_scene_from_path"):
+    if not ClassDB.class_has_method("EditorInterface", "open_scene_from_path"):
         return _runtime_failure_result("open_scene_unavailable", "open_scene_from_path is not available")
 
-    var open_result = editor_interface.call("open_scene_from_path", scene_path)
-    if open_result is int and int(open_result) != OK:
-        return _runtime_failure_result("scene_open_failed", "failed to open scene (code=%d)" % int(open_result))
+    EditorInterface.open_scene_from_path(scene_path)
 
     return _runtime_success_result({
         "scene_path": scene_path
     })
 
-func _handle_node_create(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
-    var edited_root = editor_interface.get_edited_scene_root()
+func _handle_node_create(_editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = EditorInterface.get_edited_scene_root()
     if edited_root == null:
         return _runtime_failure_result("no_edited_scene", "node create requires an edited scene")
     if not (arguments.get("parent", null) is String):
@@ -350,8 +349,8 @@ func _handle_node_create(editor_interface: EditorInterface, arguments: Dictionar
         "type": node_type
     })
 
-func _handle_node_delete(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
-    var edited_root = editor_interface.get_edited_scene_root()
+func _handle_node_delete(_editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = EditorInterface.get_edited_scene_root()
     if edited_root == null:
         return _runtime_failure_result("no_edited_scene", "node delete requires an edited scene")
     if not (arguments.get("node", null) is String):
@@ -378,8 +377,8 @@ func _handle_node_delete(editor_interface: EditorInterface, arguments: Dictionar
         "deleted_path": node_path
     })
 
-func _handle_node_modify(editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
-    var edited_root = editor_interface.get_edited_scene_root()
+func _handle_node_modify(_editor_interface: EditorInterface, arguments: Dictionary) -> Dictionary:
+    var edited_root = EditorInterface.get_edited_scene_root()
     if edited_root == null:
         return _runtime_failure_result("no_edited_scene", "node modify requires an edited scene")
     if not (arguments.get("node", null) is String):
@@ -580,14 +579,14 @@ func _setup_runtime_sync_timers() -> void:
     runtime_heartbeat_timer = Timer.new()
     runtime_heartbeat_timer.one_shot = false
     runtime_heartbeat_timer.wait_time = runtime_heartbeat_seconds
-    runtime_heartbeat_timer.timeout.connect(Callable(self, "_on_runtime_heartbeat_timeout"))
+    runtime_heartbeat_timer.timeout.connect(Callable(self , "_on_runtime_heartbeat_timeout"))
     add_child(runtime_heartbeat_timer)
     runtime_heartbeat_timer.start()
 
     runtime_change_timer = Timer.new()
     runtime_change_timer.one_shot = false
     runtime_change_timer.wait_time = runtime_change_poll_seconds
-    runtime_change_timer.timeout.connect(Callable(self, "_on_runtime_change_timeout"))
+    runtime_change_timer.timeout.connect(Callable(self , "_on_runtime_change_timeout"))
     add_child(runtime_change_timer)
     runtime_change_timer.start()
 
@@ -664,10 +663,10 @@ func _resolve_active_scene_path(edited_root: Node) -> String:
 func _resolve_active_script_path(editor_interface: EditorInterface) -> String:
     if editor_interface == null:
         return ""
-    if not editor_interface.has_method("get_script_editor"):
+    if not ClassDB.class_has_method("EditorInterface", "get_script_editor"):
         return ""
 
-    var script_editor = editor_interface.get_script_editor()
+    var script_editor = EditorInterface.get_script_editor()
     if script_editor == null:
         return ""
     if not script_editor.has_method("get_current_script"):

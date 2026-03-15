@@ -1,4 +1,3 @@
-class_name ConnectionStateMachine
 extends RefCounted
 
 var _connected: bool = false
@@ -11,7 +10,7 @@ func mark_connected() -> void:
 func mark_disconnected() -> void:
 	_connected = false
 
-func is_connected() -> bool:
+func is_connection_active() -> bool:
 	return _connected
 
 func should_sync(snapshot: Dictionary, force: bool) -> bool:

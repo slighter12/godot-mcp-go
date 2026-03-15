@@ -57,9 +57,6 @@ func (s *Server) handleOptions(c echo.Context) error {
 
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
-	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
-		return c.JSON(http.StatusBadRequest, protocolErr)
-	}
 
 	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
 	defer limitedBody.Close()
@@ -96,6 +93,11 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 
 	if hasInitialize && hasNonInitialize {
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+	}
+	if !hasInitialize {
+		if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
+			return c.JSON(http.StatusBadRequest, protocolErr)
+		}
 	}
 
 	if len(requests) > 0 {
@@ -272,11 +274,7 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Session is not initialized", nil), nil
 		}
 		if msg.Method == "tools/call" {
-			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, shared.ToolCallContext{
-				SessionID:          sessionID,
-				SessionInitialized: s.sessionManager.IsInitialized(sessionID),
-				MutatingAllowed:    s.sessionManager.IsMutatingAllowed(sessionID),
-			}, s.toolCallOptions()), nil
+			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.toolCallContext(sessionID), s.toolCallOptions()), nil
 		}
 		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
 	}
@@ -284,11 +282,12 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 
 func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Response, error) {
 	logger.Debug("Handling init message", "request_id", msg.ID)
-	if err := mcpv20251125.ValidateInitializeProtocolVersion(msg.Params); err != nil {
+	negotiatedVersion, err := mcpv20251125.ValidateHTTPInitializeProtocolVersion(msg.Params)
+	if err != nil {
 		if errors.Is(err, mcpv20251125.ErrMissingProtocolVersion) {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrMissingProtocolVersion.Error(), nil), nil
 		}
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrInvalidProtocolVersion.Error(), nil), nil
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil), nil
 	}
 
 	tools, err := s.registry.GetServerTools("default")
@@ -302,8 +301,10 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 		s.sessionManager.MarkInitializeAccepted(sessionID)
 	}
 
-	negotiatedVersion := mcpv20251125.ProtocolVersion
 	mutatingAllowed := negotiatedMutatingCapability(msg.Params)
+	if !mutatingAllowed && s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability {
+		mutatingAllowed = true
+	}
 	if sessionID != "" {
 		s.sessionManager.SetProtocolVersion(sessionID, negotiatedVersion)
 		s.sessionManager.SetMutatingAllowed(sessionID, mutatingAllowed)

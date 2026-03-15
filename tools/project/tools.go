@@ -192,7 +192,8 @@ func (t *GetEditorStateTool) Execute(args json.RawMessage) ([]byte, error) {
 		})
 	}
 
-	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(ctx.SessionID, time.Now().UTC())
+	runtimeSessionID := ctx.EffectiveRuntimeSessionID()
+	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(runtimeSessionID, time.Now().UTC())
 	if !ok {
 		return nil, tooltypes.NewNotAvailableError("Editor state is unavailable until runtime sync is healthy", map[string]any{
 			"feature": "runtime_bridge",

@@ -97,17 +97,19 @@ type PromptCatalogRendering struct {
 
 // ToolControls controls runtime tool call validation/permission behavior.
 type ToolControls struct {
-	SchemaValidationEnabled   bool     `json:"schema_validation_enabled"`
-	RejectUnknownArguments    bool     `json:"reject_unknown_arguments"`
-	PermissionMode            string   `json:"permission_mode"`
-	AllowedTools              []string `json:"allowed_tools"`
-	EmitProgressNotifications bool     `json:"emit_progress_notifications"`
+	SchemaValidationEnabled        bool     `json:"schema_validation_enabled"`
+	RejectUnknownArguments         bool     `json:"reject_unknown_arguments"`
+	PermissionMode                 string   `json:"permission_mode"`
+	AllowedTools                   []string `json:"allowed_tools"`
+	EmitProgressNotifications      bool     `json:"emit_progress_notifications"`
+	AllowMutatingWithoutCapability bool     `json:"allow_mutating_without_capability"`
 }
 
 // RuntimeBridge controls stale detection and grace windows for synced snapshots.
 type RuntimeBridge struct {
-	StaleAfterSeconds int `json:"stale_after_seconds"`
-	StaleGraceMS      int `json:"stale_grace_ms"`
+	StaleAfterSeconds          int  `json:"stale_after_seconds"`
+	StaleGraceMS               int  `json:"stale_grace_ms"`
+	AllowLatestSessionFallback bool `json:"allow_latest_session_fallback"`
 }
 
 // NewConfig creates a new Config with default values
@@ -166,15 +168,17 @@ func NewConfig() *Config {
 			},
 		},
 		ToolControls: ToolControls{
-			SchemaValidationEnabled:   true,
-			RejectUnknownArguments:    false,
-			PermissionMode:            "allow_all",
-			AllowedTools:              []string{},
-			EmitProgressNotifications: true,
+			SchemaValidationEnabled:        true,
+			RejectUnknownArguments:         false,
+			PermissionMode:                 "allow_all",
+			AllowedTools:                   []string{},
+			EmitProgressNotifications:      true,
+			AllowMutatingWithoutCapability: false,
 		},
 		RuntimeBridge: RuntimeBridge{
-			StaleAfterSeconds: defaultRuntimeBridgeStaleAfterSeconds,
-			StaleGraceMS:      defaultRuntimeBridgeStaleGraceMS,
+			StaleAfterSeconds:          defaultRuntimeBridgeStaleAfterSeconds,
+			StaleGraceMS:               defaultRuntimeBridgeStaleGraceMS,
+			AllowLatestSessionFallback: false,
 		},
 	}
 }
@@ -283,6 +287,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyEnvBoolOverride("MCP_TOOL_CONTROLS_SCHEMA_VALIDATION_ENABLED", &cfg.ToolControls.SchemaValidationEnabled)
 	applyEnvBoolOverride("MCP_TOOL_CONTROLS_REJECT_UNKNOWN_ARGUMENTS", &cfg.ToolControls.RejectUnknownArguments)
 	applyEnvBoolOverride("MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS", &cfg.ToolControls.EmitProgressNotifications)
+	applyEnvBoolOverride("MCP_TOOL_CONTROLS_ALLOW_MUTATING_WITHOUT_CAPABILITY", &cfg.ToolControls.AllowMutatingWithoutCapability)
 
 	if permissionMode := os.Getenv("MCP_TOOL_CONTROLS_PERMISSION_MODE"); permissionMode != "" {
 		cfg.ToolControls.PermissionMode = permissionMode
@@ -293,6 +298,7 @@ func applyEnvOverrides(cfg *Config) {
 
 	applyEnvIntOverride("MCP_RUNTIME_BRIDGE_STALE_AFTER_SECONDS", &cfg.RuntimeBridge.StaleAfterSeconds)
 	applyEnvIntOverride("MCP_RUNTIME_BRIDGE_STALE_GRACE_MS", &cfg.RuntimeBridge.StaleGraceMS)
+	applyEnvBoolOverride("MCP_RUNTIME_BRIDGE_ALLOW_LATEST_SESSION_FALLBACK", &cfg.RuntimeBridge.AllowLatestSessionFallback)
 }
 
 func applyEnvBoolOverride(name string, target *bool) {
