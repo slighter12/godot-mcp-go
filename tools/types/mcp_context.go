@@ -4,10 +4,12 @@ import "strings"
 
 // MCPContext carries injected transport/session metadata for internal bridge tools.
 type MCPContext struct {
-	SessionID          string
-	SessionInitialized bool
-	EmitProgress       bool
-	ProgressToken      any
+	SessionID               string
+	RuntimeSessionID        string
+	RuntimeCommandSessionID string
+	SessionInitialized      bool
+	EmitProgress            bool
+	ProgressToken           any
 }
 
 func ExtractMCPContext(arguments map[string]any) MCPContext {
@@ -21,6 +23,12 @@ func ExtractMCPContext(arguments map[string]any) MCPContext {
 	}
 	if sessionID, ok := rawContext["session_id"].(string); ok {
 		ctx.SessionID = strings.TrimSpace(sessionID)
+	}
+	if runtimeSessionID, ok := rawContext["runtime_session_id"].(string); ok {
+		ctx.RuntimeSessionID = strings.TrimSpace(runtimeSessionID)
+	}
+	if runtimeCommandSessionID, ok := rawContext["runtime_command_session_id"].(string); ok {
+		ctx.RuntimeCommandSessionID = strings.TrimSpace(runtimeCommandSessionID)
 	}
 	if initialized, ok := rawContext["session_initialized"].(bool); ok {
 		ctx.SessionInitialized = initialized
@@ -38,6 +46,20 @@ func ExtractMCPContext(arguments map[string]any) MCPContext {
 		ctx.ProgressToken = token
 	}
 	return ctx
+}
+
+func (c MCPContext) EffectiveRuntimeSessionID() string {
+	if strings.TrimSpace(c.RuntimeSessionID) != "" {
+		return strings.TrimSpace(c.RuntimeSessionID)
+	}
+	return strings.TrimSpace(c.SessionID)
+}
+
+func (c MCPContext) EffectiveRuntimeCommandSessionID() string {
+	if strings.TrimSpace(c.RuntimeCommandSessionID) != "" {
+		return strings.TrimSpace(c.RuntimeCommandSessionID)
+	}
+	return c.EffectiveRuntimeSessionID()
 }
 
 func StripMCPContext(arguments map[string]any) map[string]any {

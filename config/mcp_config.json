@@ -52,10 +52,12 @@
     "reject_unknown_arguments": false,
     "permission_mode": "allow_all",
     "allowed_tools": [],
-    "emit_progress_notifications": true
+    "emit_progress_notifications": true,
+    "allow_mutating_without_capability": true
   },
   "runtime_bridge": {
     "stale_after_seconds": 10,
-    "stale_grace_ms": 1500
+    "stale_grace_ms": 1500,
+    "allow_latest_session_fallback": true
   }
 }
