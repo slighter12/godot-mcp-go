@@ -16,7 +16,12 @@ go build
 ./godot-mcp-go
 ```
 
-## Upgrade (Current v1 line)
+## Versioning
+
+See [`SKILLS_PUBLISHING.md`](SKILLS_PUBLISHING.md) for the versioning
+strategy, Git tag format, and pinned install guidance.
+
+## Upgrade (Current pre-1.0 line)
 
 Current line introduces the following compatibility changes:
 
