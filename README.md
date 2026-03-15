@@ -295,6 +295,32 @@ These skills are external prompt/skill artifacts used by an agent that already s
 - the skill calls this server through the `godot.*` MCP tools
 - the server does not load, expose, or execute the skills as built-in MCP functionality
 
+These files are authored as agent-side skill artifacts (`SKILL.md` plus
+optional references), not as npm packages. This repository is the current
+source and distribution location for those skills, so Skills CLI consumers can
+install from this same GitHub repository. See
+[`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the single-repo
+publishing rules and future split guidance.
+
+Current repository version: `0.1.0` (recommended first Git tag: `v0.1.0`).
+
+Install examples:
+
+```bash
+npx skills add https://github.com/slighter12/godot-mcp-go --skill policy-godot
+bunx skills add https://github.com/slighter12/godot-mcp-go --skill godot-game-dev-workflow
+```
+
+Pinned install examples:
+
+```bash
+npx skills add https://github.com/slighter12/godot-mcp-go#v0.1.0 --skill policy-godot
+bunx skills add https://github.com/slighter12/godot-mcp-go#v0.1.0 --skill godot-game-dev-workflow
+```
+
+See [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the
+versioning strategy and future split guidance.
+
 Available skills:
 
 - **`skills/policy-godot`** — Cross-project Godot 4 design and review policy for
@@ -327,6 +353,7 @@ Available skills:
 - `docs/RUNTIME_COMMAND_PROTOCOL.md`
 - `docs/PROMPT_CATALOG_COMPLETENESS_PLAN.md`
 - `docs/INSTALL_UPGRADE.md`
+- `docs/SKILLS_PUBLISHING.md`
 
 ## License
 
