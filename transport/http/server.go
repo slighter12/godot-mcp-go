@@ -334,9 +334,6 @@ func (s *Server) resolveRuntimeCommandSessionID(callerSessionID string) string {
 		return ""
 	}
 	if s == nil || s.config == nil || !s.config.RuntimeBridge.AllowLatestSessionFallback {
-		if _, ok := s.sessionManager.GetTransport(callerSessionID); ok {
-			return callerSessionID
-		}
 		return callerSessionID
 	}
 
