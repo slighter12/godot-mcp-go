@@ -94,7 +94,13 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	if hasInitialize && hasNonInitialize {
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 	}
-	if !hasInitialize {
+	if hasInitialize {
+		if strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion)) != "" {
+			if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
+				return c.JSON(http.StatusBadRequest, protocolErr)
+			}
+		}
+	} else {
 		if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
 			return c.JSON(http.StatusBadRequest, protocolErr)
 		}
