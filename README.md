@@ -45,11 +45,27 @@ ln -s /path/to/godot-mcp-go/godot-plugin /path/to/project/addons/godot_mcp
 ./godot-mcp-go
 ```
 
+Or use the repo helper:
+
+```bash
+make run-http
+```
+
 Endpoints:
 
 - MCP: `http://localhost:9080/mcp`
 - Info: `http://localhost:9080/`
 - Required header: `MCP-Protocol-Version: 2025-11-25`
+
+### Codex/Desktop Session Attach
+
+When Codex is configured with a URL-based MCP server such as `http://localhost:9080/mcp`, the HTTP server must already be listening before a new Codex session starts.
+
+Recommended sequence:
+
+1. Start the HTTP server with `make run-http` (or an equivalent foreground/background process manager).
+2. Open a new Codex session after `http://localhost:9080/` is reachable.
+3. If the server was down when the session started, create a fresh session after the server is back up. Existing sessions do not hot-attach `godot.*` tools mid-lifecycle.
 
 ### Stdio
 
@@ -101,6 +117,39 @@ Mutating tools are blocked by default. Clients must negotiate during `initialize
 ```
 
 Without this capability, mutating calls return semantic `not_supported` with `reason=mutating_capability_required`.
+
+For clients that cannot send custom Godot capabilities during `initialize` (for example some Codex/Desktop URL-based sessions), the server can opt into a compatibility fallback:
+
+```json
+{
+  "tool_controls": {
+    "allow_mutating_without_capability": true
+  }
+}
+```
+
+Keep this disabled unless you trust every MCP client that can reach the server.
+
+## Cross-Session Runtime Bridge Fallback
+
+Runtime bridge state is session-scoped by default: the session that syncs snapshots and receives runtime commands is also the session that can use runtime-backed reads and mutating tools.
+
+For Codex/Desktop plus Godot-plugin workflows, those are often separate MCP sessions. The server can opt into borrowing the latest fresh plugin runtime session for a different caller session:
+
+```json
+{
+  "runtime_bridge": {
+    "allow_latest_session_fallback": true
+  }
+}
+```
+
+When enabled:
+
+- runtime-backed reads may use the latest fresh runtime snapshot from another session
+- runtime mutating tools may dispatch through the latest session that still has an active SSE transport
+
+Keep this disabled if you need strict per-session isolation across multiple editors.
 
 ## Configuration
 
@@ -160,11 +209,13 @@ Default config shape:
     "reject_unknown_arguments": false,
     "permission_mode": "allow_all",
     "allowed_tools": [],
-    "emit_progress_notifications": true
+    "emit_progress_notifications": true,
+    "allow_mutating_without_capability": false
   },
   "runtime_bridge": {
     "stale_after_seconds": 10,
-    "stale_grace_ms": 1500
+    "stale_grace_ms": 1500,
+    "allow_latest_session_fallback": false
   }
 }
 ```
@@ -192,8 +243,10 @@ Default config shape:
 - `MCP_TOOL_CONTROLS_PERMISSION_MODE` (`allow_all`, `read_only`, `allow_list`)
 - `MCP_TOOL_CONTROLS_ALLOWED_TOOLS`
 - `MCP_TOOL_CONTROLS_EMIT_PROGRESS_NOTIFICATIONS`
+- `MCP_TOOL_CONTROLS_ALLOW_MUTATING_WITHOUT_CAPABILITY`
 - `MCP_RUNTIME_BRIDGE_STALE_AFTER_SECONDS`
 - `MCP_RUNTIME_BRIDGE_STALE_GRACE_MS`
+- `MCP_RUNTIME_BRIDGE_ALLOW_LATEST_SESSION_FALLBACK`
 
 ## Available Tools
 

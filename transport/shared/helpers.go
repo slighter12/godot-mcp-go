@@ -42,9 +42,11 @@ type PromptGovernanceRoot struct {
 }
 
 type ToolCallContext struct {
-	SessionID          string
-	SessionInitialized bool
-	MutatingAllowed    bool
+	SessionID               string
+	RuntimeSessionID        string
+	RuntimeCommandSessionID string
+	SessionInitialized      bool
+	MutatingAllowed         bool
 }
 
 const (
@@ -744,9 +746,11 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 		ToolManager:  toolManager,
 		ReadResource: readResource,
 		Context: toolpipeline.ToolCallContext{
-			SessionID:          callContext.SessionID,
-			SessionInitialized: callContext.SessionInitialized,
-			MutatingAllowed:    callContext.MutatingAllowed,
+			SessionID:               callContext.SessionID,
+			RuntimeSessionID:        callContext.RuntimeSessionID,
+			RuntimeCommandSessionID: callContext.RuntimeCommandSessionID,
+			SessionInitialized:      callContext.SessionInitialized,
+			MutatingAllowed:         callContext.MutatingAllowed,
 		},
 		Options: toolpipeline.ToolCallOptions{
 			SchemaValidationEnabled:   options.SchemaValidationEnabled,
@@ -929,6 +933,8 @@ func enrichToolCallArguments(arguments map[string]any, callContext ToolCallConte
 	maps.Copy(enriched, arguments)
 	context := map[string]any{
 		"session_id":                  strings.TrimSpace(callContext.SessionID),
+		"runtime_session_id":          strings.TrimSpace(callContext.RuntimeSessionID),
+		"runtime_command_session_id":  strings.TrimSpace(callContext.RuntimeCommandSessionID),
 		"session_initialized":         callContext.SessionInitialized,
 		"emit_progress_notifications": options.EmitProgressNotifications,
 	}

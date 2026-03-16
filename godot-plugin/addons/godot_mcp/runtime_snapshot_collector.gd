@@ -14,7 +14,7 @@ func build_snapshot(editor_interface: EditorInterface) -> Dictionary:
 			"node_details": {}
 		}
 
-	var edited_root = editor_interface.get_edited_scene_root()
+	var edited_root = EditorInterface.get_edited_scene_root()
 	var root_summary = {
 		"project_path": ProjectSettings.globalize_path("res://"),
 		"active_scene": "",
@@ -57,10 +57,10 @@ func _resolve_active_scene_path(edited_root: Node) -> String:
 func _resolve_active_script_path(editor_interface: EditorInterface) -> String:
 	if editor_interface == null:
 		return ""
-	if not editor_interface.has_method("get_script_editor"):
+	if not ClassDB.class_has_method("EditorInterface", "get_script_editor"):
 		return ""
 
-	var script_editor = editor_interface.get_script_editor()
+	var script_editor = EditorInterface.get_script_editor()
 	if script_editor == null:
 		return ""
 	if not script_editor.has_method("get_current_script"):

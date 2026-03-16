@@ -7,10 +7,11 @@ INSPECTOR_SERVER_PORT ?= 29080
 INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(INSPECTOR_SERVER_PORT)/mcp
 INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:latest
 
-.PHONY: help test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-all
+.PHONY: help run-http test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-all
 
 help:
 	@echo "Available targets:"
+	@echo "  make run-http              - Run the Streamable HTTP server on the configured host/port"
 	@echo "  make test-go               - Run Go unit tests"
 	@echo "  make test-http-smoke       - Run Streamable HTTP smoke checks"
 	@echo "  make test-http-ping        - Verify Streamable HTTP ping returns an empty result object"
@@ -22,6 +23,9 @@ help:
 	@echo "  make test-inspector-docker - Run MCP Inspector CLI checks in Docker"
 	@echo "  make test-inspector-header-negative - Verify Inspector call fails without protocol header"
 	@echo "  make test-all              - Run all tests above"
+
+run-http:
+	@GOCACHE="$${GOCACHE:-$${TMPDIR:-/tmp}/godot-mcp-go-build-cache}" $(GO) run main.go
 
 test-go:
 	$(GO) test ./...

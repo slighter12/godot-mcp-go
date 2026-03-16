@@ -36,7 +36,8 @@ func (t *GetSceneTreeTool) Execute(args json.RawMessage) ([]byte, error) {
 		})
 	}
 
-	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(ctx.SessionID, time.Now().UTC())
+	runtimeSessionID := ctx.EffectiveRuntimeSessionID()
+	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(runtimeSessionID, time.Now().UTC())
 	if !ok {
 		return nil, tooltypes.NewNotAvailableError("Scene tree is unavailable until runtime sync is healthy", map[string]any{
 			"feature": "runtime_bridge",
@@ -91,7 +92,8 @@ func (t *GetNodePropertiesTool) Execute(args json.RawMessage) ([]byte, error) {
 		})
 	}
 
-	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(ctx.SessionID, time.Now().UTC())
+	runtimeSessionID := ctx.EffectiveRuntimeSessionID()
+	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(runtimeSessionID, time.Now().UTC())
 	if !ok {
 		return nil, tooltypes.NewNotAvailableError("Node properties are unavailable until runtime sync is healthy", map[string]any{
 			"feature": "runtime_bridge",

@@ -47,6 +47,12 @@ Current line introduces the following compatibility changes:
   - initialized session
   - mutating capability negotiation
   - active runtime bridge
+- Compatibility fallback for clients that cannot send `capabilities.godot.mutating=true`:
+  - set `tool_controls.allow_mutating_without_capability=true`
+  - use only for trusted local clients
+- Compatibility fallback for separate caller/plugin MCP sessions:
+  - set `runtime_bridge.allow_latest_session_fallback=true`
+  - runtime-backed reads and mutating tools may borrow the latest fresh plugin session
 - `stdio` supports read/non-runtime operations and requires strict initialize protocol version.
 - Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`.
 
@@ -61,7 +67,8 @@ Current line introduces the following compatibility changes:
     "reject_unknown_arguments": false,
     "permission_mode": "allow_all",
     "allowed_tools": [],
-    "emit_progress_notifications": true
+    "emit_progress_notifications": true,
+    "allow_mutating_without_capability": false
   }
 }
 ```
@@ -101,7 +108,8 @@ This prompt catalog feature is separate from the repository `skills/` directory.
 {
   "runtime_bridge": {
     "stale_after_seconds": 10,
-    "stale_grace_ms": 1500
+    "stale_grace_ms": 1500,
+    "allow_latest_session_fallback": false
   }
 }
 ```

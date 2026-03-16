@@ -26,21 +26,54 @@ func _ready():
     if mcp_client == null:
         push_error("MCP Interface: MCP client node not found")
         return
-
-    mcp_client.connected.connect(_on_connected)
-    mcp_client.disconnected.connect(_on_disconnected)
-    mcp_client.error.connect(_on_error)
+    _bind_client_signals(mcp_client)
 
     var rng = RandomNumberGenerator.new()
     rng.randomize()
     client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
 
 func set_mcp_client(client: Node):
+    if client == null:
+        return
+    if mcp_client == client:
+        _bind_client_signals(mcp_client)
+        return
+    if mcp_client != null:
+        _unbind_client_signals(mcp_client)
     mcp_client = client
+    if is_node_ready():
+        _bind_client_signals(mcp_client)
+        if _is_client_connected(mcp_client):
+            call_deferred("_on_connected")
 
 func set_mcp_server(server: Node):
     # Backward compatibility for older plugin wiring.
     set_mcp_client(server)
+
+func _bind_client_signals(client: Node) -> void:
+    if client == null:
+        return
+    if not client.connected.is_connected(_on_connected):
+        client.connected.connect(_on_connected)
+    if not client.disconnected.is_connected(_on_disconnected):
+        client.disconnected.connect(_on_disconnected)
+    if not client.error.is_connected(_on_error):
+        client.error.connect(_on_error)
+
+func _unbind_client_signals(client: Node) -> void:
+    if client == null:
+        return
+    if client.connected.is_connected(_on_connected):
+        client.connected.disconnect(_on_connected)
+    if client.disconnected.is_connected(_on_disconnected):
+        client.disconnected.disconnect(_on_disconnected)
+    if client.error.is_connected(_on_error):
+        client.error.disconnect(_on_error)
+
+func _is_client_connected(client: Node) -> bool:
+    if client == null:
+        return false
+    return bool(client.get("is_connected"))
 
 func _on_connected():
     tools.clear()

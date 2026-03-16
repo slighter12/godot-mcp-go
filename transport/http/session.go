@@ -270,6 +270,28 @@ func (sm *SessionManager) SessionIDsWithTransport() []string {
 	return ids
 }
 
+// LatestSessionIDWithTransport returns the most recently seen session with a bound SSE transport.
+func (sm *SessionManager) LatestSessionIDWithTransport() (string, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	latestID := ""
+	var latestSeen time.Time
+	for id, session := range sm.sessions {
+		if session.Transport == nil {
+			continue
+		}
+		if latestID == "" || session.LastSeen.After(latestSeen) {
+			latestID = id
+			latestSeen = session.LastSeen
+		}
+	}
+	if latestID == "" {
+		return "", false
+	}
+	return latestID, true
+}
+
 // RemoveSession removes a session
 func (sm *SessionManager) RemoveSession(sessionID string) {
 	sm.mu.Lock()

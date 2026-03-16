@@ -69,8 +69,17 @@ func DispatchRuntimeCommand(options RuntimeCommandDispatchOptions) ([]byte, erro
 		}
 	}
 
+	runtimeSessionID := ctx.EffectiveRuntimeCommandSessionID()
+	if strings.TrimSpace(runtimeSessionID) == "" {
+		return nil, NewNotAvailableError(options.BridgeUnavailableMessage, map[string]any{
+			"feature": "runtime_bridge",
+			"reason":  "runtime_session_missing",
+			"tool":    options.CommandName,
+		})
+	}
+
 	emitRuntimeCommandProgress(ctx, options.CommandName, 0.4, "dispatching runtime command")
-	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(ctx.SessionID, options.CommandName, commandArgs, options.Timeout)
+	ack, ok, reason := runtimebridge.DefaultCommandBroker().DispatchAndWait(runtimeSessionID, options.CommandName, commandArgs, options.Timeout)
 	if !ok {
 		emitRuntimeCommandProgress(ctx, options.CommandName, 1.0, "runtime command unavailable")
 		return nil, NewNotAvailableError(options.BridgeUnavailableMessage, map[string]any{

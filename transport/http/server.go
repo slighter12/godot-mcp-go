@@ -286,6 +286,84 @@ func (s *Server) toolCallOptions() shared.ToolCallOptions {
 	}
 }
 
+func (s *Server) toolCallContext(sessionID string) shared.ToolCallContext {
+	callerSessionID := strings.TrimSpace(sessionID)
+	return shared.ToolCallContext{
+		SessionID:               callerSessionID,
+		RuntimeSessionID:        s.resolveRuntimeReadSessionID(callerSessionID),
+		RuntimeCommandSessionID: s.resolveRuntimeCommandSessionID(callerSessionID),
+		SessionInitialized:      s.sessionManager.IsInitialized(callerSessionID),
+		MutatingAllowed:         s.isMutatingAllowedForSession(callerSessionID),
+	}
+}
+
+func (s *Server) isMutatingAllowedForSession(sessionID string) bool {
+	if s == nil {
+		return false
+	}
+	if s.sessionManager.IsMutatingAllowed(sessionID) {
+		return true
+	}
+	return s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability
+}
+
+func (s *Server) resolveRuntimeReadSessionID(callerSessionID string) string {
+	callerSessionID = strings.TrimSpace(callerSessionID)
+	if callerSessionID == "" {
+		return ""
+	}
+
+	now := time.Now().UTC()
+	if _, ok, _ := runtimebridge.DefaultStore().FreshForSession(callerSessionID, now); ok {
+		return callerSessionID
+	}
+	if s == nil || s.config == nil || !s.config.RuntimeBridge.AllowLatestSessionFallback {
+		return callerSessionID
+	}
+
+	latest, ok, _ := runtimebridge.DefaultStore().LatestFresh(now)
+	if !ok || strings.TrimSpace(latest.SessionID) == "" {
+		return callerSessionID
+	}
+	return strings.TrimSpace(latest.SessionID)
+}
+
+func (s *Server) resolveRuntimeCommandSessionID(callerSessionID string) string {
+	callerSessionID = strings.TrimSpace(callerSessionID)
+	if callerSessionID == "" {
+		return ""
+	}
+	if s == nil || s.config == nil || !s.config.RuntimeBridge.AllowLatestSessionFallback {
+		if _, ok := s.sessionManager.GetTransport(callerSessionID); ok {
+			return callerSessionID
+		}
+		return callerSessionID
+	}
+
+	now := time.Now().UTC()
+	if _, ok, _ := runtimebridge.DefaultStore().FreshForSession(callerSessionID, now); ok {
+		if _, hasTransport := s.sessionManager.GetTransport(callerSessionID); hasTransport {
+			return callerSessionID
+		}
+	}
+
+	if latest, ok, _ := runtimebridge.DefaultStore().LatestFresh(now); ok {
+		if runtimeSessionID := strings.TrimSpace(latest.SessionID); runtimeSessionID != "" {
+			if _, hasTransport := s.sessionManager.GetTransport(runtimeSessionID); hasTransport {
+				return runtimeSessionID
+			}
+		}
+	}
+
+	if _, ok := s.sessionManager.GetTransport(callerSessionID); ok {
+		return callerSessionID
+	}
+	if latestTransportSessionID, ok := s.sessionManager.LatestSessionIDWithTransport(); ok {
+		return latestTransportSessionID
+	}
+	return callerSessionID
+}
+
 func (s *Server) SendRuntimeCommandProgressNotification(event tooltypes.RuntimeCommandProgressEvent) {
 	if s == nil || s.config == nil || !s.config.ToolControls.EmitProgressNotifications {
 		return
