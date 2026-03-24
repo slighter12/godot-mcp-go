@@ -28,7 +28,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"params": map[string]any{
 			"protocolVersion": "2025-11-25",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-a", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "test-a", "version": "0.2.0"},
 		},
 	}
 	_, sessionA, status := postMCP(t, server, initReqA, "", "2025-11-25")
@@ -43,7 +43,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"params": map[string]any{
 			"protocolVersion": "2025-11-25",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test-b", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "test-b", "version": "0.2.0"},
 		},
 	}
 	_, sessionB, status := postMCP(t, server, initReqB, "", "2025-11-25")

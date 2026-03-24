@@ -32,7 +32,7 @@ func TestStdioServer(t *testing.T) {
 		Params: json.RawMessage(`{
 			"protocolVersion": "2025-11-25",
 			"capabilities": {},
-			"clientInfo": {"name":"test","version":"0.1.0"}
+			"clientInfo": {"name":"test","version":"0.2.0"}
 		}`),
 	}
 	response, err := server.handleMessage(initMsg)
@@ -127,7 +127,7 @@ func TestMessageValidation(t *testing.T) {
 		Params: json.RawMessage(`{
 			"protocolVersion": "2025-11-25",
 			"capabilities": {},
-			"clientInfo": {"name":"test","version":"0.1.0"}
+			"clientInfo": {"name":"test","version":"0.2.0"}
 		}`),
 	})
 	if err != nil {
@@ -262,7 +262,7 @@ func TestInitializeRequiresExactProtocolVersion(t *testing.T) {
 	resp, err := server.handleMessage(jsonrpc.Request{
 		ID:     "init-missing",
 		Method: "initialize",
-		Params: json.RawMessage(`{"capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}`),
+		Params: json.RawMessage(`{"capabilities":{},"clientInfo":{"name":"test","version":"0.2.0"}}`),
 	})
 	if err != nil {
 		t.Fatalf("handleMessage returned error: %v", err)
@@ -278,7 +278,7 @@ func TestInitializeRequiresExactProtocolVersion(t *testing.T) {
 	resp, err = server.handleMessage(jsonrpc.Request{
 		ID:     "init-wrong",
 		Method: "initialize",
-		Params: json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1.0"}}`),
+		Params: json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.2.0"}}`),
 	})
 	if err != nil {
 		t.Fatalf("handleMessage returned error: %v", err)

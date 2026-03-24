@@ -28,7 +28,7 @@ func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
 				Params: mustRaw(t, map[string]any{
 					"protocolVersion": "2025-11-25",
 					"capabilities":    map[string]any{},
-					"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+					"clientInfo":      map[string]any{"name": "test", "version": "0.2.0"},
 				}),
 			})
 			if err != nil {
@@ -230,7 +230,7 @@ func ensureStdioInitialized(t *testing.T, server *StdioServer) {
 		Params: mustRaw(t, map[string]any{
 			"protocolVersion": "2025-11-25",
 			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.2.0"},
 		}),
 	})
 	if err != nil {

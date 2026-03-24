@@ -4,17 +4,24 @@
 
 1. Build server:
 
-```bash
-go build
-```
+    ```bash
+    go build
+    ```
 
-2. Place or link plugin into your Godot project `addons/godot_mcp`.
+2. Place or link plugin into your Godot project at `addons/godot_mcp`.
 
-3. Start server (default Streamable HTTP):
+    ```bash
+    mkdir -p /path/to/project/addons
+    ln -s /path/to/godot-mcp-go/godot-plugin/addons/godot_mcp /path/to/project/addons/godot_mcp
+    ```
 
-```bash
-./godot-mcp-go
-```
+3. Enable `Godot MCP` in `Project > Project Settings > Plugins`.
+
+4. Start server (default Streamable HTTP):
+
+    ```bash
+    ./godot-mcp-go
+    ```
 
 ## Versioning
 

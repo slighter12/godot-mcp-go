@@ -33,7 +33,7 @@ curl -sS -D "$init_headers" \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-smoke\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-smoke\",\"version\":\"0.1.0\"}}}" >/dev/null
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-smoke\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-smoke\",\"version\":\"0.2.0\"}}}" >/dev/null
 
 session_id="$(awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$init_headers" | tail -n1)"
 test -n "$session_id"

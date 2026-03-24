@@ -40,7 +40,7 @@ func RegisterRoutes(e *echo.Echo, s *Server) {
 func (s *Server) handleHTTPInfo(c echo.Context) error {
 	logger.Debug("HTTP info requested", "remote_addr", c.RealIP())
 	info := map[string]any{
-		"version": "0.1.0",
+		"version": "0.2.0",
 		"type":    "godot-mcp",
 		"capabilities": map[string]any{
 			"stdio":           true,
@@ -317,14 +317,14 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 	}
 	result := map[string]any{
 		"type":            string(mcp.TypeInit),
-		"version":         "0.1.0",
+		"version":         "0.2.0",
 		"server_id":       "default",
 		"tools":           tools,
 		"protocolVersion": negotiatedVersion,
 		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled(), true),
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
-			"version": "0.1.0",
+			"version": "0.2.0",
 		},
 		"godot": map[string]any{
 			"mutating": mutatingAllowed,
@@ -344,7 +344,7 @@ func (s *Server) handleGodotResource(path string) (any, error) {
 	case "godot://scene/current":
 		return map[string]any{"type": "scene", "path": "current"}, nil
 	case "godot://project/info":
-		return map[string]any{"name": "godot-mcp", "version": "0.1.0", "type": "godot"}, nil
+		return map[string]any{"name": "godot-mcp", "version": "0.2.0", "type": "godot"}, nil
 	case "godot://policy/godot-checks":
 		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
 	case "godot://runtime/metrics":

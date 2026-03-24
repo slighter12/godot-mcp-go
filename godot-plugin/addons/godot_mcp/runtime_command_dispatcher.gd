@@ -1,6 +1,8 @@
 class_name RuntimeCommandDispatcher
 extends RefCounted
 
+const VARIANT_UTILS := preload("res://addons/godot_mcp/variant_utils.gd")
+
 func dispatch(command_id: String, command_name: String, arguments: Dictionary, editor_interface: EditorInterface, protocol_adapter: MCPProtocolAdapter, mutating_handlers: Dictionary, sync_callback: Callable) -> bool:
 	if protocol_adapter == null:
 		return false
@@ -29,7 +31,7 @@ func dispatch(command_id: String, command_name: String, arguments: Dictionary, e
 	if mutating_handlers.has(command_name):
 		var handler_callable: Callable = mutating_handlers[command_name]
 		var payload: Dictionary = handler_callable.call(arguments, editor_interface)
-		var success := bool(payload.get("success", false))
+		var success := VARIANT_UTILS.to_bool(payload.get("success", false), false)
 		var result: Dictionary = {}
 		var raw_result = payload.get("result", {})
 		if raw_result is Dictionary:
