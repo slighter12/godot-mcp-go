@@ -35,7 +35,7 @@ status_dup="$(curl -sS -D "$dup_headers" -o "$dup_body" -w "%{http_code}" \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION, $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-dup-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.1.0\"}}}")"
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-dup-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.2.0\"}}}")"
 test "$status_dup" = "200"
 
 session_dup="$(awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$dup_headers" | tail -n1)"
@@ -46,7 +46,7 @@ status_mixed="$(curl -sS -o "$mixed_body" -w "%{http_code}" \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION, 2024-11-05" \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-mixed-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.1.0\"}}}")"
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-mixed-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.2.0\"}}}")"
 test "$status_mixed" = "400"
 
 compact_mixed="$(tr -d '[:space:]' < "$mixed_body")"

@@ -1,15 +1,14 @@
-[gd_scene load_steps=2 format=3 uid="uid://bqxvj8yqxqxqx"]
+[gd_scene format=3 uid="uid://bqxvj8yqxqxqx"]
 
-[ext_resource type="Script" path="res://addons/godot_mcp/mcp_settings_dialog.gd" id="1_0"]
+[ext_resource type="Script" uid="uid://cxg31vkswspak" path="res://addons/godot_mcp/mcp_settings_dialog.gd" id="1_0"]
 
-[node name="MCPSettingsDialog" type="AcceptDialog"]
+[node name="MCPSettingsDialog" type="AcceptDialog" unique_id=1069706117]
 title = "MCP Settings"
 initial_position = 2
 size = Vector2i(400, 300)
 script = ExtResource("1_0")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
-layout_mode = 1
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1172168881]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -17,31 +16,38 @@ offset_left = 10.0
 offset_top = 10.0
 offset_right = -10.0
 offset_bottom = -50.0
+grow_horizontal = 2
+grow_vertical = 2
 
-[node name="ConnectionType" type="OptionButton" parent="VBoxContainer"]
+[node name="ConnectionType" type="OptionButton" parent="VBoxContainer" unique_id=1722130127]
 layout_mode = 2
 size_flags_horizontal = 3
+disabled = true
+selected = 0
+item_count = 1
+popup/item_0/text = "streamable_http"
+popup/item_0/id = 0
 
-[node name="StreamableHTTPSettings" type="VBoxContainer" parent="VBoxContainer"]
+[node name="StreamableHTTPSettings" type="VBoxContainer" parent="VBoxContainer" unique_id=1036566558]
 layout_mode = 2
-visible = true
 
-[node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings"]
+[node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings" unique_id=1294993884]
 layout_mode = 2
 text = "Streamable HTTP Settings"
 
-[node name="HSeparator" type="HSeparator" parent="VBoxContainer/StreamableHTTPSettings"]
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer/StreamableHTTPSettings" unique_id=162469731]
 layout_mode = 2
 
-[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/StreamableHTTPSettings"]
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer/StreamableHTTPSettings" unique_id=1756882799]
 layout_mode = 2
 
-[node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer"]
+[node name="Label" type="Label" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer" unique_id=1249308001]
 layout_mode = 2
 size_flags_horizontal = 3
 text = "Server URL:"
 
-[node name="StreamableHTTPURL" type="LineEdit" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer"]
+[node name="StreamableHTTPURL" type="LineEdit" parent="VBoxContainer/StreamableHTTPSettings/HBoxContainer" unique_id=852044717]
 layout_mode = 2
 size_flags_horizontal = 3
-placeholder_text = "http://localhost:9080/mcp" 
+text = "http://localhost:9080/mcp"
+placeholder_text = "http://localhost:9080/mcp"

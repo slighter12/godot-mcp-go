@@ -90,14 +90,14 @@ curl -sS -D "$init_headers_a" \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-a\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-a\",\"version\":\"0.1.0\"}}}" >/dev/null
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-a\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-a\",\"version\":\"0.2.0\"}}}" >/dev/null
 
 curl -sS -D "$init_headers_b" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-b\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-b\",\"version\":\"0.1.0\"}}}" >/dev/null
+  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-b\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-b\",\"version\":\"0.2.0\"}}}" >/dev/null
 
 session_a="$(extract_session_id "$init_headers_a")"
 session_b="$(extract_session_id "$init_headers_b")"
@@ -110,7 +110,7 @@ status_invalid_init="$(curl -sS -D "$init_headers_invalid" -o "$init_body_invali
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"init-invalid","method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"bad-client","version":"0.1.0"}}}')"
+  --data '{"jsonrpc":"2.0","id":"init-invalid","method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"bad-client","version":"0.2.0"}}}')"
 test "$status_invalid_init" = "200"
 invalid_session="$(extract_session_id "$init_headers_invalid")"
 test -z "$invalid_session"

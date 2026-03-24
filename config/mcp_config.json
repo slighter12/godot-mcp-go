@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-go",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Go-based Model Context Protocol server for Godot",
   "server": {
     "host": "localhost",

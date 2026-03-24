@@ -34,8 +34,10 @@ Link plugin into your Godot project:
 
 ```bash
 mkdir -p /path/to/project/addons
-ln -s /path/to/godot-mcp-go/godot-plugin /path/to/project/addons/godot_mcp
+ln -s /path/to/godot-mcp-go/godot-plugin/addons/godot_mcp /path/to/project/addons/godot_mcp
 ```
+
+Then open Godot and enable `Godot MCP` in `Project > Project Settings > Plugins`.
 
 ## Usage
 
@@ -110,7 +112,7 @@ Mutating tools are blocked by default. Clients must negotiate during `initialize
     },
     "clientInfo": {
       "name": "demo",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   }
 }
@@ -164,7 +166,7 @@ Default config shape:
 ```json
 {
   "name": "godot-mcp-go",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Go-based Model Context Protocol server for Godot",
   "server": {
     "host": "localhost",
@@ -355,7 +357,7 @@ install from this same GitHub repository. See
 [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the single-repo
 publishing rules and future split guidance.
 
-Current repository version: `0.1.0` (recommended first Git tag: `v0.1.0`).
+Current repository version: `0.2.0` (recommended first Git tag: `v0.2.0`).
 
 Install examples:
 
@@ -367,8 +369,8 @@ bunx skills add https://github.com/slighter12/godot-mcp-go --skill godot-game-de
 Pinned install examples:
 
 ```bash
-npx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.1.0/skills/policy-godot
-bunx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.1.0/skills/godot-game-dev-workflow
+npx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.2.0/skills/policy-godot
+bunx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.2.0/skills/godot-game-dev-workflow
 ```
 
 See [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the

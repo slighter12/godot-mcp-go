@@ -14,8 +14,8 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("Expected name 'godot-mcp-go', got '%s'", cfg.Name)
 	}
 
-	if cfg.Version != "0.1.0" {
-		t.Errorf("Expected version '0.1.0', got '%s'", cfg.Version)
+	if cfg.Version != "0.2.0" {
+		t.Errorf("Expected version '0.2.0', got '%s'", cfg.Version)
 	}
 
 	if cfg.Server.Host != "localhost" {

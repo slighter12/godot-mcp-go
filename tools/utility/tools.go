@@ -17,7 +17,7 @@ func (t *ListOfferingsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Offerings"}
 }
 func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
-	result := map[string]any{"offerings": []map[string]any{{"name": "godot-mcp", "version": "0.1.0", "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}, "prompts": map[string]any{}}, "serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.1.0"}}}}
+	result := map[string]any{"offerings": []map[string]any{{"name": "godot-mcp", "version": "0.2.0", "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}, "prompts": map[string]any{}}, "serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.2.0"}}}}
 	return json.Marshal(result)
 }
 
