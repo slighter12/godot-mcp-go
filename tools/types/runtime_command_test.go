@@ -123,3 +123,101 @@ func TestDispatchRuntimeCommand_DoesNotEmitProgressWhenDisabled(t *testing.T) {
 		t.Fatalf("expected 0 progress events, got %d", len(events))
 	}
 }
+
+func TestDispatchRuntimeCommand_UsesCustomRuntimeSessionResolver(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(500 * time.Millisecond)
+	broker := runtimebridge.DefaultCommandBroker()
+
+	dispatchedTo := ""
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	rawArgs, err := json.Marshal(map[string]any{
+		"editor_session_id": "editor-owner",
+		"_mcp": map[string]any{
+			"session_id":          "ai-caller",
+			"session_initialized": true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+
+	resolverCalled := false
+	_, err = DispatchRuntimeCommand(RuntimeCommandDispatchOptions{
+		RawArgs:                  rawArgs,
+		CommandName:              "godot.editor.scene.apply",
+		Timeout:                  500 * time.Millisecond,
+		SessionRequiredMessage:   "session required",
+		BridgeUnavailableMessage: "bridge unavailable",
+		ResolveRuntimeSessionID: func(arguments map[string]any, ctx MCPContext, commandName string) (string, *SemanticError) {
+			resolverCalled = true
+			return "editor-owner", nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("dispatch runtime command: %v", err)
+	}
+	if !resolverCalled {
+		t.Fatal("expected custom runtime session resolver to be called")
+	}
+	if dispatchedTo != "editor-owner" {
+		t.Fatalf("expected dispatch to editor-owner, got %q", dispatchedTo)
+	}
+}
+
+func TestDispatchRuntimeCommand_FallsBackToRuntimeCommandSessionID(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(500 * time.Millisecond)
+	broker := runtimebridge.DefaultCommandBroker()
+
+	dispatchedTo := ""
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	rawArgs, err := json.Marshal(map[string]any{
+		"_mcp": map[string]any{
+			"session_id":                  "ai-session",
+			"session_initialized":         true,
+			"runtime_command_session_id":  "editor-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+
+	_, err = DispatchRuntimeCommand(RuntimeCommandDispatchOptions{
+		RawArgs:                  rawArgs,
+		CommandName:              "godot.node.create",
+		Timeout:                  500 * time.Millisecond,
+		SessionRequiredMessage:   "session required",
+		BridgeUnavailableMessage: "bridge unavailable",
+	})
+	if err != nil {
+		t.Fatalf("dispatch runtime command: %v", err)
+	}
+	if dispatchedTo != "editor-1" {
+		t.Fatalf("expected dispatch to editor-1 (from runtime_command_session_id), got %q", dispatchedTo)
+	}
+}

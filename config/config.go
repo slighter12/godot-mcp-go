@@ -107,8 +107,9 @@ type ToolControls struct {
 
 // RuntimeBridge controls stale detection and grace windows for synced snapshots.
 type RuntimeBridge struct {
-	StaleAfterSeconds          int  `json:"stale_after_seconds"`
-	StaleGraceMS               int  `json:"stale_grace_ms"`
+	StaleAfterSeconds int `json:"stale_after_seconds"`
+	StaleGraceMS      int `json:"stale_grace_ms"`
+	// Deprecated: public runtime tools no longer borrow the latest session implicitly.
 	AllowLatestSessionFallback bool `json:"allow_latest_session_fallback"`
 }
 

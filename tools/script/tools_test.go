@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
@@ -61,5 +63,109 @@ func TestScriptWriteTools_ReturnNotAvailable(t *testing.T) {
 		if semanticErr.Kind != tooltypes.SemanticKindNotAvailable {
 			t.Fatalf("expected not_available kind, got %s", semanticErr.Kind)
 		}
+	}
+}
+
+func TestScriptModifyTool_DispatchesToRuntimeCommandSessionID(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
+	now := time.Now().UTC()
+	runtimebridge.DefaultEditorStore().Upsert("editor-1", runtimebridge.Snapshot{
+		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Main.tscn"},
+	}, now)
+
+	dispatchedTo := ""
+	broker := runtimebridge.DefaultCommandBroker()
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result:    map[string]any{"modified": true},
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	tool := &ModifyScriptTool{}
+	raw := json.RawMessage(`{
+		"path": "res://scripts/Player.gd",
+		"content": "extends Node\nfunc _ready():\n    print('hello')\n",
+		"_mcp": {
+			"session_id": "ai-session",
+			"session_initialized": true,
+			"runtime_command_session_id": "editor-1"
+		}
+	}`)
+	resultRaw, err := tool.Execute(raw)
+	if err != nil {
+		t.Fatalf("execute godot.script.modify: %v", err)
+	}
+	if dispatchedTo != "editor-1" {
+		t.Fatalf("expected dispatch to editor-1, got %q", dispatchedTo)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+}
+
+func TestScriptCreateTool_DispatchesToRuntimeCommandSessionID(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
+	now := time.Now().UTC()
+	runtimebridge.DefaultEditorStore().Upsert("editor-1", runtimebridge.Snapshot{
+		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Main.tscn"},
+	}, now)
+
+	dispatchedTo := ""
+	broker := runtimebridge.DefaultCommandBroker()
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result:    map[string]any{"created": true},
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	tool := &CreateScriptTool{}
+	raw := json.RawMessage(`{
+		"path": "res://scripts/NewScript.gd",
+		"content": "extends Node\n",
+		"_mcp": {
+			"session_id": "ai-session",
+			"session_initialized": true,
+			"runtime_command_session_id": "editor-1"
+		}
+	}`)
+	resultRaw, err := tool.Execute(raw)
+	if err != nil {
+		t.Fatalf("execute godot.script.create: %v", err)
+	}
+	if dispatchedTo != "editor-1" {
+		t.Fatalf("expected dispatch to editor-1, got %q", dispatchedTo)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
 	}
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"github.com/slighter12/godot-mcp-go/tools/node"
 	"github.com/slighter12/godot-mcp-go/tools/project"
+	"github.com/slighter12/godot-mcp-go/tools/runtime"
 	"github.com/slighter12/godot-mcp-go/tools/scene"
 	"github.com/slighter12/godot-mcp-go/tools/script"
 	"github.com/slighter12/godot-mcp-go/tools/types"
@@ -12,11 +13,22 @@ import (
 // GetAllTools returns all available tools from all categories
 func GetAllTools() []types.Tool {
 	var all []types.Tool
-	all = append(all, node.GetAllTools()...)
+	all = append(all,
+		&node.CreateNodeTool{},
+		&node.DeleteNodeTool{},
+		&node.ModifyNodeTool{},
+	)
 	all = append(all, script.GetAllTools()...)
-	all = append(all, scene.GetAllTools()...)
+	all = append(all,
+		&scene.ListProjectScenesTool{},
+		&scene.ReadSceneTool{},
+		&scene.CreateSceneTool{},
+		&scene.SaveSceneTool{},
+		&scene.ApplySceneTool{},
+	)
 	all = append(all, project.GetAllTools()...)
-	all = append(all, utility.GetAllTools()...)
+	all = append(all, runtime.GetAllTools()...)
+	all = append(all, &utility.ListOfferingsTool{}, utility.NewRuntimeHealthTool(), utility.NewRuntimeDiagnoseTool())
 	return all
 }
 

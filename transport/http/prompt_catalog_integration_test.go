@@ -156,15 +156,13 @@ func TestInitializedNotificationBeforeInitializeIsRejected(t *testing.T) {
 		JSONRPC: jsonrpc.Version,
 		Method:  "notifications/initialized",
 	}, sessionID)
-	if err != nil {
-		t.Fatalf("handleMessage returned error: %v", err)
+	// The handler now returns (nil, error) for notification rejections so that
+	// handleStreamableHTTPPost can surface a non-202 status to the client.
+	if err == nil {
+		t.Fatalf("expected handleMessage to return error for pre-init notification, got response %#v", respAny)
 	}
-	resp, ok := respAny.(*jsonrpc.Response)
-	if !ok || resp.Error == nil {
-		t.Fatalf("expected JSON-RPC invalid request response, got %#v", respAny)
-	}
-	if resp.Error.Code != int(jsonrpc.ErrInvalidRequest) {
-		t.Fatalf("expected invalid request code %d, got %d", int(jsonrpc.ErrInvalidRequest), resp.Error.Code)
+	if respAny != nil {
+		t.Fatalf("expected nil response for notification rejection, got %#v", respAny)
 	}
 }
 

@@ -15,38 +15,51 @@ const (
 var toolNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 var readOnlyToolNames = map[string]struct{}{
-	"godot.offerings.list":         {},
-	"godot.runtime.health.get":     {},
-	"godot.project.settings.get":   {},
-	"godot.project.resources.list": {},
-	"godot.editor.state.get":       {},
-	"godot.node.tree.get":          {},
-	"godot.node.properties.get":    {},
-	"godot.scene.list":             {},
-	"godot.scene.read":             {},
-	"godot.script.list":            {},
-	"godot.script.read":            {},
-	"godot.script.analyze":         {},
-	"godot.runtime.ping":           {},
+	"godot.offerings.list":              {},
+	"godot.runtime.health.get":          {},
+	"godot.runtime.diagnose":            {},
+	"godot.project.settings.get":        {},
+	"godot.project.resources.list":      {},
+	"godot.editor.state.get":            {},
+	"godot.project.is_running":          {},
+	"godot.runtime.session.get_active":  {},
+	"godot.runtime.await_snapshot":      {},
+	"godot.runtime.scene_tree.get":      {},
+	"godot.runtime.node_properties.get": {},
+	"godot.runtime.log.get":             {},
+	"godot.runtime.screenshot.get":      {},
+	"godot.scene.list":                  {},
+	"godot.scene.read":                  {},
+	"godot.script.list":                 {},
+	"godot.script.read":                 {},
+	"godot.script.analyze":              {},
 }
 
 var mutatingToolNames = map[string]struct{}{
-	"godot.project.run":   {},
-	"godot.project.stop":  {},
-	"godot.scene.create":  {},
-	"godot.scene.save":    {},
-	"godot.scene.apply":   {},
-	"godot.node.create":   {},
-	"godot.node.delete":   {},
-	"godot.node.modify":   {},
-	"godot.script.create": {},
-	"godot.script.modify": {},
+	"godot.project.run":           {},
+	"godot.project.stop":          {},
+	"godot.runtime.sync_now":      {},
+	"godot.runtime.input.tap":     {},
+	"godot.runtime.input.press":   {},
+	"godot.runtime.input.release": {},
+	"godot.runtime.log.clear":     {},
+	"godot.editor.scene.apply":    {},
+	"godot.scene.create":          {},
+	"godot.scene.save":            {},
+	"godot.node.create":           {},
+	"godot.node.delete":           {},
+	"godot.node.modify":           {},
+	"godot.script.create":         {},
+	"godot.script.modify":         {},
 }
 
 var internalBridgeToolNames = map[string]struct{}{
-	"godot.runtime.sync": {},
-	"godot.runtime.ping": {},
-	"godot.runtime.ack":  {},
+	"godot.bridge.editor.sync":           {},
+	"godot.bridge.editor.ping":           {},
+	"godot.bridge.runtime.register":      {},
+	"godot.bridge.runtime.snapshot.push": {},
+	"godot.bridge.runtime.log.push":      {},
+	"godot.bridge.command.ack":           {},
 }
 
 func ValidateToolName(name string) bool {
@@ -58,7 +71,7 @@ func ValidateToolName(name string) bool {
 		return false
 	}
 	segments := strings.Split(trimmed, ".")
-	if len(segments) < 3 || len(segments) > 4 {
+	if len(segments) < 3 || len(segments) > 5 {
 		return false
 	}
 	if segments[0] != "godot" {

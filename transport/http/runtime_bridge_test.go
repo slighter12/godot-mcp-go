@@ -75,7 +75,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-a",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "godot.runtime.sync",
+			"name": "godot.bridge.editor.sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://A.tscn"},
@@ -96,7 +96,7 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 		"id":      "sync-b",
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "godot.runtime.sync",
+			"name": "godot.bridge.editor.sync",
 			"arguments": map[string]any{
 				"snapshot": map[string]any{
 					"root_summary": map[string]any{"active_scene": "res://B.tscn"},
@@ -134,6 +134,435 @@ func TestGetEditorStateTool_RemainsSessionScopedViaHTTPPost(t *testing.T) {
 	}
 }
 
+func TestGetEditorStateTool_UsesLatestFreshEditorSessionAcrossHTTPPostSessions(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-state-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-state-cross", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	initAIReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-state-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "ai-state-cross", "version": "0.2.0"},
+		},
+	}
+	_, aiSessionID, status := postMCP(t, server, initAIReq, "", protocolVersion)
+	if status != 200 || aiSessionID == "" {
+		t.Fatalf("initialize ai session failed, status=%d session=%q", status, aiSessionID)
+	}
+	notifyInitialized(t, server, aiSessionID)
+
+	_, _, status = postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "sync-editor-state-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.editor.sync",
+			"arguments": map[string]any{
+				"snapshot": map[string]any{
+					"root_summary": map[string]any{"active_scene": "res://EditorOwner.tscn"},
+					"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					"node_details": map[string]any{
+						"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					},
+				},
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("sync editor snapshot failed, status=%d", status)
+	}
+
+	resp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "state-ai-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "godot.editor.state.get",
+			"arguments": map[string]any{},
+		},
+	}, aiSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("state get failed, status=%d", status)
+	}
+	result := mustMap(t, resp["result"])
+	if result["isError"] != false {
+		t.Fatalf("expected isError=false, got %v", result["isError"])
+	}
+	state := mustMap(t, result["result"])
+	if state["active_scene"] != "res://EditorOwner.tscn" {
+		t.Fatalf("expected active_scene res://EditorOwner.tscn, got %v", state["active_scene"])
+	}
+	if state["session_id"] != editorSessionID {
+		t.Fatalf("expected session_id=%q, got %v", editorSessionID, state["session_id"])
+	}
+}
+
+func TestProjectIsRunningTool_UsesLatestFreshEditorSessionAcrossHTTPPostSessions(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-running-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-running-cross", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	initAIReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-running-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "ai-running-cross", "version": "0.2.0"},
+		},
+	}
+	_, aiSessionID, status := postMCP(t, server, initAIReq, "", protocolVersion)
+	if status != 200 || aiSessionID == "" {
+		t.Fatalf("initialize ai session failed, status=%d session=%q", status, aiSessionID)
+	}
+	notifyInitialized(t, server, aiSessionID)
+
+	_, _, status = postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "sync-editor-running-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.editor.sync",
+			"arguments": map[string]any{
+				"snapshot": map[string]any{
+					"root_summary": map[string]any{"active_scene": "res://EditorOwner.tscn"},
+					"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					"node_details": map[string]any{
+						"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					},
+				},
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("sync editor snapshot failed, status=%d", status)
+	}
+
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_cross", editorSessionID, "res://EditorOwner.tscn", "launch_cross", now)
+
+	resp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "is-running-ai-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "godot.project.is_running",
+			"arguments": map[string]any{},
+		},
+	}, aiSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("project is_running failed, status=%d", status)
+	}
+	result := mustMap(t, resp["result"])
+	if result["isError"] != false {
+		t.Fatalf("expected isError=false, got %v", result["isError"])
+	}
+	running := mustMap(t, result["result"])
+	if running["running"] != true {
+		t.Fatalf("expected running=true, got %v", running["running"])
+	}
+	if running["session_id"] != "game_cross" {
+		t.Fatalf("expected session_id=game_cross, got %v", running["session_id"])
+	}
+	if running["editor_session_id"] != editorSessionID {
+		t.Fatalf("expected editor_session_id=%q, got %v", editorSessionID, running["editor_session_id"])
+	}
+}
+
+func TestRuntimeSessionGetActiveTool_UsesLatestFreshEditorSessionAcrossHTTPPostSessions(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-active-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-active-cross", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	initAIReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-active-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "ai-active-cross", "version": "0.2.0"},
+		},
+	}
+	_, aiSessionID, status := postMCP(t, server, initAIReq, "", protocolVersion)
+	if status != 200 || aiSessionID == "" {
+		t.Fatalf("initialize ai session failed, status=%d session=%q", status, aiSessionID)
+	}
+	notifyInitialized(t, server, aiSessionID)
+
+	_, _, status = postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "sync-editor-active-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.editor.sync",
+			"arguments": map[string]any{
+				"snapshot": map[string]any{
+					"root_summary": map[string]any{"active_scene": "res://EditorOwner.tscn"},
+					"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					"node_details": map[string]any{
+						"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					},
+				},
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("sync editor snapshot failed, status=%d", status)
+	}
+
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_active_cross", editorSessionID, "res://EditorOwner.tscn", "launch_active_cross", now)
+
+	resp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "get-active-ai-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "godot.runtime.session.get_active",
+			"arguments": map[string]any{},
+		},
+	}, aiSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime session get_active failed, status=%d", status)
+	}
+	result := mustMap(t, resp["result"])
+	if result["isError"] != false {
+		t.Fatalf("expected isError=false, got %v", result["isError"])
+	}
+	active := mustMap(t, result["result"])
+	if active["session_id"] != "game_active_cross" {
+		t.Fatalf("expected session_id=game_active_cross, got %v", active["session_id"])
+	}
+	if active["editor_session_id"] != editorSessionID {
+		t.Fatalf("expected editor_session_id=%q, got %v", editorSessionID, active["editor_session_id"])
+	}
+	if active["running"] != true {
+		t.Fatalf("expected running=true, got %v", active["running"])
+	}
+}
+
+func TestProjectRunTool_EnforcesMutatingGateAndUsesEditorOwnerAcrossHTTPPostSessions(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-run-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-run-cross", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	initAIMutatingReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-mutating-run-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "ai-mutating-run-cross", "version": "0.2.0"},
+		},
+	}
+	_, aiMutatingSessionID, status := postMCP(t, server, initAIMutatingReq, "", protocolVersion)
+	if status != 200 || aiMutatingSessionID == "" {
+		t.Fatalf("initialize mutating ai session failed, status=%d session=%q", status, aiMutatingSessionID)
+	}
+	notifyInitialized(t, server, aiMutatingSessionID)
+
+	initAIReadonlyReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-readonly-run-cross",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "ai-readonly-run-cross", "version": "0.2.0"},
+		},
+	}
+	_, aiReadonlySessionID, status := postMCP(t, server, initAIReadonlyReq, "", protocolVersion)
+	if status != 200 || aiReadonlySessionID == "" {
+		t.Fatalf("initialize readonly ai session failed, status=%d session=%q", status, aiReadonlySessionID)
+	}
+	notifyInitialized(t, server, aiReadonlySessionID)
+
+	_, _, status = postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "sync-editor-run-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.editor.sync",
+			"arguments": map[string]any{
+				"snapshot": map[string]any{
+					"root_summary": map[string]any{"active_scene": "res://EditorOwner.tscn"},
+					"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					"node_details": map[string]any{
+						"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					},
+				},
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("sync editor snapshot failed, status=%d", status)
+	}
+
+	dispatchedTo := ""
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		if sessionID != editorSessionID {
+			return false
+		}
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		arguments, _ := params["arguments"].(map[string]any)
+		gameSessionID, _ := arguments["session_id"].(string)
+		go func() {
+			now := time.Now().UTC()
+			runtimebridge.DefaultGameSessionRegistry().RegisterRuntimeTransport(gameSessionID, "runtime_cross", editorSessionID, "res://EditorOwner.tscn", now, "launch_cross")
+			runtimebridge.DefaultRuntimeSnapshotStore().Upsert(gameSessionID, runtimebridge.RuntimeSnapshot{
+				SessionID:     gameSessionID,
+				SnapshotID:    "snap_cross_1",
+				Frame:         1,
+				UpdatedAt:     now.Format(time.RFC3339Nano),
+				RootScenePath: "res://EditorOwner.tscn",
+				RootNodeName:  "Main",
+				NodeCount:     1,
+				Running:       true,
+			}, now)
+			_ = runtimebridge.DefaultCommandBroker().Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result: map[string]any{
+					"running":    true,
+					"session_id": gameSessionID,
+					"scene_path": "res://EditorOwner.tscn",
+				},
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	runResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "run-ai-mutating-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "godot.project.run",
+			"arguments": map[string]any{},
+		},
+	}, aiMutatingSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("project run (mutating session) failed, status=%d", status)
+	}
+	if dispatchedTo != editorSessionID {
+		t.Fatalf("expected dispatch to editor session %q, got %q", editorSessionID, dispatchedTo)
+	}
+	runResult := mustMap(t, runResp["result"])
+	if runResult["isError"] != false {
+		t.Fatalf("expected run isError=false, got %v", runResult["isError"])
+	}
+
+	readonlyRunResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "run-ai-readonly-cross",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "godot.project.run",
+			"arguments": map[string]any{},
+		},
+	}, aiReadonlySessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("project run (readonly session) failed, status=%d", status)
+	}
+	readonlyResult := mustMap(t, readonlyRunResp["result"])
+	if readonlyResult["isError"] != true {
+		t.Fatalf("expected readonly run isError=true, got %v", readonlyResult["isError"])
+	}
+	readonlyErr := mustMap(t, readonlyResult["error"])
+	if readonlyErr["reason"] != "mutating_capability_required" {
+		t.Fatalf("expected mutating_capability_required, got %v", readonlyErr["reason"])
+	}
+}
+
 func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
 	server := newTestHTTPServer(t, true)
@@ -144,7 +573,7 @@ func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "godot.runtime.sync",
+		"name": "godot.bridge.editor.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -178,7 +607,7 @@ func TestSyncEditorRuntimeTool_WithInitializedSession(t *testing.T) {
 		t.Fatalf("expected isError=false, got %v", result["isError"])
 	}
 
-	stored, ok, reason := runtimebridge.DefaultStore().LatestFresh(time.Now().UTC())
+	stored, ok, reason := runtimebridge.DefaultEditorStore().LatestFresh(time.Now().UTC())
 	if !ok {
 		t.Fatalf("expected stored snapshot, reason=%s", reason)
 	}
@@ -195,7 +624,7 @@ func TestSyncEditorRuntimeTool_RejectsBeforeInitializedLifecycleGate(t *testing.
 	server.sessionManager.CreateSession(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name": "godot.runtime.sync",
+		"name": "godot.bridge.editor.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -239,7 +668,7 @@ func TestPingEditorRuntimeTool_WithInitializedSessionAndSnapshot(t *testing.T) {
 	server.sessionManager.CreateSession(sessionID)
 	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
-	runtimebridge.DefaultStore().Upsert(sessionID, runtimebridge.Snapshot{
+	runtimebridge.DefaultEditorStore().Upsert(sessionID, runtimebridge.Snapshot{
 		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Main.tscn"},
 		SceneTree:   runtimebridge.CompactNode{Path: "/Root", Name: "Root", Type: "Node2D", ChildCount: 0},
 		NodeDetails: map[string]runtimebridge.NodeDetail{
@@ -248,7 +677,7 @@ func TestPingEditorRuntimeTool_WithInitializedSessionAndSnapshot(t *testing.T) {
 	}, time.Now().UTC().Add(-9*time.Second))
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "godot.runtime.ping",
+		"name":      "godot.bridge.editor.ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -288,7 +717,7 @@ func TestPingEditorRuntimeTool_RequiresExistingSnapshot(t *testing.T) {
 	server.sessionManager.MarkInitialized(sessionID)
 
 	params, err := json.Marshal(map[string]any{
-		"name":      "godot.runtime.ping",
+		"name":      "godot.bridge.editor.ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -333,7 +762,7 @@ func TestRuntimeBridgeReadOnlyPolicy_AllowsInternalToolChain(t *testing.T) {
 	server.sessionManager.MarkInitialized(sessionID)
 
 	syncParams, err := json.Marshal(map[string]any{
-		"name": "godot.runtime.sync",
+		"name": "godot.bridge.editor.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -391,7 +820,7 @@ func TestRuntimeBridgeReadOnlyPolicy_AllowsInternalToolChain(t *testing.T) {
 	}
 
 	pingParams, err := json.Marshal(map[string]any{
-		"name":      "godot.runtime.ping",
+		"name":      "godot.bridge.editor.ping",
 		"arguments": map[string]any{},
 	})
 	if err != nil {
@@ -416,7 +845,7 @@ func TestRuntimeBridgeReadOnlyPolicy_AllowsInternalToolChain(t *testing.T) {
 	}
 
 	ackParams, err := json.Marshal(map[string]any{
-		"name": "godot.runtime.ack",
+		"name": "godot.bridge.command.ack",
 		"arguments": map[string]any{
 			"command_id": "cmd-nonexistent",
 			"success":    true,
@@ -452,6 +881,304 @@ func TestRuntimeBridgeReadOnlyPolicy_AllowsInternalToolChain(t *testing.T) {
 	}
 }
 
+func TestRuntimeLogRoundTripViaHTTPPost(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	runtimebridge.ResetDefaultRuntimeLogStoreForTests(100)
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-log",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-log", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	initRuntimeReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-runtime-log",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "runtime-log", "version": "0.2.0"},
+		},
+	}
+	_, runtimeSessionID, status := postMCP(t, server, initRuntimeReq, "", protocolVersion)
+	if status != 200 || runtimeSessionID == "" {
+		t.Fatalf("initialize runtime session failed, status=%d session=%q", status, runtimeSessionID)
+	}
+	notifyInitialized(t, server, runtimeSessionID)
+
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_http_log", editorSessionID, "res://Main.tscn", "launch_ok", now)
+
+	registerResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "register-runtime-log",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.runtime.register",
+			"arguments": map[string]any{
+				"session_id":        "game_http_log",
+				"editor_session_id": editorSessionID,
+				"scene_path":        "res://Main.tscn",
+				"launch_token":      "launch_ok",
+				"started_at":        now.Format(time.RFC3339Nano),
+			},
+		},
+	}, runtimeSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime register failed, status=%d", status)
+	}
+	registerPayload := mustMap(t, registerResp["result"])
+	if registerPayload["isError"] != false {
+		t.Fatalf("expected register isError=false, got %v", registerPayload["isError"])
+	}
+	registerResult := mustMap(t, registerPayload["result"])
+	if registerResult["runtime_session_id"] != runtimeSessionID {
+		t.Fatalf("expected runtime_session_id %q, got %v", runtimeSessionID, registerResult["runtime_session_id"])
+	}
+
+	pushResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "push-runtime-log",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.runtime.log.push",
+			"arguments": map[string]any{
+				"session_id": "game_http_log",
+				"entries": []map[string]any{
+					{"level": "info", "message": "boot", "source": "runtime_companion"},
+					{"level": "error", "message": "boom-1", "source": "runtime_command:godot.runtime.input.tap", "stack_trace": "input.gd:10"},
+					{"level": "error", "message": "boom-2", "source": "runtime_command:godot.runtime.screenshot.get"},
+				},
+			},
+		},
+	}, runtimeSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log push failed, status=%d", status)
+	}
+	pushPayload := mustMap(t, pushResp["result"])
+	if pushPayload["isError"] != false {
+		t.Fatalf("expected log push isError=false, got %v", pushPayload["isError"])
+	}
+	pushResult := mustMap(t, pushPayload["result"])
+	if pushResult["appended"] != float64(3) {
+		t.Fatalf("expected appended=3, got %v", pushResult["appended"])
+	}
+
+	getResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "get-runtime-log",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.runtime.log.get",
+			"arguments": map[string]any{
+				"session_id": "game_http_log",
+				"level":      "error",
+				"limit":      10,
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log get failed, status=%d", status)
+	}
+	getPayload := mustMap(t, getResp["result"])
+	if getPayload["isError"] != false {
+		t.Fatalf("expected log get isError=false, got %v", getPayload["isError"])
+	}
+	getResult := mustMap(t, getPayload["result"])
+	entriesRaw, ok := getResult["entries"].([]any)
+	if !ok {
+		t.Fatalf("expected entries array, got %T", getResult["entries"])
+	}
+	if len(entriesRaw) != 2 {
+		t.Fatalf("expected 2 error entries, got %d", len(entriesRaw))
+	}
+	firstEntry := mustMap(t, entriesRaw[0])
+	secondEntry := mustMap(t, entriesRaw[1])
+	if firstEntry["source"] != "runtime_command:godot.runtime.input.tap" {
+		t.Fatalf("unexpected first source %v", firstEntry["source"])
+	}
+	if secondEntry["message"] != "boom-2" {
+		t.Fatalf("expected second message boom-2, got %v", secondEntry["message"])
+	}
+	firstSequence, ok := firstEntry["sequence"].(float64)
+	if !ok {
+		t.Fatalf("expected numeric sequence, got %T", firstEntry["sequence"])
+	}
+
+	getSinceResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "get-runtime-log-since",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.runtime.log.get",
+			"arguments": map[string]any{
+				"session_id":     "game_http_log",
+				"level":          "error",
+				"since_sequence": firstSequence,
+				"limit":          10,
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log get since failed, status=%d", status)
+	}
+	getSincePayload := mustMap(t, getSinceResp["result"])
+	if getSincePayload["isError"] != false {
+		t.Fatalf("expected log get since isError=false, got %v", getSincePayload["isError"])
+	}
+	getSinceResult := mustMap(t, getSincePayload["result"])
+	sinceEntries, ok := getSinceResult["entries"].([]any)
+	if !ok {
+		t.Fatalf("expected since entries array, got %T", getSinceResult["entries"])
+	}
+	if len(sinceEntries) != 1 {
+		t.Fatalf("expected 1 entry after since_sequence, got %d", len(sinceEntries))
+	}
+	sinceEntry := mustMap(t, sinceEntries[0])
+	if sinceEntry["message"] != "boom-2" {
+		t.Fatalf("expected remaining message boom-2, got %v", sinceEntry["message"])
+	}
+
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		if sessionID != runtimeSessionID {
+			return false
+		}
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = runtimebridge.DefaultCommandBroker().Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result:    map[string]any{"cleared": true},
+				AckedAt:   time.Now().UTC(),
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	clearResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "clear-runtime-log",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.runtime.log.clear",
+			"arguments": map[string]any{
+				"session_id": "game_http_log",
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log clear failed, status=%d", status)
+	}
+	clearPayload := mustMap(t, clearResp["result"])
+	if clearPayload["isError"] != false {
+		t.Fatalf("expected log clear isError=false, got %v", clearPayload["isError"])
+	}
+	clearResult := mustMap(t, clearPayload["result"])
+	if clearResult["cleared"] != float64(3) {
+		t.Fatalf("expected cleared=3, got %v", clearResult["cleared"])
+	}
+
+	getAfterClearResp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "get-runtime-log-after-clear",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.runtime.log.get",
+			"arguments": map[string]any{
+				"session_id": "game_http_log",
+				"level":      "all",
+				"limit":      10,
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log get after clear failed, status=%d", status)
+	}
+	getAfterClearPayload := mustMap(t, getAfterClearResp["result"])
+	if getAfterClearPayload["isError"] != false {
+		t.Fatalf("expected log get after clear isError=false, got %v", getAfterClearPayload["isError"])
+	}
+	getAfterClearResult := mustMap(t, getAfterClearPayload["result"])
+	clearedEntries, ok := getAfterClearResult["entries"].([]any)
+	if !ok {
+		t.Fatalf("expected cleared entries array, got %T", getAfterClearResult["entries"])
+	}
+	if len(clearedEntries) != 0 {
+		t.Fatalf("expected 0 entries after clear, got %d", len(clearedEntries))
+	}
+}
+
+func TestRuntimeLogGetTool_ReturnsStoppedSessionErrorViaHTTPPost(t *testing.T) {
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	runtimebridge.ResetDefaultRuntimeLogStoreForTests(100)
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+	initReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-stopped-log",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "stopped-log", "version": "0.2.0"},
+		},
+	}
+	_, sessionID, status := postMCP(t, server, initReq, "", protocolVersion)
+	if status != 200 || sessionID == "" {
+		t.Fatalf("initialize session failed, status=%d session=%q", status, sessionID)
+	}
+	notifyInitialized(t, server, sessionID)
+
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_stopped", sessionID, "res://Stopped.tscn", "launch_ok", now)
+	runtimebridge.DefaultGameSessionRegistry().StopSession("game_stopped", now.Add(time.Second))
+
+	resp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "get-stopped-runtime-log",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.runtime.log.get",
+			"arguments": map[string]any{
+				"session_id": "game_stopped",
+			},
+		},
+	}, sessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("runtime log get for stopped session failed, status=%d", status)
+	}
+	result := mustMap(t, resp["result"])
+	if result["isError"] != true {
+		t.Fatalf("expected isError=true, got %v", result["isError"])
+	}
+	errPayload := mustMap(t, result["error"])
+	if errPayload["kind"] != tooltypes.SemanticKindNotAvailable {
+		t.Fatalf("expected kind %q, got %v", tooltypes.SemanticKindNotAvailable, errPayload["kind"])
+	}
+	if errPayload["code"] != "game_not_running" {
+		t.Fatalf("expected code game_not_running, got %v", errPayload["code"])
+	}
+}
+
 func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
 	server := newTestHTTPServer(t, true)
@@ -474,7 +1201,7 @@ func TestRuntimeBridgeConcurrentSessionStress(t *testing.T) {
 			defer wg.Done()
 
 			syncParams, err := json.Marshal(map[string]any{
-				"name": "godot.runtime.sync",
+				"name": "godot.bridge.editor.sync",
 				"arguments": map[string]any{
 					"snapshot": map[string]any{
 						"root_summary": map[string]any{
@@ -654,7 +1381,7 @@ func BenchmarkHandleMessageGetEditorStateParallel(b *testing.B) {
 	server.sessionManager.CreateSession(sessionID)
 	server.sessionManager.MarkInitializeAccepted(sessionID)
 	server.sessionManager.MarkInitialized(sessionID)
-	runtimebridge.DefaultStore().Upsert(sessionID, runtimebridge.Snapshot{
+	runtimebridge.DefaultEditorStore().Upsert(sessionID, runtimebridge.Snapshot{
 		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Bench.tscn"},
 	}, time.Now().UTC())
 
@@ -682,4 +1409,116 @@ func BenchmarkHandleMessageGetEditorStateParallel(b *testing.B) {
 			}
 		}
 	})
+}
+
+func TestNodeCreateTool_DispatchesToEditorSessionNotCallerViaHTTPPost(t *testing.T) {
+	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	server := newTestHTTPServer(t, true)
+
+	const protocolVersion = "2025-11-25"
+
+	// Initialize editor session with mutating capability.
+	initEditorReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-editor-node-dispatch",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "editor-node-dispatch", "version": "0.2.0"},
+		},
+	}
+	_, editorSessionID, status := postMCP(t, server, initEditorReq, "", protocolVersion)
+	if status != 200 || editorSessionID == "" {
+		t.Fatalf("initialize editor session failed, status=%d session=%q", status, editorSessionID)
+	}
+	notifyInitialized(t, server, editorSessionID)
+
+	// Initialize AI session with mutating capability.
+	initAIReq := map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "init-ai-node-dispatch",
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"godot": map[string]any{"mutating": true},
+			},
+			"clientInfo": map[string]any{"name": "ai-node-dispatch", "version": "0.2.0"},
+		},
+	}
+	_, aiSessionID, status := postMCP(t, server, initAIReq, "", protocolVersion)
+	if status != 200 || aiSessionID == "" {
+		t.Fatalf("initialize AI session failed, status=%d session=%q", status, aiSessionID)
+	}
+	notifyInitialized(t, server, aiSessionID)
+
+	// Sync editor snapshot to editor session.
+	_, _, status = postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "sync-editor-node-dispatch",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.bridge.editor.sync",
+			"arguments": map[string]any{
+				"snapshot": map[string]any{
+					"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
+					"scene_tree":   map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					"node_details": map[string]any{
+						"/Root": map[string]any{"path": "/Root", "name": "Root", "type": "Node2D", "child_count": 0},
+					},
+				},
+			},
+		},
+	}, editorSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("sync editor snapshot failed, status=%d", status)
+	}
+
+	// Set NotificationSender that captures dispatch target and auto-acks.
+	dispatchedTo := ""
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = runtimebridge.DefaultCommandBroker().Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result:    map[string]any{"created": true},
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	// POST node.create from AI session — should dispatch to editor session.
+	resp, _, status := postMCP(t, server, map[string]any{
+		"jsonrpc": jsonrpc.Version,
+		"id":      "node-create-ai",
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "godot.node.create",
+			"arguments": map[string]any{
+				"type":   "Node2D",
+				"parent": "/root",
+				"name":   "TestNode",
+			},
+		},
+	}, aiSessionID, protocolVersion)
+	if status != 200 {
+		t.Fatalf("node.create via AI session failed, status=%d", status)
+	}
+	if dispatchedTo != editorSessionID {
+		t.Fatalf("expected dispatch to editor session %q, got %q", editorSessionID, dispatchedTo)
+	}
+	result := mustMap(t, resp["result"])
+	if result["isError"] != false {
+		t.Fatalf("expected isError=false, got %v", result["isError"])
+	}
 }

@@ -32,7 +32,7 @@ Do not use this skill for:
 - Keep general Godot guidance short during execution: identify the lane, route to the relevant policy reference, then continue the MCP flow.
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`. If the server is running outside the target project tree, set `GODOT_PROJECT_ROOT` first.
-- Runtime-backed reads (`godot.editor.state.get`, `godot.node.tree.get`, `godot.node.properties.get`) require an initialized MCP HTTP session plus a fresh runtime snapshot.
+- Runtime-backed reads (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require an initialized MCP HTTP session plus a fresh runtime snapshot.
 - Mutating tools require an initialized MCP HTTP session, `initialize.params.capabilities.godot.mutating=true`, and a healthy runtime bridge. Check `godot.runtime.health.get` before mutating.
 - `godot.script.modify` replaces the entire script content. Always read the current script with `godot.script.read` first, apply changes to the full text, then send the complete new content.
 - Never finish a task with an unclear verification story. Every slice needs one gameplay scenario and one readback check.

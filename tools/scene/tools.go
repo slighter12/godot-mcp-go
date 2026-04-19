@@ -109,7 +109,7 @@ func (t *CreateSceneTool) InputSchema() mcp.InputSchema {
 	}
 }
 func (t *CreateSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return dispatchSceneRuntimeCommand(args, t.Name(), validateCreateSceneArguments)
+	return dispatchSceneRuntimeCommand(args, t.Name(), validateCreateSceneArguments, nil)
 }
 
 type SaveSceneTool struct{}
@@ -120,25 +120,26 @@ func (t *SaveSceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Save Scene"}
 }
 func (t *SaveSceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return dispatchSceneRuntimeCommand(args, t.Name(), nil)
+	return dispatchSceneRuntimeCommand(args, t.Name(), nil, nil)
 }
 
 type ApplySceneTool struct{}
 
-func (t *ApplySceneTool) Name() string        { return "godot.scene.apply" }
-func (t *ApplySceneTool) Description() string { return "Applies a scene to the current project" }
+func (t *ApplySceneTool) Name() string        { return "godot.editor.scene.apply" }
+func (t *ApplySceneTool) Description() string { return "Applies a scene to the current editor project" }
 func (t *ApplySceneTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
 		Properties: map[string]any{
-			"path": map[string]any{"type": "string", "description": "Scene path to open"},
+			"path":              map[string]any{"type": "string", "description": "Scene path to open"},
+			"editor_session_id": map[string]any{"type": "string", "description": "Optional explicit editor session id override"},
 		},
 		Required: []string{"path"},
 		Title:    "Apply Scene",
 	}
 }
 func (t *ApplySceneTool) Execute(args json.RawMessage) ([]byte, error) {
-	return dispatchSceneRuntimeCommand(args, t.Name(), validateApplySceneArguments)
+	return dispatchSceneRuntimeCommand(args, t.Name(), validateApplySceneArguments, resolveSceneEditorCommandSessionID)
 }
 
 func GetAllTools() []types.Tool {
@@ -197,18 +198,23 @@ func countLines(data []byte) int {
 	return lines
 }
 
-func dispatchSceneRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {
+func dispatchSceneRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error), resolver types.RuntimeCommandSessionResolver) ([]byte, error) {
 	return types.DispatchRuntimeCommand(types.RuntimeCommandDispatchOptions{
 		RawArgs:                  rawArgs,
 		CommandName:              commandName,
 		Timeout:                  sceneCommandTimeout,
 		SessionRequiredMessage:   "Scene commands require an initialized MCP HTTP session",
 		BridgeUnavailableMessage: "Scene runtime bridge is unavailable",
+		ResolveRuntimeSessionID:  resolver,
 		InvalidJSONError: func(err error) error {
 			return newSceneInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})
 		},
 		Validate: validate,
 	})
+}
+
+func resolveSceneEditorCommandSessionID(arguments map[string]any, ctx types.MCPContext, commandName string) (string, *types.SemanticError) {
+	return types.ResolveFreshEditorSessionID(arguments, ctx, commandName, "Scene command requires healthy editor snapshot")
 }
 
 func validateCreateSceneArguments(arguments map[string]any, toolName string) (map[string]any, error) {

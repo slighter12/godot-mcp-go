@@ -18,8 +18,8 @@ var request_counter: int = 0
 var pending_requests: Dictionary = {}
 var tools_request_in_progress: bool = false
 var tools_refresh_buffer: Dictionary = {}
-var runtime_sync_in_flight: bool = false
-var runtime_ping_in_flight: bool = false
+var editor_sync_in_flight: bool = false
+var editor_ping_in_flight: bool = false
 
 func _ready():
 	_ensure_client_id()
@@ -85,8 +85,8 @@ func _on_connected():
 	tools_refresh_buffer.clear()
 	pending_requests.clear()
 	tools_request_in_progress = false
-	runtime_sync_in_flight = false
-	runtime_ping_in_flight = false
+	editor_sync_in_flight = false
+	editor_ping_in_flight = false
 
 	_send_initialized_notification()
 	_request_tools_list("")
@@ -96,8 +96,8 @@ func _on_disconnected():
 	tools_refresh_buffer.clear()
 	pending_requests.clear()
 	tools_request_in_progress = false
-	runtime_sync_in_flight = false
-	runtime_ping_in_flight = false
+	editor_sync_in_flight = false
+	editor_ping_in_flight = false
 
 func _on_error(error_message: String):
 	print("MCP interface error: ", error_message)
@@ -116,29 +116,29 @@ func call_tool(tool_name: String, arguments: Dictionary = {}):
 		return
 	emit_signal("tool_called", tool_name, arguments)
 
-func sync_runtime_snapshot(snapshot: Dictionary) -> bool:
+func sync_editor_snapshot(snapshot: Dictionary) -> bool:
 	if mcp_client == null:
 		return false
-	if runtime_sync_in_flight:
+	if editor_sync_in_flight:
 		return false
-	if not tools.has("godot.runtime.sync"):
+	if not tools.has("godot.bridge.editor.sync"):
 		return false
 
-	runtime_sync_in_flight = true
-	var request_id = _send_tools_call_request("godot.runtime.sync", {
+	editor_sync_in_flight = true
+	var request_id = _send_tools_call_request("godot.bridge.editor.sync", {
 		"snapshot": snapshot
 	}, {
 		"kind": "runtime_sync"
 	})
 	if request_id == "":
-		runtime_sync_in_flight = false
-		emit_signal("runtime_sync_failed", "Failed to send runtime sync request")
+		editor_sync_in_flight = false
+		emit_signal("runtime_sync_failed", "Failed to send editor snapshot sync request")
 		return false
 
 	return true
 
-func can_ping_runtime_bridge() -> bool:
-	return tools.has("godot.runtime.ping")
+func can_ping_editor_bridge() -> bool:
+	return tools.has("godot.bridge.editor.ping")
 
 func has_tool(tool_name: String) -> bool:
 	return tools.has(tool_name)
@@ -146,21 +146,21 @@ func has_tool(tool_name: String) -> bool:
 func get_tools() -> Dictionary:
 	return tools.duplicate(true)
 
-func ping_runtime_bridge() -> void:
+func ping_editor_bridge() -> void:
 	if mcp_client == null:
 		return
-	if runtime_ping_in_flight:
+	if editor_ping_in_flight:
 		return
-	if not tools.has("godot.runtime.ping"):
+	if not tools.has("godot.bridge.editor.ping"):
 		return
 
-	runtime_ping_in_flight = true
-	var request_id = _send_tools_call_request("godot.runtime.ping", {}, {
+	editor_ping_in_flight = true
+	var request_id = _send_tools_call_request("godot.bridge.editor.ping", {}, {
 		"kind": "runtime_ping"
 	})
 	if request_id == "":
-		runtime_ping_in_flight = false
-		emit_signal("runtime_sync_failed", "Failed to send runtime ping request")
+		editor_ping_in_flight = false
+		emit_signal("runtime_sync_failed", "Failed to send editor bridge ping request")
 
 func handle_message(message: Dictionary):
 	if message.get("jsonrpc", "") != "2.0":
@@ -357,16 +357,16 @@ func _send_tools_call_request(tool_name: String, arguments: Dictionary, pending:
 
 func _handle_runtime_tool_error(kind: String, error_message: String):
 	if kind == "runtime_sync":
-		runtime_sync_in_flight = false
+		editor_sync_in_flight = false
 	elif kind == "runtime_ping":
-		runtime_ping_in_flight = false
+		editor_ping_in_flight = false
 	emit_signal("runtime_sync_failed", error_message)
 
 func _handle_runtime_tool_result(result: Variant, invalid_payload_message: String, clear_runtime_sync: bool, clear_runtime_ping: bool):
 	if clear_runtime_sync:
-		runtime_sync_in_flight = false
+		editor_sync_in_flight = false
 	if clear_runtime_ping:
-		runtime_ping_in_flight = false
+		editor_ping_in_flight = false
 	if not (result is Dictionary):
 		emit_signal("runtime_sync_failed", invalid_payload_message)
 		return
@@ -377,7 +377,7 @@ func _handle_runtime_tool_result(result: Variant, invalid_payload_message: Strin
 func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "v1") -> void:
 	if mcp_client == null:
 		return
-	if not tools.has("godot.runtime.ack"):
+	if not tools.has("godot.bridge.command.ack"):
 		return
 
 	var arguments = {
@@ -396,7 +396,7 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
 	var trimmed_schema_version = schema_version.strip_edges()
 	if trimmed_schema_version != "":
 		arguments["schema_version"] = trimmed_schema_version
-	var request_id = _send_tools_call_request("godot.runtime.ack", arguments, {
+	var request_id = _send_tools_call_request("godot.bridge.command.ack", arguments, {
 		"kind": "runtime_ack"
 	})
 	if request_id == "":

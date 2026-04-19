@@ -21,7 +21,7 @@ func TestExecute_AllowsRuntimeSyncInReadOnlyMode(t *testing.T) {
 	manager.RegisterDefaultTools()
 
 	params := mustMarshalParams(t, map[string]any{
-		"name": "godot.runtime.sync",
+		"name": "godot.bridge.editor.sync",
 		"arguments": map[string]any{
 			"snapshot": map[string]any{
 				"root_summary": map[string]any{"active_scene": "res://Main.tscn"},
@@ -66,7 +66,7 @@ func TestExecute_AllowsRuntimeAckInAllowListMode(t *testing.T) {
 	manager.RegisterDefaultTools()
 
 	params := mustMarshalParams(t, map[string]any{
-		"name": "godot.runtime.ack",
+		"name": "godot.bridge.command.ack",
 		"arguments": map[string]any{
 			"command_id": "cmd-missing",
 			"success":    true,

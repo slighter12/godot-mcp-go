@@ -9,60 +9,6 @@ import (
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
-func TestGetSceneTreeTool_UsesRuntimeSnapshot(t *testing.T) {
-	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
-	runtimebridge.DefaultStore().Upsert("session-1", runtimebridge.Snapshot{
-		SceneTree: runtimebridge.CompactNode{Path: "/Root", Name: "Root", Type: "Node2D", ChildCount: 0},
-	}, time.Now().UTC())
-
-	tool := &GetSceneTreeTool{}
-	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
-	if err != nil {
-		t.Fatalf("execute godot.node.tree.get: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(resultRaw, &result); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-	root, ok := result["root"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected root map, got %T", result["root"])
-	}
-	if root["name"] != "Root" {
-		t.Fatalf("expected root name Root, got %v", root["name"])
-	}
-}
-
-func TestGetSceneTreeTool_IsSessionScoped(t *testing.T) {
-	runtimebridge.ResetDefaultStoreForTests(10 * time.Second)
-	now := time.Now().UTC()
-	runtimebridge.DefaultStore().Upsert("session-1", runtimebridge.Snapshot{
-		SceneTree: runtimebridge.CompactNode{Path: "/RootA", Name: "RootA", Type: "Node2D", ChildCount: 0},
-	}, now)
-	runtimebridge.DefaultStore().Upsert("session-2", runtimebridge.Snapshot{
-		SceneTree: runtimebridge.CompactNode{Path: "/RootB", Name: "RootB", Type: "Node2D", ChildCount: 0},
-	}, now.Add(1*time.Second))
-
-	tool := &GetSceneTreeTool{}
-	resultRaw, err := tool.Execute(json.RawMessage(`{"_mcp":{"session_id":"session-1","session_initialized":true}}`))
-	if err != nil {
-		t.Fatalf("execute godot.node.tree.get: %v", err)
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(resultRaw, &result); err != nil {
-		t.Fatalf("unmarshal result: %v", err)
-	}
-	root, ok := result["root"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected root map, got %T", result["root"])
-	}
-	if root["name"] != "RootA" {
-		t.Fatalf("expected root name RootA, got %v", root["name"])
-	}
-}
-
 func TestNodeWriteTools_ReturnNotAvailable(t *testing.T) {
 	tools := []interface {
 		Execute(args json.RawMessage) ([]byte, error)
@@ -86,17 +32,84 @@ func TestNodeWriteTools_ReturnNotAvailable(t *testing.T) {
 	}
 }
 
-func TestResolveNodeDetail_NameFallbackDeterministic(t *testing.T) {
-	details := map[string]runtimebridge.NodeDetail{
-		"/B": {Path: "/B", Name: "Enemy"},
-		"/A": {Path: "/A", Name: "Enemy"},
+func TestNodeCreateTool_DispatchesToRuntimeCommandSessionID(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(2 * time.Second)
+	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
+	now := time.Now().UTC()
+	runtimebridge.DefaultEditorStore().Upsert("editor-1", runtimebridge.Snapshot{
+		RootSummary: runtimebridge.RootSummary{ActiveScene: "res://Main.tscn"},
+	}, now)
+
+	dispatchedTo := ""
+	broker := runtimebridge.DefaultCommandBroker()
+	runtimebridge.SetNotificationSender(func(sessionID string, message map[string]any) bool {
+		dispatchedTo = sessionID
+		params, _ := message["params"].(map[string]any)
+		commandID, _ := params["command_id"].(string)
+		go func() {
+			_ = broker.Ack(sessionID, runtimebridge.CommandAck{
+				CommandID: commandID,
+				Success:   true,
+				Result:    map[string]any{"created": true},
+			})
+		}()
+		return true
+	})
+	defer runtimebridge.SetNotificationSender(nil)
+
+	tool := &CreateNodeTool{}
+	raw := json.RawMessage(`{
+		"type": "Node2D",
+		"parent": "/root",
+		"name": "TestNode",
+		"_mcp": {
+			"session_id": "ai-session",
+			"session_initialized": true,
+			"runtime_command_session_id": "editor-1"
+		}
+	}`)
+	resultRaw, err := tool.Execute(raw)
+	if err != nil {
+		t.Fatalf("execute godot.node.create: %v", err)
+	}
+	if dispatchedTo != "editor-1" {
+		t.Fatalf("expected dispatch to editor-1, got %q", dispatchedTo)
 	}
 
-	detail, ok := resolveNodeDetail(details, "Enemy")
-	if !ok {
-		t.Fatal("expected to resolve node detail by name")
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
 	}
-	if detail.Path != "/A" {
-		t.Fatalf("expected deterministic first key /A, got %s", detail.Path)
+	if result["success"] != true {
+		t.Fatalf("expected success=true, got %v", result["success"])
+	}
+}
+
+func TestNodeCreateTool_FailsWhenRuntimeCommandSessionMissing(t *testing.T) {
+	runtimebridge.ResetDefaultCommandBrokerForTests(500 * time.Millisecond)
+	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
+	runtimebridge.SetNotificationSender(nil)
+
+	tool := &CreateNodeTool{}
+	raw := json.RawMessage(`{
+		"type": "Node2D",
+		"parent": "/root",
+		"name": "TestNode",
+		"_mcp": {
+			"session_id": "ai-session",
+			"session_initialized": true,
+			"runtime_command_session_id": ""
+		}
+	}`)
+	_, err := tool.Execute(raw)
+	if err == nil {
+		t.Fatal("expected error when runtime command session is missing")
+	}
+	semanticErr, ok := tooltypes.AsSemanticError(err)
+	if !ok {
+		t.Fatalf("expected semantic error, got %T", err)
+	}
+	if semanticErr.Kind != tooltypes.SemanticKindNotAvailable {
+		t.Fatalf("expected not_available kind, got %s", semanticErr.Kind)
 	}
 }

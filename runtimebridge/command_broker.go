@@ -13,9 +13,13 @@ import (
 const defaultCommandTimeout = 8 * time.Second
 
 var (
-	defaultCommandBroker = NewCommandBroker(defaultCommandTimeout)
+	defaultCommandBroker atomic.Pointer[CommandBroker]
 	commandSeq           atomic.Uint64
 )
+
+func init() {
+	defaultCommandBroker.Store(NewCommandBroker(defaultCommandTimeout))
+}
 
 // CommandAck stores plugin execution acknowledgement for one command.
 type CommandAck struct {
@@ -128,11 +132,18 @@ func NewCommandBroker(defaultTimeout time.Duration) *CommandBroker {
 }
 
 func DefaultCommandBroker() *CommandBroker {
-	return defaultCommandBroker
+	if broker := defaultCommandBroker.Load(); broker != nil {
+		return broker
+	}
+	broker := NewCommandBroker(defaultCommandTimeout)
+	if defaultCommandBroker.CompareAndSwap(nil, broker) {
+		return broker
+	}
+	return defaultCommandBroker.Load()
 }
 
 func ResetDefaultCommandBrokerForTests(defaultTimeout time.Duration) {
-	defaultCommandBroker = NewCommandBroker(defaultTimeout)
+	defaultCommandBroker.Store(NewCommandBroker(defaultTimeout))
 }
 
 func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, arguments map[string]any, timeout time.Duration) (CommandAck, bool, string) {

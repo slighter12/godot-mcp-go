@@ -97,7 +97,7 @@ func summarizeToolArgsForLog(name string, args json.RawMessage) string {
 	}
 
 	switch name {
-	case "godot.runtime.sync", "godot.runtime.ping":
+	case "godot.bridge.editor.sync", "godot.bridge.editor.ping", "godot.bridge.runtime.snapshot.push":
 		return fmt.Sprintf("<omitted:%d bytes>", len(args))
 	}
 

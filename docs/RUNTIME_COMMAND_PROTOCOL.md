@@ -30,7 +30,7 @@ Payload:
 
 Tool name:
 
-- `godot.runtime.ack`
+- `godot.bridge.command.ack`
 
 Payload:
 
@@ -50,6 +50,39 @@ Notes:
 - Notification payload requires canonical `command_id`.
 - `error`, `reason`, `retryable`, `schema_version` are optional and may be provided in top-level ack fields and/or within `result`.
 - Server normalizes metadata into command responses when present.
+
+## Runtime Log Push Tool
+
+Tool name:
+
+- `godot.bridge.runtime.log.push`
+
+Payload:
+
+```json
+{
+  "session_id": "game_...",
+  "entries": [
+    {
+      "time": "2026-04-06T15:00:00+08:00",
+      "level": "error",
+      "message": "runtime diagnostics failure | reason=property_not_supported",
+      "source": "runtime_command:godot.runtime.node_properties.get",
+      "stack_trace": ""
+    }
+  ]
+}
+```
+
+Notes:
+
+- log push is session-scoped and must target the current game session
+- `entries[].level` is normalized by the server to `debug`, `info`, `warning`, `error`, or `all`
+- `entries[].stack_trace` is optional
+- current diagnostics sources are:
+  - `runtime_companion`
+  - `runtime_lifecycle`
+  - `runtime_command:<tool_name>`
 
 ## Timeout and Failure Mapping
 
@@ -111,8 +144,8 @@ Plugin command handlers must:
 
 Runtime bridge internal tools are treated as transport health plumbing:
 
-- `godot.runtime.sync`
-- `godot.runtime.ping`
-- `godot.runtime.ack`
+- `godot.bridge.editor.sync`
+- `godot.bridge.editor.ping`
+- `godot.bridge.command.ack`
 
 These tools bypass `tool_controls.permission_mode` filters so runtime synchronization remains available in `read_only` and `allow_list` modes.
