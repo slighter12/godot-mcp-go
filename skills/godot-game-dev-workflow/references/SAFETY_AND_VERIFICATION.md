@@ -5,7 +5,7 @@
 - Preserve existing project conventions before introducing new patterns.
 - Avoid adding autoloads, singleton managers, or new scene/script ownership layers unless the project already uses them or the task explicitly needs them.
 - `godot.script.modify` is a full content replacement. Always read the script first, never send partial content.
-- `godot.node.properties.get` currently exposes runtime metadata only (`path`, `name`, `type`, `owner`, `script`, `groups`, `child_count`), not arbitrary engine properties.
+- `godot.runtime.node_properties.get` exposes a fixed runtime whitelist only: `position`, `global_position`, `velocity`, `visible`, `modulate`, `text`, `frame`, `animation`, `enabled`, `zoom`.
 - Keep each iteration to one minimal behavior change and one verification pass.
 - When the task needs GDScript syntax or Godot engine semantics, route to `OFFICIAL_DOCS_MAP.md` and prefer the official GDScript examples.
 - Use `../../policy-godot/SKILL.md` for general Godot conventions and topic routing.
@@ -46,7 +46,7 @@ Review these when relevant to the task:
 
 Use this checklist after each iteration:
 
-1. State readback (`godot.script.read`, `godot.scene.read`, `godot.node.tree.get`, `godot.node.properties.get`) or the mutating ack payload confirms the intended update was applied, using only fields the tool actually exposes.
+1. State readback (`godot.script.read`, `godot.scene.read`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) or the mutating ack payload confirms the intended update was applied, using only fields the tool actually exposes.
 2. Logical analysis of the changed code confirms the primary gameplay scenario should behave as intended.
 3. Logical analysis confirms one adjacent behavior is not broken by the change.
 4. Ownership sanity: one clear owner still controls the mechanic or state.

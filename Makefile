@@ -7,13 +7,14 @@ INSPECTOR_SERVER_PORT ?= 29080
 INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(INSPECTOR_SERVER_PORT)/mcp
 INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:latest
 
-.PHONY: help run-http test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-all
+.PHONY: help run-http test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-all
 
 help:
 	@echo "Available targets:"
 	@echo "  make run-http              - Run the Streamable HTTP server on the configured host/port"
 	@echo "  make test-go               - Run Go unit tests"
 	@echo "  make test-http-smoke       - Run Streamable HTTP smoke checks"
+	@echo "  make test-http-runtime-log-smoke - Run runtime log HTTP smoke checks"
 	@echo "  make test-http-ping        - Verify Streamable HTTP ping returns an empty result object"
 	@echo "  make test-http-delete      - Verify Streamable HTTP DELETE session lifecycle"
 	@echo "  make test-http-session-isolation - Verify runtime snapshot data is session-scoped"
@@ -32,6 +33,9 @@ test-go:
 
 test-http-smoke:
 	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(SERVER_PORT)" SERVER_URL="$(SERVER_URL)" ./scripts/test-http-smoke.sh
+
+test-http-runtime-log-smoke:
+	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(SERVER_PORT)" SERVER_URL="$(SERVER_URL)" ./scripts/test-http-runtime-log-smoke.sh
 
 test-http-ping:
 	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(SERVER_PORT)" SERVER_URL="$(SERVER_URL)" ./scripts/test-http-ping.sh
@@ -60,4 +64,4 @@ test-inspector-docker: inspector-pull
 test-inspector-header-negative: inspector-pull
 	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(INSPECTOR_SERVER_PORT)" INSPECTOR_SERVER_URL="$(INSPECTOR_SERVER_URL)" INSPECTOR_IMAGE="$(INSPECTOR_IMAGE)" ./scripts/test-inspector-header-negative.sh
 
-test-all: test-go test-http-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id test-inspector-docker test-inspector-header-negative
+test-all: test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id test-inspector-docker test-inspector-header-negative

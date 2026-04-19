@@ -24,11 +24,14 @@ This document is the canonical implementation status for the repository.
   - `internal/domain/toolspec` for naming and permission policy
   - `internal/infra/notifications` for standard progress payloads
 - Runtime bridge snapshot store with stale + grace freshness policy
-- Runtime bridge internal tools (`godot.runtime.sync`, `godot.runtime.ping`, `godot.runtime.ack`)
+- Runtime bridge internal tools (`godot.bridge.editor.sync`, `godot.bridge.editor.ping`, `godot.bridge.command.ack`)
 - Runtime command broker with dispatch/ack/timeout observability metrics
-- Runtime-backed read tools (`godot.editor.state.get`, `godot.node.tree.get`, `godot.node.properties.get`)
+- Runtime-backed read tools (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`)
 - Runtime mutating command bridge for project/scene/node/script tools
 - Session-scoped mutating capability gate (`initialize.params.capabilities.godot.mutating=true`)
+- Split-session editor owner resolution for editor-backed/session-discovery tools (`godot.editor.state.get`, `godot.project.is_running`, `godot.runtime.session.get_active`, `godot.project.run`, `godot.project.stop`, `godot.editor.scene.apply`)
+- Runtime run/attach resilience: `godot.project.run` preserves game session mapping when first snapshot await times out, allowing late runtime register recovery
+- Runtime run attach token consistency: when attach remaps to an existing game session id, server preserves effective launch token (ack token first, existing token fallback) so runtime register validation remains stable
 - Project tool completeness (`godot.project.settings.get`, `godot.project.resources.list`) with deterministic pagination
 - Script create overwrite policy (`replace=false` default, conflict reason surfaced in runtime ack`)
 - Prompt catalog strict rendering mode and advanced rendering mode
@@ -37,7 +40,7 @@ This document is the canonical implementation status for the repository.
 - Policy metadata and runtime metrics resources (`godot://policy/godot-checks`, `godot://runtime/metrics`)
 - Runtime health tool (`godot.runtime.health.get`)
 - Tool controls (schema validation, unknown argument rejection, read-only/allow-list permission modes)
-- Runtime bridge internal permission bypass (`godot.runtime.sync`, `godot.runtime.ping`, `godot.runtime.ack`)
+- Runtime bridge internal permission bypass (`godot.bridge.editor.sync`, `godot.bridge.editor.ping`, `godot.bridge.command.ack`)
 - Plugin modularized entry/wiring:
   - `connection_state_machine.gd`
   - `streamable_http_client.gd`
@@ -45,32 +48,33 @@ This document is the canonical implementation status for the repository.
   - `runtime_snapshot_collector.gd`
   - `runtime_command_dispatcher.gd`
   - `tool_catalog.gd`
-- CI and manual verification scripts (Go tests, HTTP smoke/ping/delete/session isolation, Inspector docker)
+- CI and manual verification scripts (Go tests, HTTP smoke/runtime-log smoke/ping/delete/session isolation, Inspector docker)
 
 ### Release State
 
 - Roadmap tracks are closed for the current v1 repository line.
-- No deferred implementation backlog is tracked in this file.
+- Runtime log backlog is tracked separately in `docs/RUNTIME_LOG_BACKLOG.md`.
 
 ## Verification Gate
 
 1. `go test ./...`
 2. `make test-http-smoke`
-3. `make test-http-ping`
-4. `make test-http-delete`
-5. `make test-http-session-isolation`
-6. `make test-http-protocol-header`
-7. `make test-http-allow-list-runtime-bridge`
-8. `make test-lifecycle-initialized-id`
-9. `make test-inspector-docker`
-10. `make test-inspector-header-negative`
+3. `make test-http-runtime-log-smoke`
+4. `make test-http-ping`
+5. `make test-http-delete`
+6. `make test-http-session-isolation`
+7. `make test-http-protocol-header`
+8. `make test-http-allow-list-runtime-bridge`
+9. `make test-lifecycle-initialized-id`
+10. `make test-inspector-docker`
+11. `make test-inspector-header-negative`
 
 ## Acceptance Failure Criteria
 
 - Any JSON-RPC lifecycle deviation from `initialize -> notifications/initialized -> regular methods`
 - Any transport mismatch between stdio and streamable HTTP for lifecycle error semantics
 - Any permission regression where non-internal tools bypass `permission_mode`
-- Any runtime bridge regression where `godot.runtime.sync`, `godot.runtime.ping`, or `godot.runtime.ack` is blocked by `read_only` / `allow_list`
+- Any runtime bridge regression where `godot.bridge.editor.sync`, `godot.bridge.editor.ping`, or `godot.bridge.command.ack` is blocked by `read_only` / `allow_list`
 - Any protocol version acceptance outside `2025-11-25`
 
 ## Update Rules

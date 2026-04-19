@@ -23,19 +23,19 @@ They operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unse
 These tools depend on initialized MCP HTTP session state and a fresh runtime snapshot:
 
 - `godot.editor.state.get`
-- `godot.node.tree.get`
-- `godot.node.properties.get`
+- `godot.runtime.scene_tree.get`
+- `godot.runtime.node_properties.get`
 
 If they fail with session or freshness errors, resolve via `SAFETY_AND_VERIFICATION.md` before continuing.
 
 ### Mutating tools
 
-Before calling any mutating tool (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.scene.apply`):
+Before calling any mutating tool (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`):
 
 - Ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated.
 - Call `godot.runtime.health.get` and verify bridge status is healthy.
 - If the bridge is unhealthy, resolve it via `SAFETY_AND_VERIFICATION.md` before proceeding.
-- `godot.node.create`, `godot.node.modify`, `godot.node.delete`, and `godot.scene.save` operate on the currently edited scene. If the target scene is different, open it with `godot.scene.apply` first.
+- `godot.node.create`, `godot.node.modify`, `godot.node.delete`, and `godot.scene.save` operate on the currently edited scene. If the target scene is different, open it with `godot.editor.scene.apply` first.
 
 ## Script Modification Constraint
 
@@ -57,8 +57,8 @@ Never call `godot.script.modify` without reading the script first.
 
 ### Inspect the behavior boundary
 
-- `godot.node.tree.get` -> identify owner node path and nearby collaborators when runtime-backed reads are available
-- `godot.node.properties.get` -> inspect runtime metadata currently exposed by the snapshot (`path`, `name`, `type`, `owner`, `script`, `groups`, `child_count`) when runtime-backed reads are available
+- `godot.runtime.scene_tree.get` -> identify owner node path and nearby collaborators when runtime-backed reads are available
+- `godot.runtime.node_properties.get` -> inspect runtime state through the phase-1 property whitelist (`position`, `global_position`, `velocity`, `visible`, `modulate`, `text`, `frame`, `animation`, `enabled`, `zoom`) when runtime-backed reads are available
 - `godot.script.read` -> inspect the script that currently owns the behavior
 
 Use `godot.script.list` only when the owner script is not obvious from the scene.
@@ -84,7 +84,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.editor.state.get` or `godot.node.tree.get` when live context is needed to confirm the active owner
+- `godot.editor.state.get` or `godot.runtime.scene_tree.get` when live context is needed to confirm the active owner
 
 Change:
 
@@ -126,7 +126,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.node.tree.get` -> `godot.node.properties.get` to confirm node path, owner, script, and groups when runtime-backed reads are available
+- `godot.runtime.scene_tree.get` -> `godot.runtime.node_properties.get` to confirm node path, owner, script, and groups when runtime-backed reads are available
 
 Change:
 
@@ -166,7 +166,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.node.tree.get` when runtime-backed reads are needed to confirm the active UI owner or gameplay source path
+- `godot.runtime.scene_tree.get` when runtime-backed reads are needed to confirm the active UI owner or gameplay source path
 
 Change:
 
@@ -210,18 +210,18 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.node.tree.get` when the active edited scene or live hierarchy matters
+- `godot.runtime.scene_tree.get` when the active edited scene or live hierarchy matters
 
 Change:
 
-- If the target scene is not the currently edited scene, use `godot.scene.apply` first
+- If the target scene is not the currently edited scene, use `godot.editor.scene.apply` first
 - Use `godot.node.create` or `godot.node.modify` for minimal node-tree changes
 - Use `godot.scene.save` to persist
 - Use `godot.scene.create` only when the slice truly needs a new scene file
 
 Verify:
 
-- `godot.node.tree.get` or `godot.scene.read` readback
+- `godot.runtime.scene_tree.get` or `godot.scene.read` readback
 - Logical player interaction analysis based on the final hierarchy
 
 Watch for:
@@ -255,7 +255,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.node.tree.get` only when runtime ownership is unclear and affects the refactor boundary
+- `godot.runtime.scene_tree.get` only when runtime ownership is unclear and affects the refactor boundary
 
 Change:
 
@@ -282,7 +282,7 @@ Official docs:
 ### New scene or script creation
 
 - Use `godot.scene.create` to create a new `.tscn` file.
-- Use `godot.scene.apply` after `godot.scene.create` when follow-up node mutations need the new scene to become the active edited scene.
+- Use `godot.editor.scene.apply` after `godot.scene.create` when follow-up node mutations need the new scene to become the active edited scene.
 - Use `godot.script.create` to create a new `.gd` or `.rs` file. Set `replace: true` only when intentionally overwriting.
 - After creation, wire the new asset into the existing project using the recipes above.
 

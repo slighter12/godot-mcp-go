@@ -12,6 +12,7 @@ import (
 type RuntimeCommandValidateFunc func(map[string]any, string) (map[string]any, error)
 type RuntimeCommandInvalidJSONErrorBuilder func(error) error
 type RuntimeCommandProgressNotifier func(RuntimeCommandProgressEvent)
+type RuntimeCommandSessionResolver func(map[string]any, MCPContext, string) (string, *SemanticError)
 
 type RuntimeCommandProgressEvent struct {
 	SessionID     string
@@ -29,6 +30,7 @@ type RuntimeCommandDispatchOptions struct {
 	BridgeUnavailableMessage string
 	InvalidJSONError         RuntimeCommandInvalidJSONErrorBuilder
 	Validate                 RuntimeCommandValidateFunc
+	ResolveRuntimeSessionID  RuntimeCommandSessionResolver
 }
 
 var (
@@ -69,7 +71,16 @@ func DispatchRuntimeCommand(options RuntimeCommandDispatchOptions) ([]byte, erro
 		}
 	}
 
-	runtimeSessionID := ctx.EffectiveRuntimeCommandSessionID()
+	runtimeSessionID := strings.TrimSpace(ctx.EffectiveRuntimeCommandSessionID())
+	if options.ResolveRuntimeSessionID != nil {
+		resolvedRuntimeSessionID, semErr := options.ResolveRuntimeSessionID(arguments, ctx, options.CommandName)
+		if semErr != nil {
+			return nil, semErr
+		}
+		if strings.TrimSpace(resolvedRuntimeSessionID) != "" {
+			runtimeSessionID = strings.TrimSpace(resolvedRuntimeSessionID)
+		}
+	}
 	if strings.TrimSpace(runtimeSessionID) == "" {
 		return nil, NewNotAvailableError(options.BridgeUnavailableMessage, map[string]any{
 			"feature": "runtime_bridge",

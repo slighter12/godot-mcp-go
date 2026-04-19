@@ -55,11 +55,16 @@ func NewServer(cfg *config.Config) *Server {
 		config:         cfg,
 		echo:           echo.New(),
 	}
-	runtimebridge.DefaultStore().ConfigureFreshness(
+	runtimebridge.DefaultEditorStore().ConfigureFreshness(
+		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
+		time.Duration(cfg.RuntimeBridge.StaleGraceMS)*time.Millisecond,
+	)
+	runtimebridge.DefaultRuntimeSnapshotStore().ConfigureFreshness(
 		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
 		time.Duration(cfg.RuntimeBridge.StaleGraceMS)*time.Millisecond,
 	)
 	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToSession)
+	runtimebridge.SetSessionInfoProvider(server.sessionManager)
 	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
 	return server
 }
@@ -308,56 +313,23 @@ func (s *Server) isMutatingAllowedForSession(sessionID string) bool {
 }
 
 func (s *Server) resolveRuntimeReadSessionID(callerSessionID string) string {
-	callerSessionID = strings.TrimSpace(callerSessionID)
-	if callerSessionID == "" {
-		return ""
-	}
-
-	now := time.Now().UTC()
-	if _, ok, _ := runtimebridge.DefaultStore().FreshForSession(callerSessionID, now); ok {
-		return callerSessionID
-	}
-	if s == nil || s.config == nil || !s.config.RuntimeBridge.AllowLatestSessionFallback {
-		return callerSessionID
-	}
-
-	latest, ok, _ := runtimebridge.DefaultStore().LatestFresh(now)
-	if !ok || strings.TrimSpace(latest.SessionID) == "" {
-		return callerSessionID
-	}
-	return strings.TrimSpace(latest.SessionID)
+	return strings.TrimSpace(callerSessionID)
 }
 
 func (s *Server) resolveRuntimeCommandSessionID(callerSessionID string) string {
 	callerSessionID = strings.TrimSpace(callerSessionID)
-	if callerSessionID == "" {
-		return ""
-	}
-	if s == nil || s.config == nil || !s.config.RuntimeBridge.AllowLatestSessionFallback {
-		return callerSessionID
-	}
-
 	now := time.Now().UTC()
-	if _, ok, _ := runtimebridge.DefaultStore().FreshForSession(callerSessionID, now); ok {
-		if _, hasTransport := s.sessionManager.GetTransport(callerSessionID); hasTransport {
+	// If the caller itself is a fresh editor session, use it directly.
+	if callerSessionID != "" {
+		if _, ok, _ := runtimebridge.DefaultEditorStore().FreshForSession(callerSessionID, now); ok {
 			return callerSessionID
 		}
 	}
-
-	if latest, ok, _ := runtimebridge.DefaultStore().LatestFresh(now); ok {
-		if runtimeSessionID := strings.TrimSpace(latest.SessionID); runtimeSessionID != "" {
-			if _, hasTransport := s.sessionManager.GetTransport(runtimeSessionID); hasTransport {
-				return runtimeSessionID
-			}
-		}
+	// Otherwise, resolve the latest fresh editor session.
+	if stored, ok, _ := runtimebridge.DefaultEditorStore().LatestFresh(now); ok {
+		return strings.TrimSpace(stored.SessionID)
 	}
-
-	if _, ok := s.sessionManager.GetTransport(callerSessionID); ok {
-		return callerSessionID
-	}
-	if latestTransportSessionID, ok := s.sessionManager.LatestSessionIDWithTransport(); ok {
-		return latestTransportSessionID
-	}
+	// Fall back to caller (will fail downstream with a clear error).
 	return callerSessionID
 }
 

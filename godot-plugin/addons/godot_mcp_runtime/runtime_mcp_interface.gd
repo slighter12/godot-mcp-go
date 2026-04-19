@@ -1,0 +1,485 @@
+extends Node
+
+const VARIANT_UTILS := preload("res://addons/godot_mcp_runtime/runtime_variant_utils.gd")
+const LEGACY_MCP_SERVER_PATH := "res://addons/godot_mcp_runtime/runtime_mcp_server.gd"
+
+signal tool_called(tool_name: String, arguments: Dictionary)
+signal tool_result(tool_name: String, result: Dictionary)
+signal tool_error(tool_name: String, error: String)
+signal tool_progress(tool_name: String, progress: float, total: float, message: String, progress_token: Variant)
+signal runtime_sync_failed(error: String)
+signal runtime_command_received(command_id: String, command_name: String, arguments: Dictionary)
+
+var mcp_client: Node
+var tools: Dictionary = {}
+var client_id: String = ""
+var request_counter: int = 0
+
+var pending_requests: Dictionary = {}
+var tools_request_in_progress: bool = false
+var tools_refresh_buffer: Dictionary = {}
+var editor_sync_in_flight: bool = false
+var editor_ping_in_flight: bool = false
+
+func _ready():
+	_ensure_client_id()
+	if mcp_client == null:
+		mcp_client = get_parent().get_node_or_null("mcp_client")
+	if mcp_client == null:
+		mcp_client = get_parent().get_node_or_null("mcp_server")
+	if mcp_client == null:
+		return
+	_bind_client_signals(mcp_client)
+
+func set_mcp_client(client: Node):
+	if client == null:
+		return
+	_ensure_client_id()
+	if mcp_client == client:
+		_bind_client_signals(mcp_client)
+		return
+	if mcp_client != null:
+		_unbind_client_signals(mcp_client)
+	mcp_client = client
+	if is_node_ready():
+		_bind_client_signals(mcp_client)
+		if _is_client_connected(mcp_client):
+			call_deferred("_on_connected")
+
+func set_mcp_server(server: Node):
+	# Backward compatibility for older plugin wiring.
+	set_mcp_client(server)
+
+func _bind_client_signals(client: Node) -> void:
+	if client == null:
+		return
+	if not client.connected.is_connected(_on_connected):
+		client.connected.connect(_on_connected)
+	if not client.disconnected.is_connected(_on_disconnected):
+		client.disconnected.connect(_on_disconnected)
+	if not client.error.is_connected(_on_error):
+		client.error.connect(_on_error)
+
+func _unbind_client_signals(client: Node) -> void:
+	if client == null:
+		return
+	if client.connected.is_connected(_on_connected):
+		client.connected.disconnect(_on_connected)
+	if client.disconnected.is_connected(_on_disconnected):
+		client.disconnected.disconnect(_on_disconnected)
+	if client.error.is_connected(_on_error):
+		client.error.disconnect(_on_error)
+
+func _is_client_connected(client: Node) -> bool:
+	if client == null:
+		return false
+	var script: Variant = client.get_script()
+	if script is Script and str(script.resource_path) == LEGACY_MCP_SERVER_PATH:
+		return VARIANT_UTILS.to_bool(client.get("is_connected"), false)
+	return VARIANT_UTILS.to_bool(client.get("is_connected"), false)
+
+func _on_connected():
+	tools.clear()
+	tools_refresh_buffer.clear()
+	pending_requests.clear()
+	tools_request_in_progress = false
+	editor_sync_in_flight = false
+	editor_ping_in_flight = false
+
+	_send_initialized_notification()
+	_request_tools_list("")
+
+func _on_disconnected():
+	tools.clear()
+	tools_refresh_buffer.clear()
+	pending_requests.clear()
+	tools_request_in_progress = false
+	editor_sync_in_flight = false
+	editor_ping_in_flight = false
+
+func _on_error(error_message: String):
+	print("MCP interface error: ", error_message)
+
+func call_tool(tool_name: String, arguments: Dictionary = {}):
+	if not tools.has(tool_name):
+		print("MCP Interface: call_tool rejected - tool=", tool_name, " tools_count=", tools.size())
+		emit_signal("tool_error", tool_name, "Tool not found: " + tool_name)
+		return
+
+	var request_id = _send_tools_call_request(tool_name, arguments, {
+		"kind": "tool_call",
+		"tool_name": tool_name
+	})
+	if request_id == "":
+		emit_signal("tool_error", tool_name, "Failed to send tools/call request")
+		return
+	emit_signal("tool_called", tool_name, arguments)
+
+func sync_editor_snapshot(snapshot: Dictionary) -> bool:
+	if mcp_client == null:
+		return false
+	if editor_sync_in_flight:
+		return false
+	if not tools.has("godot.bridge.editor.sync"):
+		return false
+
+	editor_sync_in_flight = true
+	var request_id = _send_tools_call_request("godot.bridge.editor.sync", {
+		"snapshot": snapshot
+	}, {
+		"kind": "runtime_sync"
+	})
+	if request_id == "":
+		editor_sync_in_flight = false
+		emit_signal("runtime_sync_failed", "Failed to send editor snapshot sync request")
+		return false
+
+	return true
+
+func can_ping_editor_bridge() -> bool:
+	return tools.has("godot.bridge.editor.ping")
+
+func has_tool(tool_name: String) -> bool:
+	return tools.has(tool_name)
+
+func get_tools() -> Dictionary:
+	return tools.duplicate(true)
+
+func ping_editor_bridge() -> void:
+	if mcp_client == null:
+		return
+	if editor_ping_in_flight:
+		return
+	if not tools.has("godot.bridge.editor.ping"):
+		return
+
+	editor_ping_in_flight = true
+	var request_id = _send_tools_call_request("godot.bridge.editor.ping", {}, {
+		"kind": "runtime_ping"
+	})
+	if request_id == "":
+		editor_ping_in_flight = false
+		emit_signal("runtime_sync_failed", "Failed to send editor bridge ping request")
+
+func handle_message(message: Dictionary):
+	if message.get("jsonrpc", "") != "2.0":
+		return
+
+	if message.has("method"):
+		_handle_server_notification(message)
+		return
+
+	if not message.has("id"):
+		return
+
+	var request_id = str(message.get("id", ""))
+	if request_id == "":
+		return
+
+	var pending = pending_requests.get(request_id, {})
+	pending_requests.erase(request_id)
+
+	if message.has("error"):
+		_handle_error_response(pending, message.get("error", {}))
+		return
+
+	if not message.has("result"):
+		return
+
+	_handle_result_response(pending, message.get("result"))
+
+func _handle_server_notification(message: Dictionary):
+	var method = str(message.get("method", ""))
+	if method == "notifications/tools/list_changed":
+		if not tools_request_in_progress:
+			_request_tools_list("")
+		return
+	if method == "notifications/progress":
+		_handle_progress_notification(_as_dictionary(message.get("params", {})))
+		return
+	if method == "notifications/godot/command":
+		var params = _as_dictionary(message.get("params", {}))
+		var command_id = str(params.get("command_id", "")).strip_edges()
+		var command_name = str(params.get("name", "")).strip_edges()
+		var arguments = _as_dictionary(params.get("arguments", {}))
+		if command_id != "" and command_name != "":
+			emit_signal("runtime_command_received", command_id, command_name, arguments)
+
+func _handle_error_response(pending: Dictionary, error_obj: Variant):
+	var error_message = _extract_jsonrpc_error_message(error_obj)
+	var kind = str(pending.get("kind", ""))
+
+	if kind == "tool_call":
+		var tool_name = str(pending.get("tool_name", ""))
+		if tool_name != "":
+			emit_signal("tool_error", tool_name, error_message)
+	elif kind == "tools_list":
+		tools_request_in_progress = false
+		tools_refresh_buffer.clear()
+	elif kind == "runtime_sync" or kind == "runtime_ping" or kind == "runtime_ack":
+		_handle_runtime_tool_error(kind, error_message)
+
+	handle_error({"message": error_message})
+
+func _handle_result_response(pending: Dictionary, result: Variant):
+	var kind = str(pending.get("kind", ""))
+	if kind == "tools_list":
+		_handle_tools_list_result(result)
+		return
+
+	if kind == "tool_call":
+		_handle_tool_call_result(result, pending)
+		return
+
+	if kind == "runtime_sync":
+		_handle_runtime_sync_result(result)
+		return
+
+	if kind == "runtime_ping":
+		_handle_runtime_ping_result(result)
+		return
+
+	if kind == "runtime_ack":
+		_handle_runtime_ack_result(result)
+		return
+
+func _handle_tools_list_result(result: Variant):
+	if not (result is Dictionary):
+		tools_request_in_progress = false
+		tools_refresh_buffer.clear()
+		handle_error({"message": "Invalid tools/list result payload"})
+		return
+
+	var result_dict: Dictionary = result
+	var listed_tools = result_dict.get("tools", [])
+	if listed_tools is Array:
+		for tool in listed_tools:
+			if tool is Dictionary and tool.has("name"):
+				tools_refresh_buffer[str(tool ["name"])] = tool
+
+	var next_cursor_value = result_dict.get("nextCursor", "")
+	var next_cursor = str(next_cursor_value).strip_edges()
+	if next_cursor != "":
+		_request_tools_list(next_cursor)
+		return
+
+	tools = tools_refresh_buffer.duplicate(true)
+	tools_refresh_buffer.clear()
+	tools_request_in_progress = false
+	var names = tools.keys()
+	print("MCP Interface: tools/list committed - count=", names.size(),
+		" has_register=", tools.has("godot.bridge.runtime.register"),
+		" has_snapshot_push=", tools.has("godot.bridge.runtime.snapshot.push"),
+		" has_command_ack=", tools.has("godot.bridge.command.ack"))
+	if tools.has("godot.runtime.health.get"):
+		_send_tools_call_request("godot.runtime.health.get", {}, {
+			"kind": "tool_call",
+			"tool_name": "godot.runtime.health.get"
+		})
+
+func _handle_tool_call_result(result: Variant, pending: Dictionary):
+	var tool_name = str(pending.get("tool_name", ""))
+	if not (result is Dictionary):
+		emit_signal("tool_error", tool_name, "Invalid tool result payload")
+		return
+
+	var result_dict: Dictionary = result
+	var response_tool_name = str(result_dict.get("tool", "")).strip_edges()
+	if response_tool_name != "":
+		tool_name = response_tool_name
+
+	var is_error = VARIANT_UTILS.to_bool(result_dict.get("isError", false), false)
+	if is_error:
+		var err_msg = _extract_tool_error_message(result_dict)
+		emit_signal("tool_error", tool_name, err_msg)
+		return
+
+	var payload: Variant = result_dict.get("result", null)
+	if payload == null:
+		payload = result_dict.get("structuredContent", {})
+
+	if payload is Dictionary:
+		emit_signal("tool_result", tool_name, payload)
+		return
+
+	emit_signal("tool_result", tool_name, {"value": payload})
+
+func _handle_runtime_sync_result(result: Variant):
+	_handle_runtime_tool_result(result, "Invalid runtime sync result payload", true, false)
+
+func _handle_runtime_ping_result(result: Variant):
+	_handle_runtime_tool_result(result, "Invalid runtime ping result payload", false, true)
+
+func _handle_runtime_ack_result(result: Variant):
+	_handle_runtime_tool_result(result, "Invalid runtime command ack result payload", false, false)
+
+func _handle_progress_notification(params: Dictionary) -> void:
+	var progress_token: Variant = params.get("progressToken", null)
+	var tool_name := ""
+	if progress_token is String:
+		var token = str(progress_token)
+		var pending = _as_dictionary(pending_requests.get(token, {}))
+		tool_name = str(pending.get("tool_name", "")).strip_edges()
+
+	var progress := float(params.get("progress", 0.0))
+	var total := float(params.get("total", 1.0))
+	var message := str(params.get("message", "")).strip_edges()
+	emit_signal("tool_progress", tool_name, progress, total, message, progress_token)
+
+func _build_tools_call_request(request_id: String, tool_name: String, arguments: Dictionary, progress_token: String = "") -> Dictionary:
+	var params := {
+		"name": tool_name,
+		"arguments": arguments
+	}
+	var trimmed_progress_token := progress_token.strip_edges()
+	if trimmed_progress_token != "":
+		params["_meta"] = {
+			"progressToken": trimmed_progress_token
+		}
+
+	return {
+		"jsonrpc": "2.0",
+		"id": request_id,
+		"method": "tools/call",
+		"params": params
+	}
+
+func _send_tools_call_request(tool_name: String, arguments: Dictionary, pending: Dictionary) -> String:
+	if mcp_client == null:
+		handle_error({"message": "MCP Interface: MCP client node not found"})
+		return ""
+	var request_id = _new_request_id()
+	var pending_with_metadata := pending.duplicate(true)
+	pending_with_metadata["tool_name"] = tool_name
+	pending_with_metadata["progress_token"] = request_id
+	pending_requests[request_id] = pending_with_metadata
+	var request = _build_tools_call_request(request_id, tool_name, arguments, request_id)
+	if not mcp_client.send_message(request):
+		pending_requests.erase(request_id)
+		return ""
+	return request_id
+
+func _handle_runtime_tool_error(kind: String, error_message: String):
+	if kind == "runtime_sync":
+		editor_sync_in_flight = false
+	elif kind == "runtime_ping":
+		editor_ping_in_flight = false
+	emit_signal("runtime_sync_failed", error_message)
+
+func _handle_runtime_tool_result(result: Variant, invalid_payload_message: String, clear_runtime_sync: bool, clear_runtime_ping: bool):
+	if clear_runtime_sync:
+		editor_sync_in_flight = false
+	if clear_runtime_ping:
+		editor_ping_in_flight = false
+	if not (result is Dictionary):
+		emit_signal("runtime_sync_failed", invalid_payload_message)
+		return
+	var result_dict: Dictionary = result
+	if VARIANT_UTILS.to_bool(result_dict.get("isError", false), false):
+		emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
+
+func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "v1") -> void:
+	if mcp_client == null:
+		return
+	if not tools.has("godot.bridge.command.ack"):
+		return
+
+	var arguments = {
+		"command_id": command_id,
+		"success": success,
+		"result": result
+	}
+	var trimmed_error = error_message.strip_edges()
+	if trimmed_error != "":
+		arguments["error"] = trimmed_error
+	var trimmed_reason = reason.strip_edges()
+	if trimmed_reason != "":
+		arguments["reason"] = trimmed_reason
+	if retryable != null and retryable is bool:
+		arguments["retryable"] = retryable
+	var trimmed_schema_version = schema_version.strip_edges()
+	if trimmed_schema_version != "":
+		arguments["schema_version"] = trimmed_schema_version
+	var request_id = _send_tools_call_request("godot.bridge.command.ack", arguments, {
+		"kind": "runtime_ack"
+	})
+	if request_id == "":
+		emit_signal("runtime_sync_failed", "Failed to send runtime command ack")
+
+func handle_error(payload: Dictionary):
+	var message = payload.get("message", "Unknown error")
+	print("MCP error: ", message)
+
+func _send_initialized_notification():
+	if mcp_client == null:
+		handle_error({"message": "Failed to send initialized notification: MCP client is unavailable"})
+		return
+	var initialized_notification = {
+		"jsonrpc": "2.0",
+		"method": "notifications/initialized",
+		"params": {
+			"clientId": client_id
+		}
+	}
+	if not mcp_client.send_message(initialized_notification):
+		handle_error({"message": "Failed to send initialized notification"})
+
+func _request_tools_list(cursor: String):
+	if mcp_client == null:
+		tools_request_in_progress = false
+		tools_refresh_buffer.clear()
+		handle_error({"message": "Failed to send tools/list request: MCP client is unavailable"})
+		return
+	if cursor == "":
+		tools_refresh_buffer.clear()
+	tools_request_in_progress = true
+
+	var request_id = _new_request_id()
+	pending_requests[request_id] = {
+		"kind": "tools_list"
+	}
+
+	var params = {}
+	if cursor != "":
+		params["cursor"] = cursor
+
+	var request = {
+		"jsonrpc": "2.0",
+		"id": request_id,
+		"method": "tools/list",
+		"params": params
+	}
+	if not mcp_client.send_message(request):
+		pending_requests.erase(request_id)
+		tools_request_in_progress = false
+		tools_refresh_buffer.clear()
+		handle_error({"message": "Failed to send tools/list request"})
+
+func _new_request_id() -> String:
+	request_counter += 1
+	return "godot-%s-%d" % [client_id, request_counter]
+
+func _ensure_client_id() -> void:
+	if client_id != "":
+		return
+	var rng = RandomNumberGenerator.new()
+	rng.randomize()
+	client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
+
+func _extract_tool_error_message(result: Dictionary) -> String:
+	var content = result.get("content", [])
+	if content is Array and content.size() > 0 and content[0] is Dictionary:
+		var first = content[0]
+		if first.get("type", "") == "text" and first.has("text"):
+			return str(first["text"])
+	return str(result.get("error", "Tool execution failed"))
+
+func _extract_jsonrpc_error_message(error_obj: Variant) -> String:
+	if error_obj is Dictionary:
+		return str(error_obj.get("message", "Unknown JSON-RPC error"))
+	return "Unknown JSON-RPC error"
+
+func _as_dictionary(value: Variant) -> Dictionary:
+	if value is Dictionary:
+		return value
+	return {}

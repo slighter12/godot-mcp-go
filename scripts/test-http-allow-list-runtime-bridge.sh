@@ -99,7 +99,7 @@ status_sync="$(curl -sS -o "$sync_body" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_id" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"sync-allow-list","method":"tools/call","params":{"name":"godot.runtime.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://AllowList.tscn"},"scene_tree":{"path":"/Root","name":"Root","type":"Node2D","child_count":0},"node_details":{"/Root":{"path":"/Root","name":"Root","type":"Node2D","child_count":0}}}}}}')"
+  --data '{"jsonrpc":"2.0","id":"sync-allow-list","method":"tools/call","params":{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://AllowList.tscn"},"scene_tree":{"path":"/Root","name":"Root","type":"Node2D","child_count":0},"node_details":{"/Root":{"path":"/Root","name":"Root","type":"Node2D","child_count":0}}}}}}')"
 test "$status_sync" = "200"
 compact_sync="$(tr -d '[:space:]' < "$sync_body")"
 require_not_contains "$compact_sync" '"isError":true' "runtime sync should be allowed in allow_list mode"
@@ -120,7 +120,7 @@ status_ping="$(curl -sS -o "$ping_body" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_id" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"ping-allow-list","method":"tools/call","params":{"name":"godot.runtime.ping","arguments":{}}}')"
+  --data '{"jsonrpc":"2.0","id":"ping-allow-list","method":"tools/call","params":{"name":"godot.bridge.editor.ping","arguments":{}}}')"
 test "$status_ping" = "200"
 compact_ping="$(tr -d '[:space:]' < "$ping_body")"
 require_not_contains "$compact_ping" '"isError":true' "runtime ping should be allowed in allow_list mode"
@@ -130,7 +130,7 @@ status_ack="$(curl -sS -o "$ack_body" -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
   -H "MCP-Session-Id: $session_id" \
   -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"ack-allow-list","method":"tools/call","params":{"name":"godot.runtime.ack","arguments":{"command_id":"cmd-not-exist","success":true,"result":{}}}}')"
+  --data '{"jsonrpc":"2.0","id":"ack-allow-list","method":"tools/call","params":{"name":"godot.bridge.command.ack","arguments":{"command_id":"cmd-not-exist","success":true,"result":{}}}}')"
 test "$status_ack" = "200"
 compact_ack="$(tr -d '[:space:]' < "$ack_body")"
 require_contains "$compact_ack" '"isError":true' "runtime ack should report semantic error for unknown command"

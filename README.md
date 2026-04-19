@@ -132,26 +132,37 @@ For clients that cannot send custom Godot capabilities during `initialize` (for 
 
 Keep this disabled unless you trust every MCP client that can reach the server.
 
-## Cross-Session Runtime Bridge Fallback
+## Runtime Session Model
 
-Runtime bridge state is session-scoped by default: the session that syncs snapshots and receives runtime commands is also the session that can use runtime-backed reads and mutating tools.
+Two MCP sessions can exist at the same time by design:
 
-For Codex/Desktop plus Godot-plugin workflows, those are often separate MCP sessions. The server can opt into borrowing the latest fresh plugin runtime session for a different caller session:
+- Godot IDE/plugin session (editor snapshot owner)
+- AI/agent caller session
 
-```json
-{
-  "runtime_bridge": {
-    "allow_latest_session_fallback": true
-  }
-}
-```
+Scope rules:
 
-When enabled:
+- Caller-session scoped:
+  - lifecycle gate (`initialize` -> `notifications/initialized`)
+  - mutating capability negotiation (`initialize.params.capabilities.godot.mutating=true`)
+- Editor-owner sourced:
+  - `godot.editor.state.get`
+  - `godot.project.is_running`
+  - `godot.runtime.session.get_active`
+  - editor command routing for `godot.project.run`, `godot.project.stop`, `godot.editor.scene.apply`
+  - resolution order is:
+    1. optional `editor_session_id` argument
+    2. caller session when caller has a fresh editor snapshot
+    3. latest fresh editor snapshot session
+  - if no healthy editor snapshot exists, tools return semantic `not_available` with runtime snapshot reason.
+  - `godot.project.run` uses attach/recover behavior when editor is already playing: it refreshes handshake metadata and reuses the running game session path instead of failing immediately.
+  - if `godot.project.run` times out waiting for first runtime snapshot, the game session mapping is kept for late `godot.bridge.runtime.register` recovery instead of being deleted immediately.
+- Runtime game session scoped:
+  - runtime tools still require explicit game `session_id` unless they are lifecycle/session discovery calls.
+  - runtime snapshots, logs, inputs, screenshots, and on-demand property reads stay bound to that game session.
 
-- runtime-backed reads may use the latest fresh runtime snapshot from another session
-- runtime mutating tools may dispatch through the latest session that still has an active SSE transport
+The `runtime_bridge.allow_latest_session_fallback` config remains in the file format for compatibility, but public runtime tools no longer borrow the latest session implicitly.
 
-Keep this disabled if you need strict per-session isolation across multiple editors.
+For AI sessions, mutating tools still require caller-side capability negotiation. If a client cannot send `capabilities.godot.mutating=true`, use `tool_controls.allow_mutating_without_capability=true` only for trusted clients.
 
 ## Configuration
 
@@ -216,8 +227,7 @@ Default config shape:
   },
   "runtime_bridge": {
     "stale_after_seconds": 10,
-    "stale_grace_ms": 1500,
-    "allow_latest_session_fallback": false
+    "stale_grace_ms": 1500
   }
 }
 ```
@@ -258,12 +268,12 @@ Default config shape:
 - `godot.scene.read`
 - `godot.scene.create`
 - `godot.scene.save`
-- `godot.scene.apply`
+- `godot.editor.scene.apply`
 
 ### Node
 
-- `godot.node.tree.get`
-- `godot.node.properties.get`
+- `godot.runtime.scene_tree.get`
+- `godot.runtime.node_properties.get`
 - `godot.node.create`
 - `godot.node.delete`
 - `godot.node.modify`
@@ -281,23 +291,49 @@ Default config shape:
 - `godot.project.settings.get` (paginated)
 - `godot.project.resources.list` (paginated)
 - `godot.editor.state.get`
+- `godot.project.is_running`
 - `godot.project.run`
 - `godot.project.stop`
 
-### Utility
+### Runtime
+
+- `godot.runtime.session.get_active`
+- `godot.runtime.sync_now`
+- `godot.runtime.await_snapshot`
+- `godot.runtime.input.tap`
+- `godot.runtime.input.press`
+- `godot.runtime.input.release`
+- `godot.runtime.log.get`
+- `godot.runtime.log.clear`
+- `godot.runtime.screenshot.get`
+
+Runtime log note:
+
+- `godot.runtime.log.get(level="error")` is the current runtime diagnostics stream for the active game session
+- `godot.runtime.log.get` supports `level`, `limit`, and `since_sequence`
+- current diagnostics sources are `runtime_companion`, `runtime_lifecycle`, and `runtime_command:<tool_name>`
+- full Godot-native parse/runtime error coverage is still tracked as deferred backlog in `docs/RUNTIME_LOG_BACKLOG.md`
+
+### Utility / Internal
 
 - `godot.offerings.list`
 - `godot.runtime.health.get`
-- `godot.runtime.sync` (internal)
-- `godot.runtime.ping` (internal)
-- `godot.runtime.ack` (internal)
+- `godot.bridge.editor.sync` (internal)
+- `godot.bridge.editor.ping` (internal)
+- `godot.bridge.runtime.register` (internal)
+- `godot.bridge.runtime.snapshot.push` (internal)
+- `godot.bridge.runtime.log.push` (internal)
+- `godot.bridge.command.ack` (internal)
 - `godot.prompts.reload`
 
 Internal runtime bridge tools are exempt from `tool_controls.permission_mode` filtering:
 
-- `godot.runtime.sync`
-- `godot.runtime.ping`
-- `godot.runtime.ack`
+- `godot.bridge.editor.sync`
+- `godot.bridge.editor.ping`
+- `godot.bridge.runtime.register`
+- `godot.bridge.runtime.snapshot.push`
+- `godot.bridge.runtime.log.push`
+- `godot.bridge.command.ack`
 
 ## Resources
 
@@ -314,11 +350,14 @@ Internal runtime bridge tools are exempt from `tool_controls.permission_mode` fi
 ```bash
 go test ./...
 make test-http-smoke
+make test-http-runtime-log-smoke
 make test-http-ping
 make test-http-delete
 make test-http-session-isolation
 make test-inspector-docker
 ```
+
+`make test-http-runtime-log-smoke` is a focused runtime diagnostics smoke check. It validates that `godot.runtime.log.get` and `godot.runtime.log.clear` are exposed over Streamable HTTP and return the expected `game_session_missing` semantic error when no runtime session exists.
 
 ### Project Structure
 

@@ -1,6 +1,7 @@
 package runtimebridge
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -94,5 +95,102 @@ func TestStoreFreshForSession_IsSessionScoped(t *testing.T) {
 	}
 	if storedB.Snapshot.RootSummary.ActiveScene != "res://B.tscn" {
 		t.Fatalf("expected res://B.tscn, got %s", storedB.Snapshot.RootSummary.ActiveScene)
+	}
+}
+
+func TestHealthSnapshot_UsesCanonicalFreshnessKeys(t *testing.T) {
+	ResetDefaultStoreForTests(10 * time.Second)
+	ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
+	ResetDefaultGameSessionRegistryForTests()
+	ResetDefaultRuntimeLogStoreForTests(50)
+	ResetDefaultCommandBrokerForTests(500 * time.Millisecond)
+
+	now := time.Date(2026, 4, 6, 15, 0, 0, 0, time.UTC)
+	DefaultEditorStore().Upsert("editor-1", Snapshot{
+		RootSummary: RootSummary{ActiveScene: "res://Editor.tscn"},
+	}, now)
+	DefaultRuntimeSnapshotStore().Upsert("game-1", RuntimeSnapshot{
+		SessionID:    "game-1",
+		SnapshotID:   "snap_1",
+		Frame:        1,
+		UpdatedAt:    now.Format(time.RFC3339Nano),
+		Running:      true,
+		NodeCount:    1,
+		RootNodeName: "Main",
+	}, now)
+
+	health := HealthSnapshot(now.Add(time.Second))
+	if _, ok := health["freshness"]; ok {
+		t.Fatalf("expected legacy key freshness to be removed, got %v", health["freshness"])
+	}
+	if _, ok := health["editor_freshness"]; !ok {
+		t.Fatal("expected editor_freshness key")
+	}
+	if _, ok := health["runtime_freshness"]; !ok {
+		t.Fatal("expected runtime_freshness key")
+	}
+}
+
+func TestDefaultStore_DeprecatedAliasCompatibility(t *testing.T) {
+	ResetDefaultEditorStoreForTests(10 * time.Second)
+
+	legacy := DefaultStore()
+	editor := DefaultEditorStore()
+	if legacy == nil || editor == nil {
+		t.Fatal("expected default stores to be initialized")
+	}
+	if legacy != editor {
+		t.Fatal("expected DefaultStore and DefaultEditorStore to point to the same instance")
+	}
+
+	now := time.Date(2026, 4, 6, 0, 0, 0, 0, time.UTC)
+	legacy.Upsert("editor-session", Snapshot{
+		RootSummary: RootSummary{ActiveScene: "res://Main.tscn"},
+	}, now)
+
+	stored, ok, reason := editor.FreshForSession("editor-session", now.Add(time.Second))
+	if !ok {
+		t.Fatalf("expected snapshot from alias path, reason=%s", reason)
+	}
+	if stored.SessionID != "editor-session" {
+		t.Fatalf("expected editor-session, got %s", stored.SessionID)
+	}
+}
+
+func TestDefaultEditorStore_ResetAndLoadConcurrent(t *testing.T) {
+	ResetDefaultEditorStoreForTests(10 * time.Second)
+
+	const workers = 8
+	const iterations = 100
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				if DefaultEditorStore() == nil {
+					t.Error("DefaultEditorStore returned nil")
+					return
+				}
+				if DefaultStore() == nil {
+					t.Error("DefaultStore returned nil")
+					return
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < iterations; i++ {
+		if i%2 == 0 {
+			ResetDefaultStoreForTests(10 * time.Second)
+			continue
+		}
+		ResetDefaultEditorStoreForTests(20 * time.Second)
+	}
+
+	wg.Wait()
+	if got := DefaultEditorStore().StaleAfter(); got != 10*time.Second && got != 20*time.Second {
+		t.Fatalf("expected stale_after to be one of test reset values, got %s", got)
 	}
 }

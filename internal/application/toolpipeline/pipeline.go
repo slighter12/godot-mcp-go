@@ -2,6 +2,7 @@ package toolpipeline
 
 import (
 	"encoding/json"
+	"log"
 	"maps"
 	"sort"
 	"strings"
@@ -107,6 +108,8 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 	if found && tool != nil {
 		canonicalToolName = tool.Name()
 	}
+	log.Printf("godot-mcp tools/call dispatch: tool=%q canonical=%q session_id=%q known=%t",
+		toolName, canonicalToolName, strings.TrimSpace(input.Context.SessionID), found)
 	if !toolspec.ValidateToolName(canonicalToolName) {
 		return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool name", nil)
 	}

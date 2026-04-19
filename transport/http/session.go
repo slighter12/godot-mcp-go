@@ -192,6 +192,21 @@ func (sm *SessionManager) IsInitialized(sessionID string) bool {
 	return session.Initialized
 }
 
+// IsFullyInitialized atomically checks that a session exists, has completed
+// the initialize handshake, and has received the notifications/initialized
+// notification.  Using a single lock acquisition avoids the race window that
+// exists when IsInitializeAccepted and IsInitialized are called separately.
+func (sm *SessionManager) IsFullyInitialized(sessionID string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	session, exists := sm.sessions[sessionID]
+	if !exists {
+		return false
+	}
+	return session.InitializeAccepted && session.Initialized
+}
+
 // SetProtocolVersion stores the negotiated protocol version for a session.
 func (sm *SessionManager) SetProtocolVersion(sessionID string, version string) bool {
 	sm.mu.Lock()
@@ -298,11 +313,61 @@ func (sm *SessionManager) RemoveSession(sessionID string) {
 	defer sm.mu.Unlock()
 
 	if session, exists := sm.sessions[sessionID]; exists {
+		if gameSession, ok := runtimebridge.DefaultGameSessionRegistry().ActiveForEditor(sessionID); ok {
+			runtimebridge.DefaultRuntimeSnapshotStore().RemoveSession(gameSession.SessionID)
+			runtimebridge.DefaultRuntimeLogStore().RemoveSession(gameSession.SessionID)
+			runtimebridge.DefaultGameSessionRegistry().RemoveSession(gameSession.SessionID)
+		} else {
+			runtimebridge.DefaultGameSessionRegistry().RemoveByEditorSession(sessionID)
+		}
 		if session.Transport != nil {
 			session.Transport.Close()
 		}
 		delete(sm.sessions, sessionID)
-		runtimebridge.DefaultStore().RemoveSession(sessionID)
+		runtimebridge.DefaultEditorStore().RemoveSession(sessionID)
+	}
+}
+
+// SessionSummaries returns a snapshot of all sessions for diagnostic display.
+func (sm *SessionManager) SessionSummaries() []map[string]any {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	summaries := make([]map[string]any, 0, len(sm.sessions))
+	for _, session := range sm.sessions {
+		summaries = append(summaries, map[string]any{
+			"session_id":          session.ID,
+			"created":             session.Created.UTC().Format(time.RFC3339Nano),
+			"last_seen":           session.LastSeen.UTC().Format(time.RFC3339Nano),
+			"initialize_accepted": session.InitializeAccepted,
+			"initialized":         session.Initialized,
+			"has_transport":       session.Transport != nil,
+			"mutating":            session.Mutating,
+		})
+	}
+	return summaries
+}
+
+// SessionCounts returns aggregate session counts for diagnostics.
+func (sm *SessionManager) SessionCounts() map[string]any {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	total := len(sm.sessions)
+	fullyInitialized := 0
+	withTransport := 0
+	for _, session := range sm.sessions {
+		if session.InitializeAccepted && session.Initialized {
+			fullyInitialized++
+		}
+		if session.Transport != nil {
+			withTransport++
+		}
+	}
+	return map[string]any{
+		"total":             total,
+		"fully_initialized": fullyInitialized,
+		"with_transport":    withTransport,
 	}
 }
 
@@ -314,11 +379,18 @@ func (sm *SessionManager) CleanupSessions(timeout time.Duration) {
 	now := time.Now()
 	for sessionID, session := range sm.sessions {
 		if now.Sub(session.LastSeen) > timeout {
+			if gameSession, ok := runtimebridge.DefaultGameSessionRegistry().ActiveForEditor(sessionID); ok {
+				runtimebridge.DefaultRuntimeSnapshotStore().RemoveSession(gameSession.SessionID)
+				runtimebridge.DefaultRuntimeLogStore().RemoveSession(gameSession.SessionID)
+				runtimebridge.DefaultGameSessionRegistry().RemoveSession(gameSession.SessionID)
+			} else {
+				runtimebridge.DefaultGameSessionRegistry().RemoveByEditorSession(sessionID)
+			}
 			if session.Transport != nil {
 				session.Transport.Close()
 			}
 			delete(sm.sessions, sessionID)
-			runtimebridge.DefaultStore().RemoveSession(sessionID)
+			runtimebridge.DefaultEditorStore().RemoveSession(sessionID)
 		}
 	}
 }

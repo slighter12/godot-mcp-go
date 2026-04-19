@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -143,6 +144,7 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	responses := make([]any, 0, len(requests)+len(prebuiltResponses))
 	responses = append(responses, prebuiltResponses...)
 	initializeSucceeded := false
+	notificationFailed := false
 
 	for _, request := range requests {
 		logger.Debug("Streamable HTTP request received", "method", request.Method, "id", request.ID)
@@ -151,6 +153,11 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 			logger.Error("Error handling message", "error", handleErr, "method", request.Method)
 			if request.ID != nil {
 				responses = append(responses, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil))
+			} else {
+				// A notification handler failed.  Record so we can return a
+				// non-202 status — the client must know the notification was
+				// rejected rather than silently accepted.
+				notificationFailed = true
 			}
 			continue
 		}
@@ -178,6 +185,9 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	}
 
 	if len(responses) == 0 {
+		if notificationFailed {
+			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Notification rejected", nil))
+		}
 		return c.NoContent(http.StatusAccepted)
 	}
 	return c.JSON(http.StatusOK, responses[0])
@@ -261,25 +271,39 @@ func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, erro
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
 		}
 		if strings.TrimSpace(sessionID) == "" {
-			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil), nil
+			logger.Warn("Initialized notification rejected: missing session ID")
+			return nil, fmt.Errorf("notifications/initialized rejected: missing session ID")
 		}
-		if !s.sessionManager.IsInitializeAccepted(sessionID) {
-			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
-		}
-		logger.Debug("Handling initialized notification")
+		logger.Info("Handling initialized notification", "session_id", sessionID, "initialized_before", s.sessionManager.IsInitialized(sessionID))
 		if !s.sessionManager.MarkInitialized(sessionID) {
-			return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Initialize has not completed for this session", nil), nil
+			logger.Warn("Initialized notification rejected: mark initialized failed (session missing or initialize not accepted)", "session_id", sessionID,
+				"session_exists", s.sessionManager.HasSession(sessionID),
+				"initialize_accepted", s.sessionManager.IsInitializeAccepted(sessionID))
+			return nil, fmt.Errorf("notifications/initialized rejected: session %s not ready", sessionID)
 		}
+		logger.Info("Session marked initialized", "session_id", sessionID)
 		return nil, nil
 	default:
 		logger.Debug("Handling standard/unknown message", "method", msg.Method)
 		if strings.TrimSpace(sessionID) == "" {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil), nil
 		}
-		if !s.sessionManager.IsInitializeAccepted(sessionID) || !s.sessionManager.IsInitialized(sessionID) {
+		if !s.sessionManager.IsFullyInitialized(sessionID) {
+			logger.Warn("Rejecting request because session is not initialized",
+				"session_id", sessionID,
+				"method", msg.Method,
+				"initialize_accepted", s.sessionManager.IsInitializeAccepted(sessionID),
+				"initialized", s.sessionManager.IsInitialized(sessionID),
+			)
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Session is not initialized", nil), nil
 		}
 		if msg.Method == "tools/call" {
+			var peek struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(msg.Params, &peek)
+			log.Printf("godot-mcp tools/call received: session_id=%q tool=%q initialized=%t",
+				sessionID, peek.Name, s.sessionManager.IsFullyInitialized(sessionID))
 			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.toolCallContext(sessionID), s.toolCallOptions()), nil
 		}
 		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
@@ -305,6 +329,8 @@ func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Res
 	if sessionID != "" {
 		s.sessionManager.CreateSession(sessionID)
 		s.sessionManager.MarkInitializeAccepted(sessionID)
+		clientName, clientVersion := extractClientInfo(msg.Params)
+		logger.Info("Initialize accepted for session", "session_id", sessionID, "protocol_version", negotiatedVersion, "client_name", clientName, "client_version", clientVersion)
 	}
 
 	mutatingAllowed := negotiatedMutatingCapability(msg.Params)
@@ -370,6 +396,19 @@ func acceptsEventStream(acceptHeader string) bool {
 		}
 	}
 	return false
+}
+
+func extractClientInfo(paramsRaw json.RawMessage) (string, string) {
+	var params struct {
+		ClientInfo struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
+	}
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(params.ClientInfo.Name), strings.TrimSpace(params.ClientInfo.Version)
 }
 
 func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {

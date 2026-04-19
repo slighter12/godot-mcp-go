@@ -1,12 +1,14 @@
 class_name RuntimeSnapshotCollector
 extends RefCounted
 
-const MAX_RUNTIME_TREE_DEPTH := 12
-const MAX_RUNTIME_NODE_COUNT := 2000
+const MAX_EDITOR_TREE_DEPTH := 12
+const MAX_EDITOR_NODE_COUNT := 2000
 
 func build_snapshot(editor_interface: EditorInterface) -> Dictionary:
 	if editor_interface == null:
 		return {
+			"source": "editor",
+			"snapshot_kind": "editor_state",
 			"root_summary": {
 				"project_path": ProjectSettings.globalize_path("res://")
 			},
@@ -41,6 +43,8 @@ func build_snapshot(editor_interface: EditorInterface) -> Dictionary:
 		_collect_node_details(edited_root, node_details, 0, details_counter)
 
 	return {
+		"source": "editor",
+		"snapshot_kind": "editor_state",
 		"root_summary": root_summary,
 		"scene_tree": scene_tree,
 		"node_details": node_details
@@ -76,9 +80,9 @@ func _resolve_active_script_path(editor_interface: EditorInterface) -> String:
 func _build_compact_tree(node: Node, depth: int, counter: Array) -> Dictionary:
 	if node == null:
 		return {}
-	if depth > MAX_RUNTIME_TREE_DEPTH:
+	if depth > MAX_EDITOR_TREE_DEPTH:
 		return {}
-	if counter[0] >= MAX_RUNTIME_NODE_COUNT:
+	if counter[0] >= MAX_EDITOR_NODE_COUNT:
 		return {}
 
 	counter[0] += 1
@@ -90,12 +94,12 @@ func _build_compact_tree(node: Node, depth: int, counter: Array) -> Dictionary:
 		"children": []
 	}
 
-	if depth == MAX_RUNTIME_TREE_DEPTH:
+	if depth == MAX_EDITOR_TREE_DEPTH:
 		return tree
 
 	var children: Array = []
 	for child in node.get_children():
-		if counter[0] >= MAX_RUNTIME_NODE_COUNT:
+		if counter[0] >= MAX_EDITOR_NODE_COUNT:
 			break
 		if child is Node:
 			var compact_child = _build_compact_tree(child, depth + 1, counter)
@@ -107,9 +111,9 @@ func _build_compact_tree(node: Node, depth: int, counter: Array) -> Dictionary:
 func _collect_node_details(node: Node, details: Dictionary, depth: int, counter: Array) -> void:
 	if node == null:
 		return
-	if depth > MAX_RUNTIME_TREE_DEPTH:
+	if depth > MAX_EDITOR_TREE_DEPTH:
 		return
-	if counter[0] >= MAX_RUNTIME_NODE_COUNT:
+	if counter[0] >= MAX_EDITOR_NODE_COUNT:
 		return
 
 	counter[0] += 1
@@ -138,11 +142,11 @@ func _collect_node_details(node: Node, details: Dictionary, depth: int, counter:
 		"child_count": int(node.get_child_count())
 	}
 
-	if depth == MAX_RUNTIME_TREE_DEPTH:
+	if depth == MAX_EDITOR_TREE_DEPTH:
 		return
 
 	for child in node.get_children():
-		if counter[0] >= MAX_RUNTIME_NODE_COUNT:
+		if counter[0] >= MAX_EDITOR_NODE_COUNT:
 			return
 		if child is Node:
 			_collect_node_details(child, details, depth + 1, counter)

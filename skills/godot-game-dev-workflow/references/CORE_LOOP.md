@@ -33,8 +33,8 @@ Precondition:
 
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`.
-- Runtime-backed reads (`godot.editor.state.get`, `godot.node.tree.get`, `godot.node.properties.get`) require initialized MCP HTTP session state plus a fresh runtime snapshot.
-- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
+- Runtime-backed reads (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require initialized MCP HTTP session state plus a fresh runtime snapshot.
+- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
 
 Inspect:
 
@@ -83,7 +83,7 @@ Verification relies on reading back the changed state. The AI cannot observe liv
 
 Always verify with:
 
-- A state readback using `godot.script.read`, `godot.scene.read`, `godot.node.tree.get`, or `godot.node.properties.get` depending on what the tool actually exposes. For mutating runtime commands, also use the ack payload returned by the tool.
+- A state readback using `godot.script.read`, `godot.scene.read`, `godot.runtime.scene_tree.get`, or `godot.runtime.node_properties.get` depending on what the tool actually exposes. For mutating runtime commands, also use the ack payload returned by the tool.
 - A logical gameplay scenario analysis: reason through the expected behavior given the code and scene state, and flag any adjacent risk.
 - An owner and callback sanity check: verify the final state still leaves one clear source of truth on the intended timing path.
 - Optionally use `godot.project.run` to launch the game for manual user testing, then confirm the result.

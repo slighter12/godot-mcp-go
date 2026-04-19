@@ -2,138 +2,14 @@ package node
 
 import (
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
-	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 const nodeCommandTimeout = 8 * time.Second
-
-// GetSceneTreeTool returns the scene tree structure.
-type GetSceneTreeTool struct{}
-
-func (t *GetSceneTreeTool) Name() string        { return "godot.node.tree.get" }
-func (t *GetSceneTreeTool) Description() string { return "Returns the scene tree structure" }
-func (t *GetSceneTreeTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Get Scene Tree"}
-}
-func (t *GetSceneTreeTool) Execute(args json.RawMessage) ([]byte, error) {
-	var arguments map[string]any
-	if err := json.Unmarshal(args, &arguments); err != nil {
-		return nil, err
-	}
-
-	ctx := tooltypes.ExtractMCPContext(arguments)
-	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewNotAvailableError("Scene tree requires an initialized MCP HTTP session", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
-			"tool":    t.Name(),
-		})
-	}
-
-	runtimeSessionID := ctx.EffectiveRuntimeSessionID()
-	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(runtimeSessionID, time.Now().UTC())
-	if !ok {
-		return nil, tooltypes.NewNotAvailableError("Scene tree is unavailable until runtime sync is healthy", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  reason,
-			"tool":    t.Name(),
-		})
-	}
-
-	result := map[string]any{
-		"root":       stored.Snapshot.SceneTree,
-		"session_id": stored.SessionID,
-		"updated_at": stored.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	return json.Marshal(result)
-}
-
-type GetNodePropertiesTool struct{}
-
-func (t *GetNodePropertiesTool) Name() string        { return "godot.node.properties.get" }
-func (t *GetNodePropertiesTool) Description() string { return "Gets properties of a specific node" }
-func (t *GetNodePropertiesTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}}, Required: []string{"node"}, Title: "Get Node Properties"}
-}
-func (t *GetNodePropertiesTool) Execute(args json.RawMessage) ([]byte, error) {
-	var arguments map[string]any
-	if err := json.Unmarshal(args, &arguments); err != nil {
-		return nil, err
-	}
-
-	ctx := tooltypes.ExtractMCPContext(arguments)
-	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewNotAvailableError("Node properties require an initialized MCP HTTP session", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
-			"tool":    t.Name(),
-		})
-	}
-
-	payload := struct {
-		Node string `json:"node"`
-	}{}
-	if err := json.Unmarshal(args, &payload); err != nil {
-		return nil, err
-	}
-
-	query := strings.TrimSpace(payload.Node)
-	if query == "" {
-		return nil, tooltypes.NewNotAvailableError("Node path is required", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "missing_node_path",
-			"tool":    t.Name(),
-		})
-	}
-
-	runtimeSessionID := ctx.EffectiveRuntimeSessionID()
-	stored, ok, reason := runtimebridge.DefaultStore().FreshForSession(runtimeSessionID, time.Now().UTC())
-	if !ok {
-		return nil, tooltypes.NewNotAvailableError("Node properties are unavailable until runtime sync is healthy", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  reason,
-			"tool":    t.Name(),
-		})
-	}
-
-	detail, found := resolveNodeDetail(stored.Snapshot.NodeDetails, query)
-	if !found {
-		return nil, tooltypes.NewNotAvailableError("Requested node is unavailable in the latest runtime snapshot", map[string]any{
-			"feature": "runtime_bridge",
-			"reason":  "node_not_found",
-			"node":    query,
-			"tool":    t.Name(),
-		})
-	}
-
-	result := map[string]any{
-		"path":        detail.Path,
-		"name":        detail.Name,
-		"type":        detail.Type,
-		"owner":       detail.Owner,
-		"script":      detail.Script,
-		"groups":      detail.Groups,
-		"child_count": detail.ChildCount,
-		"properties": map[string]any{
-			"path":        detail.Path,
-			"name":        detail.Name,
-			"type":        detail.Type,
-			"owner":       detail.Owner,
-			"script":      detail.Script,
-			"groups":      detail.Groups,
-			"child_count": detail.ChildCount,
-		},
-		"session_id": stored.SessionID,
-		"updated_at": stored.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	}
-	return json.Marshal(result)
-}
 
 type CreateNodeTool struct{}
 
@@ -179,35 +55,10 @@ func (t *ModifyNodeTool) Execute(args json.RawMessage) ([]byte, error) {
 
 func GetAllTools() []tooltypes.Tool {
 	return []tooltypes.Tool{
-		&GetSceneTreeTool{},
-		&GetNodePropertiesTool{},
 		&CreateNodeTool{},
 		&DeleteNodeTool{},
 		&ModifyNodeTool{},
 	}
-}
-
-func resolveNodeDetail(details map[string]runtimebridge.NodeDetail, nodePath string) (runtimebridge.NodeDetail, bool) {
-	if len(details) == 0 {
-		return runtimebridge.NodeDetail{}, false
-	}
-	if detail, ok := details[nodePath]; ok {
-		return detail, true
-	}
-
-	keys := make([]string, 0, len(details))
-	for key := range details {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		detail := details[key]
-		if detail.Name == nodePath {
-			return detail, true
-		}
-	}
-	return runtimebridge.NodeDetail{}, false
 }
 
 func dispatchNodeRuntimeCommand(rawArgs json.RawMessage, commandName string, validate func(map[string]any, string) (map[string]any, error)) ([]byte, error) {

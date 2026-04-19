@@ -49,17 +49,28 @@ Current line introduces the following compatibility changes:
 
 ## Transport Notes
 
+- Dual session model is expected:
+  - Godot IDE/plugin session can be different from AI/agent caller session
+  - this is not an error condition
 - Runtime mutating tools require:
   - `streamable_http`
-  - initialized session
-  - mutating capability negotiation
+  - initialized caller session
+  - caller mutating capability negotiation
   - active runtime bridge
+- Editor-backed tools resolve editor owner session by:
+  1. optional `editor_session_id`
+  2. caller session if caller has fresh editor snapshot
+  3. latest fresh editor snapshot
+  - applies to `godot.editor.state.get`, `godot.project.is_running`, `godot.runtime.session.get_active`, and editor command routing (`godot.project.run`, `godot.project.stop`, `godot.editor.scene.apply`)
+  - if no healthy editor snapshot exists, tool returns semantic `not_available`
+- `godot.project.run` keeps game session mapping when first snapshot await times out, so late runtime register can still attach.
+- `godot.project.run` attach/recover now preserves effective launch token when remapping to an already-running session id, preventing `godot.bridge.runtime.register` launch token mismatch on runtime side.
 - Compatibility fallback for clients that cannot send `capabilities.godot.mutating=true`:
   - set `tool_controls.allow_mutating_without_capability=true`
   - use only for trusted local clients
-- Compatibility fallback for separate caller/plugin MCP sessions:
-  - set `runtime_bridge.allow_latest_session_fallback=true`
-  - runtime-backed reads and mutating tools may borrow the latest fresh plugin session
+- Runtime tools no longer borrow the latest session implicitly:
+  - resolve the active game session through `godot.runtime.session.get_active`
+  - pass the target `session_id` to runtime tools
 - `stdio` supports read/non-runtime operations and requires strict initialize protocol version.
 - Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`.
 
@@ -115,8 +126,7 @@ This prompt catalog feature is separate from the repository `skills/` directory.
 {
   "runtime_bridge": {
     "stale_after_seconds": 10,
-    "stale_grace_ms": 1500,
-    "allow_latest_session_fallback": false
+    "stale_grace_ms": 1500
   }
 }
 ```
@@ -130,7 +140,7 @@ File-backed read tools (`godot.scene.list`, `godot.scene.read`, `godot.script.re
 
 If the server is started outside the target Godot project tree, set `GODOT_PROJECT_ROOT=/abs/path/to/project` before using file-backed reads.
 
-Scene mutating tools (`godot.scene.create`, `godot.scene.save`, `godot.scene.apply`) are runtime-backed operations and still require an initialized HTTP session, mutating capability negotiation, and a healthy runtime bridge.
+Scene mutating tools (`godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`) are runtime-backed operations and still require an initialized HTTP caller session, caller mutating capability negotiation, and a healthy runtime bridge. `godot.editor.scene.apply` also supports optional `editor_session_id` override for explicit editor owner routing.
 
 ## Validation Checklist
 

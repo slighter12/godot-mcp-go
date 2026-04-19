@@ -3,6 +3,7 @@ package runtimebridge
 import (
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,7 +17,11 @@ const (
 	FreshnessStateStale   = "stale"
 )
 
-var defaultStore = NewStore(defaultStaleAfter, defaultStaleGrace)
+var defaultEditorStore atomic.Pointer[Store]
+
+func init() {
+	defaultEditorStore.Store(NewStore(defaultStaleAfter, defaultStaleGrace))
+}
 
 // SessionFreshness stores one session freshness snapshot for observability endpoints.
 type SessionFreshness struct {
@@ -63,8 +68,22 @@ func NewStore(staleAfter time.Duration, staleGrace time.Duration) *Store {
 	}
 }
 
+// Deprecated: use DefaultEditorStore instead.
 func DefaultStore() *Store {
-	return defaultStore
+	return DefaultEditorStore()
+}
+
+// DefaultEditorStore returns the editor snapshot freshness store.
+func DefaultEditorStore() *Store {
+	store := defaultEditorStore.Load()
+	if store != nil {
+		return store
+	}
+	fallback := NewStore(defaultStaleAfter, defaultStaleGrace)
+	if defaultEditorStore.CompareAndSwap(nil, fallback) {
+		return fallback
+	}
+	return defaultEditorStore.Load()
 }
 
 func (s *Store) Upsert(sessionID string, snapshot Snapshot, now time.Time) {
@@ -252,7 +271,12 @@ func (s *Store) Health(now time.Time) StoreHealth {
 
 // ResetDefaultStoreForTests resets the package singleton for deterministic tests.
 func ResetDefaultStoreForTests(staleAfter time.Duration) {
-	defaultStore = NewStore(staleAfter, defaultStaleGrace)
+	defaultEditorStore.Store(NewStore(staleAfter, defaultStaleGrace))
+}
+
+// ResetDefaultEditorStoreForTests resets the editor store singleton for deterministic tests.
+func ResetDefaultEditorStoreForTests(staleAfter time.Duration) {
+	defaultEditorStore.Store(NewStore(staleAfter, defaultStaleGrace))
 }
 
 func (s *Store) validateFreshLocked(sessionID string, stored StoredSnapshot, now time.Time) (StoredSnapshot, bool, string) {
@@ -310,12 +334,15 @@ func HealthSnapshot(now time.Time) map[string]any {
 		now = time.Now().UTC()
 	}
 
-	storeHealth := DefaultStore().Health(now)
+	storeHealth := DefaultEditorStore().Health(now)
+	runtimeHealth := DefaultRuntimeSnapshotStore().Health(now)
+	sessionHealth := DefaultGameSessionRegistry().Health()
+	logHealth := DefaultRuntimeLogStore().Health()
 	commandMetrics := DefaultCommandBroker().Metrics()
 
-	return map[string]any{
+	result := map[string]any{
 		"timestamp": now.Format(time.RFC3339Nano),
-		"freshness": map[string]any{
+		"editor_freshness": map[string]any{
 			"stale_after_ms": storeHealth.StaleAfterMS,
 			"stale_grace_ms": storeHealth.StaleGraceMS,
 			"sessions":       storeHealth.Sessions,
@@ -323,6 +350,21 @@ func HealthSnapshot(now time.Time) map[string]any {
 			"transitions":    storeHealth.Transitions,
 			"session_health": storeHealth.SessionHealth,
 		},
+		"runtime_freshness": map[string]any{
+			"stale_after_ms": runtimeHealth.StaleAfterMS,
+			"stale_grace_ms": runtimeHealth.StaleGraceMS,
+			"sessions":       runtimeHealth.Sessions,
+			"states":         runtimeHealth.States,
+			"transitions":    runtimeHealth.Transitions,
+			"session_health": runtimeHealth.SessionHealth,
+		},
+		"game_sessions":  sessionHealth,
+		"runtime_logs":   logHealth,
 		"command_broker": commandMetrics,
+		"mcp_sessions":   GetSessionCounts(),
 	}
+	if summaries := GetSessionSummaries(); summaries != nil {
+		result["mcp_session_details"] = summaries
+	}
+	return result
 }

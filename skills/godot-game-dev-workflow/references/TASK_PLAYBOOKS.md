@@ -48,8 +48,8 @@ Primary MCP reads:
 
 - `godot.scene.read`
 - `godot.script.read`
-- `godot.node.tree.get`
-- `godot.node.properties.get`
+- `godot.runtime.scene_tree.get`
+- `godot.runtime.node_properties.get`
 
 Mutation boundary:
 
@@ -78,7 +78,7 @@ Primary MCP reads:
 
 - `godot.scene.read`
 - `godot.project.resources.list`
-- `godot.node.tree.get` when runtime context matters
+- `godot.runtime.scene_tree.get` when runtime context matters
 
 Mutation boundary:
 
@@ -108,7 +108,7 @@ Primary MCP reads:
 
 - `godot.scene.read`
 - `godot.script.read`
-- `godot.node.tree.get` when runtime ownership is unclear
+- `godot.runtime.scene_tree.get` when runtime ownership is unclear
 
 Mutation boundary:
 
@@ -139,7 +139,7 @@ Primary MCP reads:
 
 - `godot.scene.read`
 - `godot.script.read`
-- `godot.node.tree.get` when detection ownership is unclear
+- `godot.runtime.scene_tree.get` when detection ownership is unclear
 
 Mutation boundary:
 

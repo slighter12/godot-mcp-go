@@ -5,6 +5,8 @@ const DEFAULT_RUNTIME_HEARTBEAT_SECONDS := 5.0
 const DEFAULT_RUNTIME_CHANGE_POLL_SECONDS := 0.5
 const MIN_RUNTIME_HEARTBEAT_SECONDS := 1.0
 const MIN_RUNTIME_CHANGE_POLL_SECONDS := 0.1
+const DEFAULT_RUNTIME_HANDSHAKE_DIR := "user://godot_mcp/runtime"
+const DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE := DEFAULT_RUNTIME_HANDSHAKE_DIR + "/active_handshake.json"
 const MAX_RUNTIME_TREE_DEPTH := 12
 const MAX_RUNTIME_NODE_COUNT := 2000
 const CONNECTION_STATE_MACHINE_SCRIPT := preload("res://addons/godot_mcp/connection_state_machine.gd")
@@ -22,6 +24,9 @@ var runtime_change_timer: Timer
 var current_streamable_http_url: String = "http://localhost:9080/mcp"
 var runtime_heartbeat_seconds: float = DEFAULT_RUNTIME_HEARTBEAT_SECONDS
 var runtime_change_poll_seconds: float = DEFAULT_RUNTIME_CHANGE_POLL_SECONDS
+var active_game_session_id: String = ""
+var active_game_launch_token: String = ""
+var active_game_handshake_file: String = ""
 
 func _enter_tree():
 	print("Godot MCP Plugin: Entering tree...")
@@ -115,6 +120,9 @@ func _exit_tree():
 	runtime_snapshot_collector = null
 	runtime_command_dispatcher = null
 	tool_catalog = null
+	active_game_session_id = ""
+	active_game_launch_token = ""
+	active_game_handshake_file = ""
 	print("Godot MCP Plugin: Cleanup complete")
 
 func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
@@ -137,7 +145,7 @@ func _on_mcp_connected():
 	print("Godot MCP Plugin: Connected to MCP server")
 	if connection_state_machine != null:
 		connection_state_machine.mark_connected()
-	_sync_runtime_snapshot(true)
+	_sync_editor_snapshot(true)
 	if mcp_interface != null and mcp_interface.has_tool("godot.runtime.health.get"):
 		mcp_interface.call_tool("godot.runtime.health.get", {})
 
@@ -170,11 +178,15 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
 	var editor_interface = get_editor_interface()
 	if runtime_command_dispatcher != null:
 		var mutating_handlers := {
+			"godot.project.run": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+				return _handle_project_run(command_arguments, target_editor),
+			"godot.project.stop": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+				return _handle_project_stop(command_arguments, target_editor),
 			"godot.scene.create": func(command_arguments: Dictionary, _editor: EditorInterface) -> Dictionary:
 				return _handle_scene_create(command_arguments),
 			"godot.scene.save": func(_command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
 				return _handle_scene_save(target_editor),
-			"godot.scene.apply": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
+			"godot.editor.scene.apply": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
 				return _handle_scene_apply(target_editor, command_arguments),
 			"godot.node.create": func(command_arguments: Dictionary, target_editor: EditorInterface) -> Dictionary:
 				return _handle_node_create(target_editor, command_arguments),
@@ -194,7 +206,7 @@ func _on_runtime_command_received(command_id: String, command_name: String, argu
 			editor_interface,
 			mcp_interface,
 			mutating_handlers,
-			Callable(self , "_sync_runtime_snapshot")
+			Callable(self , "_sync_editor_snapshot")
 		)
 		if handled:
 			return
@@ -220,9 +232,9 @@ func _ack_runtime_command_with_payload(command_id: String, payload: Dictionary) 
 	var schema_version := str(result.get("schema_version", "v1")).strip_edges()
 	mcp_interface.ack_runtime_command(command_id, success, result, error_message, reason, retryable, schema_version)
 
-func _sync_runtime_snapshot_if_success(payload: Dictionary) -> void:
+func _sync_editor_snapshot_if_success(payload: Dictionary) -> void:
 	if VARIANT_UTILS.to_bool(payload.get("success", false), false):
-		_sync_runtime_snapshot(true)
+		_sync_editor_snapshot(true)
 
 func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
 	var result = {
@@ -244,6 +256,279 @@ func _runtime_failure_result(reason: String, error_message: String) -> Dictionar
 			"schema_version": "v1"
 		},
 		"error": error_message
+	}
+
+func _handle_project_run(arguments: Dictionary, _editor_interface: EditorInterface) -> Dictionary:
+	if not ClassDB.class_has_method("EditorInterface", "play_main_scene"):
+		return _runtime_failure_result("play_main_scene_unavailable", "play_main_scene is not available")
+
+	var session_id = _resolve_project_run_session_id(arguments)
+	var launch_token = _resolve_project_run_launch_token(arguments)
+	var handshake_file = _resolve_runtime_handshake_file(arguments, session_id)
+	var started_at = _utc_now_rfc3339()
+	var scene_path = _resolve_launch_scene_path()
+	var editor_session_id = _current_editor_session_id()
+	var already_running = _editor_is_playing_scene()
+	var runtime_autoload_key = "autoload/GodotMCPRuntimeCompanion"
+	var runtime_autoload_enabled = ProjectSettings.has_setting(runtime_autoload_key)
+	print("Godot MCP Plugin: project.run received - requested_session_id=", session_id, " editor_session_id=", editor_session_id, " launch_token=", launch_token, " already_running=", already_running, " runtime_autoload_enabled=", runtime_autoload_enabled)
+	if already_running:
+		print("Godot MCP Plugin: Editor is already playing, attempting attach/recover")
+		var persisted_identity = _read_runtime_handshake_identity(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE)
+		if not persisted_identity.is_empty():
+			if active_game_session_id == "":
+				active_game_session_id = str(persisted_identity.get("session_id", "")).strip_edges()
+			if active_game_launch_token == "":
+				active_game_launch_token = str(persisted_identity.get("launch_token", "")).strip_edges()
+			if active_game_handshake_file == "":
+				active_game_handshake_file = str(persisted_identity.get("handshake_file", "")).strip_edges()
+			if scene_path == "":
+				scene_path = str(persisted_identity.get("scene_path", "")).strip_edges()
+			if editor_session_id == "":
+				editor_session_id = str(persisted_identity.get("editor_session_id", "")).strip_edges()
+		if active_game_session_id != "":
+			session_id = active_game_session_id
+		if active_game_launch_token != "":
+			launch_token = active_game_launch_token
+		if active_game_handshake_file != "":
+			handshake_file = active_game_handshake_file
+		if handshake_file == "":
+			handshake_file = DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE
+
+	var handshake_payload = {
+		"schema_version": "v1",
+		"state": "launch_requested" if not already_running else "attach_requested",
+		"source": "editor_plugin",
+		"game_session_id": session_id,
+		"session_id": session_id,
+		"editor_session_id": editor_session_id,
+		"launch_token": launch_token,
+		"handshake_file": handshake_file,
+		"scene_path": scene_path,
+		"streamable_http_url": current_streamable_http_url,
+		"server_url": current_streamable_http_url,
+		"mcp_url": current_streamable_http_url,
+		"mcp_streamable_http_url": current_streamable_http_url,
+		"started_at": started_at
+	}
+
+	var write_result = _write_runtime_handshake_file(handshake_file, handshake_payload)
+	if not VARIANT_UTILS.to_bool(write_result.get("success", false), false):
+		return _runtime_failure_result(
+			"runtime_handshake_write_failed",
+			"failed to persist runtime handshake: " + str(write_result.get("error", "unknown write error"))
+		)
+	_write_runtime_handshake_file(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE, handshake_payload)
+
+	active_game_session_id = session_id
+	active_game_launch_token = launch_token
+	active_game_handshake_file = handshake_file
+
+	var abs_handshake = ProjectSettings.globalize_path(handshake_file)
+	var default_abs = ProjectSettings.globalize_path(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE)
+	print("Godot MCP Plugin: handshake file verified - path=", handshake_file,
+		" abs=", abs_handshake,
+		" exists=", FileAccess.file_exists(handshake_file),
+		" default_path=", DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE,
+		" default_abs=", default_abs,
+		" default_exists=", FileAccess.file_exists(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE))
+
+	if not already_running:
+		print("Godot MCP Plugin: calling play_main_scene - session_id=", session_id, " handshake_file=", handshake_file)
+		EditorInterface.play_main_scene()
+		print("Godot MCP Plugin: play_main_scene returned - session_id=", session_id)
+
+	print("Godot MCP Plugin: project.run completed - session_id=", session_id, " already_running=", already_running)
+	return _runtime_success_result({
+		"command": "godot.project.run",
+		"running": true,
+		"session_id": session_id,
+		"editor_session_id": editor_session_id,
+		"launch_token": launch_token,
+		"handshake_file": handshake_file,
+		"scene_path": scene_path,
+		"started_at": started_at,
+		"already_running": already_running
+	})
+
+func _handle_project_stop(arguments: Dictionary, _editor_interface: EditorInterface) -> Dictionary:
+	if not ClassDB.class_has_method("EditorInterface", "stop_playing_scene"):
+		return _runtime_failure_result("stop_playing_scene_unavailable", "stop_playing_scene is not available")
+
+	var stopped_at = _utc_now_rfc3339()
+	var session_id = active_game_session_id
+	if session_id == "":
+		session_id = _extract_non_empty_string(arguments, ["session_id", "game_session_id"])
+	var handshake_file = active_game_handshake_file
+	if handshake_file == "":
+		handshake_file = _extract_non_empty_string(arguments, ["handshake_file", "handshake_path"])
+	var teardown_written = false
+	var teardown_error = ""
+
+	if session_id != "" and handshake_file != "":
+		var teardown_payload = {
+			"schema_version": "v1",
+			"state": "stopped",
+			"source": "editor_plugin",
+			"game_session_id": session_id,
+			"launch_token": active_game_launch_token,
+			"handshake_file": handshake_file,
+			"stopped_at": stopped_at
+		}
+		var write_result = _write_runtime_handshake_file(handshake_file, teardown_payload)
+		teardown_written = VARIANT_UTILS.to_bool(write_result.get("success", false), false)
+		if not teardown_written:
+			teardown_error = str(write_result.get("error", "unknown write error"))
+		_write_runtime_handshake_file(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE, teardown_payload)
+
+	EditorInterface.stop_playing_scene()
+
+	var result = {
+		"command": "godot.project.stop",
+		"running": false,
+		"session_id": session_id,
+		"handshake_file": handshake_file,
+		"stopped_at": stopped_at,
+		"teardown_written": teardown_written
+	}
+	if teardown_error != "":
+		result["teardown_error"] = teardown_error
+
+	active_game_session_id = ""
+	active_game_launch_token = ""
+	active_game_handshake_file = ""
+	return _runtime_success_result(result)
+
+func _resolve_project_run_session_id(arguments: Dictionary) -> String:
+	var provided = _extract_non_empty_string(arguments, ["session_id", "game_session_id"])
+	if provided != "":
+		return provided
+	return "game_%s_%s" % [str(Time.get_unix_time_from_system()), _random_hex_token(8)]
+
+func _resolve_project_run_launch_token(arguments: Dictionary) -> String:
+	var provided = _extract_non_empty_string(arguments, ["launch_token"])
+	if provided != "":
+		return provided
+	return _random_hex_token(32)
+
+func _resolve_runtime_handshake_file(arguments: Dictionary, session_id: String) -> String:
+	var provided = _extract_non_empty_string(arguments, ["handshake_file", "handshake_path"])
+	if provided != "":
+		return provided
+	var safe_session_id = session_id.strip_edges().replace("/", "_").replace("\\", "_")
+	return "%s/handshake_%s.json" % [DEFAULT_RUNTIME_HANDSHAKE_DIR, safe_session_id]
+
+func _resolve_launch_scene_path() -> String:
+	var edited_root = EditorInterface.get_edited_scene_root()
+	if edited_root != null:
+		var edited_scene_path = str(edited_root.scene_file_path).strip_edges()
+		if edited_scene_path != "":
+			return edited_scene_path
+	if ProjectSettings.has_setting("application/run/main_scene"):
+		return str(ProjectSettings.get_setting("application/run/main_scene", "")).strip_edges()
+	return ""
+
+func _current_editor_session_id() -> String:
+	if mcp_client == null:
+		return ""
+	var raw_session_id = mcp_client.get("session_id")
+	if raw_session_id is String:
+		return str(raw_session_id).strip_edges()
+	return ""
+
+func _read_runtime_handshake_identity(path: String) -> Dictionary:
+	var trimmed_path = path.strip_edges()
+	if trimmed_path == "":
+		return {}
+	if not FileAccess.file_exists(trimmed_path):
+		return {}
+	var file = FileAccess.open(trimmed_path, FileAccess.READ)
+	if file == null:
+		return {}
+	var raw = file.get_as_text()
+	file.close()
+	if raw.strip_edges() == "":
+		return {}
+	var parsed = JSON.parse_string(raw)
+	if not (parsed is Dictionary):
+		return {}
+
+	var payload: Dictionary = parsed
+	var identity: Dictionary = {}
+	var persisted_session_id = _extract_non_empty_string(payload, ["game_session_id", "session_id"])
+	var persisted_launch_token = _extract_non_empty_string(payload, ["launch_token"])
+	var persisted_handshake_file = _extract_non_empty_string(payload, ["handshake_file", "handshake_path"])
+	var persisted_scene_path = _extract_non_empty_string(payload, ["scene_path"])
+	var persisted_editor_session_id = _extract_non_empty_string(payload, ["editor_session_id"])
+	if persisted_session_id != "":
+		identity["session_id"] = persisted_session_id
+	if persisted_launch_token != "":
+		identity["launch_token"] = persisted_launch_token
+	if persisted_handshake_file != "":
+		identity["handshake_file"] = persisted_handshake_file
+	if persisted_scene_path != "":
+		identity["scene_path"] = persisted_scene_path
+	if persisted_editor_session_id != "":
+		identity["editor_session_id"] = persisted_editor_session_id
+	return identity
+
+func _editor_is_playing_scene() -> bool:
+	if not ClassDB.class_has_method("EditorInterface", "is_playing_scene"):
+		return false
+	return VARIANT_UTILS.to_bool(EditorInterface.is_playing_scene(), false)
+
+func _extract_non_empty_string(source: Dictionary, keys: Array[String]) -> String:
+	for key in keys:
+		if not source.has(key):
+			continue
+		if source[key] is String:
+			var value = str(source[key]).strip_edges()
+			if value != "":
+				return value
+	return ""
+
+func _utc_now_rfc3339() -> String:
+	return Time.get_datetime_string_from_system(true, true) + "Z"
+
+func _random_hex_token(min_length: int = 16) -> String:
+	var normalized_min = max(8, min_length)
+	if ClassDB.class_exists("Crypto"):
+		var crypto = Crypto.new()
+		var bytes = crypto.generate_random_bytes(max(8, int(ceil(float(normalized_min) / 2.0))))
+		if bytes.size() > 0:
+			return bytes.hex_encode()
+
+	var rng = RandomNumberGenerator.new()
+	rng.randomize()
+	var fallback = "%x%x%x" % [rng.randi(), rng.randi(), int(Time.get_unix_time_from_system())]
+	while fallback.length() < normalized_min:
+		fallback += "%x" % [rng.randi()]
+	return fallback
+
+func _write_runtime_handshake_file(target_path: String, payload: Dictionary) -> Dictionary:
+	var trimmed_path = target_path.strip_edges()
+	if trimmed_path == "":
+		return {"success": false, "error": "target path is empty"}
+	var target_dir = trimmed_path.get_base_dir()
+	if target_dir == "":
+		return {"success": false, "error": "target directory is empty"}
+	var mkdir_err = DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(target_dir))
+	if mkdir_err != OK:
+		return {"success": false, "error": "failed to create directory (code=%d)" % mkdir_err}
+
+	var file = FileAccess.open(trimmed_path, FileAccess.WRITE)
+	if file == null:
+		return {"success": false, "error": "failed to open file for writing"}
+
+	var body = JSON.stringify(payload, "\t")
+	file.store_string(body + "\n")
+	file.flush()
+	file.close()
+
+	return {
+		"success": true,
+		"path": trimmed_path,
+		"bytes_written": body.length()
 	}
 
 func _handle_scene_create(arguments: Dictionary) -> Dictionary:
@@ -596,26 +881,26 @@ func _on_runtime_heartbeat_timeout() -> void:
 		return
 
 	if connection_state_machine == null or not connection_state_machine.has_snapshot_fingerprint():
-		_sync_runtime_snapshot(true)
+		_sync_editor_snapshot(true)
 		return
 
-	if mcp_interface.can_ping_runtime_bridge():
-		mcp_interface.ping_runtime_bridge()
+	if mcp_interface.can_ping_editor_bridge():
+		mcp_interface.ping_editor_bridge()
 		return
 
 	# Backward compatibility: fallback to full sync if server does not expose ping tool.
-	_sync_runtime_snapshot(true)
+	_sync_editor_snapshot(true)
 
 func _on_runtime_change_timeout() -> void:
-	_sync_runtime_snapshot(false)
+	_sync_editor_snapshot(false)
 
-func _sync_runtime_snapshot(force: bool) -> void:
+func _sync_editor_snapshot(force: bool) -> void:
 	if mcp_interface == null:
 		return
 
-	var snapshot = _build_runtime_snapshot()
+	var snapshot = _build_editor_snapshot()
 	if connection_state_machine == null or connection_state_machine.should_sync(snapshot, force):
-		if mcp_interface.sync_runtime_snapshot(snapshot):
+		if mcp_interface.sync_editor_snapshot(snapshot):
 			if connection_state_machine != null:
 				connection_state_machine.mark_snapshot_synced(snapshot)
 
@@ -648,7 +933,7 @@ func _apply_runtime_bridge_health(health: Dictionary) -> void:
 	if runtime_change_timer != null:
 		runtime_change_timer.wait_time = runtime_change_poll_seconds
 
-func _build_runtime_snapshot() -> Dictionary:
+func _build_editor_snapshot() -> Dictionary:
 	if runtime_snapshot_collector == null:
 		runtime_snapshot_collector = RuntimeSnapshotCollector.new()
 	return runtime_snapshot_collector.build_snapshot(get_editor_interface())
