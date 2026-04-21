@@ -91,6 +91,7 @@ func _enter_tree():
 	# Defer until mcp_client._ready() initializes its HTTPRequest node.
 	mcp_client.call_deferred("connect_streamable_http", current_streamable_http_url)
 	print("Godot MCP Plugin: Initialized successfully")
+	_ensure_runtime_autoload_registered()
 
 func _enable_plugin() -> void:
 	_ensure_runtime_autoload_registered()
@@ -138,10 +139,22 @@ func _ensure_runtime_autoload_registered() -> void:
 	var autoload_key = "autoload/%s" % RUNTIME_AUTOLOAD_NAME
 	if ProjectSettings.has_setting(autoload_key):
 		var current_entry = str(ProjectSettings.get_setting(autoload_key, ""))
-		if current_entry == RUNTIME_AUTOLOAD_PATH:
+		if _normalize_autoload_target(current_entry) == RUNTIME_AUTOLOAD_PATH:
 			return
 		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
 	add_autoload_singleton(RUNTIME_AUTOLOAD_NAME, RUNTIME_AUTOLOAD_PATH)
+
+func _normalize_autoload_target(entry: String) -> String:
+	var normalized = entry.strip_edges()
+	if normalized.begins_with("*"):
+		normalized = normalized.substr(1)
+	if normalized.begins_with("uid://"):
+		var uid_id = ResourceUID.text_to_id(normalized)
+		if uid_id != ResourceUID.INVALID_ID and ResourceUID.has_id(uid_id):
+			var resolved_path = ResourceUID.get_id_path(uid_id)
+			if resolved_path != "":
+				return resolved_path
+	return normalized
 
 func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 	if timer == null:

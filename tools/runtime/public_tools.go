@@ -78,7 +78,7 @@ func (t *RuntimeSyncNowTool) Description() string {
 }
 func (t *RuntimeSyncNowTool) Annotations() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
-		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		ReadOnlyHint:   tooltypes.BoolPtr(false),
 		IdempotentHint: tooltypes.BoolPtr(true),
 	}
 }
