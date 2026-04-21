@@ -3,11 +3,19 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
-RUNTIME_AUTOLOAD_SCRIPTS='runtime_companion.gd|runtime_mcp_interface.gd|runtime_mcp_server.gd|runtime_streamable_http_client.gd|runtime_mcp_protocol_adapter.gd|runtime_variant_utils.gd'
+RUNTIME_AUTOLOAD_FILES="
+$ROOT_DIR/runtime_companion.gd
+$ROOT_DIR/runtime_mcp_interface.gd
+$ROOT_DIR/runtime_mcp_server.gd
+$ROOT_DIR/runtime_streamable_http_client.gd
+$ROOT_DIR/runtime_mcp_protocol_adapter.gd
+$ROOT_DIR/runtime_variant_utils.gd
+$ROOT_DIR/runtime_snapshot_collector.gd
+"
 
-if rg -n 'EditorInterface' "$ROOT_DIR"/runtime_companion.gd "$ROOT_DIR"/runtime_mcp_interface.gd "$ROOT_DIR"/runtime_mcp_server.gd "$ROOT_DIR"/runtime_streamable_http_client.gd "$ROOT_DIR"/runtime_mcp_protocol_adapter.gd "$ROOT_DIR"/runtime_variant_utils.gd >/dev/null; then
+if printf '%s\n' "$RUNTIME_AUTOLOAD_FILES" | xargs rg -n 'EditorInterface' >/dev/null; then
   echo "runtime addon static check failed: runtime autoload scripts reference EditorInterface"
-  rg -n 'EditorInterface' "$ROOT_DIR"/runtime_companion.gd "$ROOT_DIR"/runtime_mcp_interface.gd "$ROOT_DIR"/runtime_mcp_server.gd "$ROOT_DIR"/runtime_streamable_http_client.gd "$ROOT_DIR"/runtime_mcp_protocol_adapter.gd "$ROOT_DIR"/runtime_variant_utils.gd
+  printf '%s\n' "$RUNTIME_AUTOLOAD_FILES" | xargs rg -n 'EditorInterface'
   exit 1
 fi
 

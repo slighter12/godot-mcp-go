@@ -92,13 +92,11 @@ func _enter_tree():
 	mcp_client.call_deferred("connect_streamable_http", current_streamable_http_url)
 	print("Godot MCP Plugin: Initialized successfully")
 
-	if not ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
-		add_autoload_singleton(RUNTIME_AUTOLOAD_NAME, RUNTIME_AUTOLOAD_PATH)
+func _enable_plugin() -> void:
+	_ensure_runtime_autoload_registered()
 
 func _exit_tree():
 	print("Godot MCP Plugin: Exiting tree...")
-	if ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
-		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
 	remove_tool_menu_item("MCP Settings")
 
 	_cleanup_timer(runtime_heartbeat_timer, "_on_runtime_heartbeat_timeout")
@@ -131,6 +129,19 @@ func _exit_tree():
 	active_game_launch_token = ""
 	active_game_handshake_file = ""
 	print("Godot MCP Plugin: Cleanup complete")
+
+func _disable_plugin() -> void:
+	if ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
+		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
+
+func _ensure_runtime_autoload_registered() -> void:
+	var autoload_key = "autoload/%s" % RUNTIME_AUTOLOAD_NAME
+	if ProjectSettings.has_setting(autoload_key):
+		var current_entry = str(ProjectSettings.get_setting(autoload_key, ""))
+		if current_entry == RUNTIME_AUTOLOAD_PATH:
+			return
+		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
+	add_autoload_singleton(RUNTIME_AUTOLOAD_NAME, RUNTIME_AUTOLOAD_PATH)
 
 func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 	if timer == null:
