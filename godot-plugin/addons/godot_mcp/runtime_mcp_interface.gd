@@ -1,7 +1,7 @@
 extends Node
 
-const VARIANT_UTILS := preload("res://addons/godot_mcp_runtime/runtime_variant_utils.gd")
-const LEGACY_MCP_SERVER_PATH := "res://addons/godot_mcp_runtime/runtime_mcp_server.gd"
+const VARIANT_UTILS := preload("res://addons/godot_mcp/runtime_variant_utils.gd")
+const LEGACY_MCP_SERVER_PATH := "res://addons/godot_mcp/runtime_mcp_server.gd"
 
 signal tool_called(tool_name: String, arguments: Dictionary)
 signal tool_result(tool_name: String, result: Dictionary)

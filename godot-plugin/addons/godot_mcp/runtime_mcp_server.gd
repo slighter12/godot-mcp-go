@@ -3,7 +3,7 @@ extends Node
 # NOTE: this node acts as an MCP client.
 # The filename is kept for backward compatibility with existing plugin installs.
 
-const VARIANT_UTILS := preload("res://addons/godot_mcp_runtime/runtime_variant_utils.gd")
+const VARIANT_UTILS := preload("res://addons/godot_mcp/runtime_variant_utils.gd")
 
 signal connected
 signal disconnected
@@ -52,7 +52,7 @@ func _exit_tree() -> void:
 func load_settings() -> void:
 	print("MCP Client: Loading settings...")
 	var config = ConfigFile.new()
-	var err = config.load("res://addons/godot_mcp_runtime/config.cfg")
+	var err = config.load("res://addons/godot_mcp/config.cfg")
 	if err == OK:
 		streamable_http_url = str(config.get_value("mcp_runtime", "streamable_http_url", streamable_http_url)).strip_edges()
 		print("MCP Client: Settings loaded - type: streamable_http, url: ", streamable_http_url)

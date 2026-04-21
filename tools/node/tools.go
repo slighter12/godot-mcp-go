@@ -14,7 +14,12 @@ const nodeCommandTimeout = 8 * time.Second
 type CreateNodeTool struct{}
 
 func (t *CreateNodeTool) Name() string        { return "godot.node.create" }
-func (t *CreateNodeTool) Description() string { return "Creates a new node" }
+func (t *CreateNodeTool) Description() string { return "[editor-plugin] Creates a new node" }
+func (t *CreateNodeTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *CreateNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -34,7 +39,13 @@ func (t *CreateNodeTool) Execute(args json.RawMessage) ([]byte, error) {
 type DeleteNodeTool struct{}
 
 func (t *DeleteNodeTool) Name() string        { return "godot.node.delete" }
-func (t *DeleteNodeTool) Description() string { return "Deletes a node" }
+func (t *DeleteNodeTool) Description() string { return "[editor-plugin] Deletes a node" }
+func (t *DeleteNodeTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    tooltypes.BoolPtr(false),
+		DestructiveHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *DeleteNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}}, Required: []string{"node"}, Title: "Delete Node"}
 }
@@ -45,7 +56,12 @@ func (t *DeleteNodeTool) Execute(args json.RawMessage) ([]byte, error) {
 type ModifyNodeTool struct{}
 
 func (t *ModifyNodeTool) Name() string        { return "godot.node.modify" }
-func (t *ModifyNodeTool) Description() string { return "Updates node properties" }
+func (t *ModifyNodeTool) Description() string { return "[editor-plugin] Updates node properties" }
+func (t *ModifyNodeTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *ModifyNodeTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{"node": map[string]any{"type": "string", "description": "Node path"}, "properties": map[string]any{"type": "object", "description": "Properties to update"}}, Required: []string{"node", "properties"}, Title: "Modify Node"}
 }

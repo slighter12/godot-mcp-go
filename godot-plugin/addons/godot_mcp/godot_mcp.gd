@@ -11,6 +11,8 @@ const MAX_RUNTIME_TREE_DEPTH := 12
 const MAX_RUNTIME_NODE_COUNT := 2000
 const CONNECTION_STATE_MACHINE_SCRIPT := preload("res://addons/godot_mcp/connection_state_machine.gd")
 const VARIANT_UTILS := preload("res://addons/godot_mcp/variant_utils.gd")
+const RUNTIME_AUTOLOAD_NAME := "GodotMCPRuntimeCompanion"
+const RUNTIME_AUTOLOAD_PATH := "res://addons/godot_mcp/runtime_companion.gd"
 
 var mcp_client: StreamableHTTPClient
 var mcp_interface: MCPProtocolAdapter
@@ -90,8 +92,13 @@ func _enter_tree():
 	mcp_client.call_deferred("connect_streamable_http", current_streamable_http_url)
 	print("Godot MCP Plugin: Initialized successfully")
 
+	if not ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
+		add_autoload_singleton(RUNTIME_AUTOLOAD_NAME, RUNTIME_AUTOLOAD_PATH)
+
 func _exit_tree():
 	print("Godot MCP Plugin: Exiting tree...")
+	if ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
+		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
 	remove_tool_menu_item("MCP Settings")
 
 	_cleanup_timer(runtime_heartbeat_timer, "_on_runtime_heartbeat_timeout")
@@ -936,7 +943,7 @@ func _apply_runtime_bridge_health(health: Dictionary) -> void:
 func _build_editor_snapshot() -> Dictionary:
 	if runtime_snapshot_collector == null:
 		runtime_snapshot_collector = RuntimeSnapshotCollector.new()
-	return runtime_snapshot_collector.build_snapshot(get_editor_interface())
+	return runtime_snapshot_collector.build_editor_snapshot(get_editor_interface())
 
 func _resolve_active_scene_path(edited_root: Node) -> String:
 	if edited_root == null:

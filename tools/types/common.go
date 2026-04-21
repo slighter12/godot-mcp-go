@@ -17,6 +17,15 @@ type Tool interface {
 	Execute(args json.RawMessage) ([]byte, error)
 }
 
+// AnnotatedTool extends Tool with MCP annotations for discoverability.
+type AnnotatedTool interface {
+	Tool
+	Annotations() *mcp.ToolAnnotations
+}
+
+// BoolPtr returns a pointer to a bool value.
+func BoolPtr(b bool) *bool { return &b }
+
 // ToolRegistry interface defines the contract for tool registries
 type ToolRegistry interface {
 	RegisterTool(tool Tool) error

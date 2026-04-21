@@ -7,17 +7,87 @@ import (
 
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
+	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 type ListOfferingsTool struct{}
 
 func (t *ListOfferingsTool) Name() string        { return "godot.offerings.list" }
 func (t *ListOfferingsTool) Description() string { return "Lists available offerings" }
+func (t *ListOfferingsTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   types.BoolPtr(true),
+		IdempotentHint: types.BoolPtr(true),
+	}
+}
 func (t *ListOfferingsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "List Offerings"}
 }
 func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
-	result := map[string]any{"offerings": []map[string]any{{"name": "godot-mcp", "version": "0.2.0", "capabilities": map[string]any{"tools": map[string]any{}, "resources": map[string]any{}, "prompts": map[string]any{}}, "serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.2.0"}}}}
+	now := time.Now().UTC()
+
+	offerings := []map[string]any{{
+		"name":    "godot-mcp",
+		"version": "0.2.0",
+		"capabilities": map[string]any{
+			"tools":     map[string]any{},
+			"resources": map[string]any{},
+			"prompts":   map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    "godot-mcp-go",
+			"version": "0.2.0",
+		},
+	}}
+
+	editorHealth := runtimebridge.DefaultEditorStore().Health(now)
+	editorFresh := editorHealth.States["fresh"]
+
+	runtimeStatus := map[string]any{
+		"connected":    false,
+		"registered":   false,
+		"session_id":   "",
+		"has_snapshot": false,
+	}
+	runtimeAvailable := "unavailable"
+	if gameSession, hasGame := runtimebridge.DefaultGameSessionRegistry().LatestRunning(); hasGame {
+		runtimeConnected := strings.TrimSpace(gameSession.RuntimeSessionID) != ""
+		runtimeStatus["connected"] = runtimeConnected
+		runtimeStatus["registered"] = runtimeConnected
+		runtimeStatus["session_id"] = gameSession.SessionID
+		runtimeStatus["has_snapshot"] = gameSession.HasSnapshot
+		if runtimeConnected && gameSession.HasSnapshot {
+			runtimeAvailable = "available"
+		}
+	}
+
+	editorAvailable := "unavailable"
+	if editorFresh > 0 {
+		editorAvailable = "available"
+	}
+
+	status := map[string]any{
+		"server": map[string]any{
+			"connected": true,
+			"version":   "0.2.0",
+		},
+		"editor_plugin": map[string]any{
+			"connected":     editorFresh > 0,
+			"session_count": editorHealth.Sessions,
+			"fresh_count":   editorFresh,
+		},
+		"runtime_companion": runtimeStatus,
+		"tool_availability": map[string]any{
+			"file_based":     "available",
+			"editor_backed":  editorAvailable,
+			"runtime_backed": runtimeAvailable,
+		},
+	}
+
+	result := map[string]any{
+		"offerings": offerings,
+		"status":    status,
+	}
 	return json.Marshal(result)
 }
 
@@ -32,6 +102,12 @@ func (t *RuntimeHealthTool) Name() string { return "godot.runtime.health.get" }
 
 func (t *RuntimeHealthTool) Description() string {
 	return "Returns runtime bridge freshness and command broker health metrics"
+}
+func (t *RuntimeHealthTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   types.BoolPtr(true),
+		IdempotentHint: types.BoolPtr(true),
+	}
 }
 
 func (t *RuntimeHealthTool) InputSchema() mcp.InputSchema {
@@ -61,6 +137,12 @@ func (t *RuntimeDiagnoseTool) Name() string { return "godot.runtime.diagnose" }
 func (t *RuntimeDiagnoseTool) Description() string {
 	return "Diagnoses runtime bootstrap pipeline — shows which step is stuck (game session, editor freshness, companion connection, registration, first snapshot)"
 }
+func (t *RuntimeDiagnoseTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   types.BoolPtr(true),
+		IdempotentHint: types.BoolPtr(true),
+	}
+}
 
 func (t *RuntimeDiagnoseTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -81,14 +163,14 @@ func (t *RuntimeDiagnoseTool) Execute(args json.RawMessage) ([]byte, error) {
 	gameSession, hasGame := runtimebridge.DefaultGameSessionRegistry().LatestRunning()
 	if hasGame {
 		gameSessionInfo = map[string]any{
-			"exists":                true,
-			"session_id":            gameSession.SessionID,
-			"running":               gameSession.Running,
-			"has_snapshot":          gameSession.HasSnapshot,
-			"runtime_session_id":    gameSession.RuntimeSessionID,
-			"editor_session_id":     gameSession.EditorSessionID,
-			"launch_token_present":  strings.TrimSpace(gameSession.LaunchToken) != "",
-			"started_at":            gameSession.StartedAt,
+			"exists":               true,
+			"session_id":           gameSession.SessionID,
+			"running":              gameSession.Running,
+			"has_snapshot":         gameSession.HasSnapshot,
+			"runtime_session_id":   gameSession.RuntimeSessionID,
+			"editor_session_id":    gameSession.EditorSessionID,
+			"launch_token_present": strings.TrimSpace(gameSession.LaunchToken) != "",
+			"started_at":           gameSession.StartedAt,
 		}
 	}
 
@@ -103,9 +185,9 @@ func (t *RuntimeDiagnoseTool) Execute(args json.RawMessage) ([]byte, error) {
 	checklist := buildPipelineChecklist(hasGame, gameSession, editorFresh, mcpCounts)
 
 	result := map[string]any{
-		"timestamp":          now.Format(time.RFC3339Nano),
-		"game_session":       gameSessionInfo,
-		"mcp_sessions":       mcpCounts,
+		"timestamp":    now.Format(time.RFC3339Nano),
+		"game_session": gameSessionInfo,
+		"mcp_sessions": mcpCounts,
 		"editor_store": map[string]any{
 			"sessions":    editorHealth.Sessions,
 			"fresh_count": editorFresh,
@@ -145,7 +227,7 @@ func buildPipelineChecklist(hasGame bool, game runtimebridge.GameSession, editor
 	runtimeConnected := fullyInitialized >= 3
 	step3 := pipelineStep{Step: "runtime_session_connected", OK: runtimeConnected}
 	if !runtimeConnected {
-		step3.Hint = "runtime companion MCP session not found — check: (1) godot_mcp_runtime plugin enabled in Project Settings > Plugins, (2) handshake file exists at user://godot_mcp/runtime/active_handshake.json, (3) Go server reachable at configured URL"
+		step3.Hint = "runtime companion MCP session not found — check: (1) Godot MCP plugin enabled in Project Settings > Plugins, (2) game is running (call godot.project.run first), (3) handshake file exists at user://godot_mcp/runtime/active_handshake.json, (4) Go server reachable at configured URL"
 	}
 	steps = append(steps, step3)
 

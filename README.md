@@ -37,7 +37,7 @@ mkdir -p /path/to/project/addons
 ln -s /path/to/godot-mcp-go/godot-plugin/addons/godot_mcp /path/to/project/addons/godot_mcp
 ```
 
-Then open Godot and enable `Godot MCP` in `Project > Project Settings > Plugins`.
+Then open Godot and enable `Godot MCP` in `Project > Project Settings > Plugins`. The runtime companion autoload (`GodotMCPRuntimeCompanion`) is registered automatically.
 
 ## Usage
 
@@ -334,6 +334,28 @@ Internal runtime bridge tools are exempt from `tool_controls.permission_mode` fi
 - `godot.bridge.runtime.snapshot.push`
 - `godot.bridge.runtime.log.push`
 - `godot.bridge.command.ack`
+
+## Tool Dependency Categories
+
+Each tool's description includes a category prefix indicating its runtime dependency:
+
+- **`[file-based]`** — Works without any Godot plugin connected. Reads files directly from the project directory.
+- **`[editor-plugin]`** — Requires the Godot MCP editor plugin to be connected with a fresh editor snapshot.
+- **`[runtime]`** — Requires a running game session with the runtime companion registered.
+
+Call `godot.offerings.list` to check live component status before using editor-backed or runtime-backed tools. The response includes a `status.tool_availability` block:
+
+```json
+{
+  "tool_availability": {
+    "file_based": "available",
+    "editor_backed": "available",
+    "runtime_backed": "unavailable"
+  }
+}
+```
+
+All tools also include MCP `annotations` with `readOnlyHint`, `destructiveHint`, and `idempotentHint` fields.
 
 ## Resources
 

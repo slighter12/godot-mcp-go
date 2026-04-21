@@ -2,6 +2,32 @@
 
 This document defines the public tool contract for `godot-mcp-go`.
 
+## Tool Dependency Categories
+
+Tools are categorized by their runtime dependency. Each tool's description includes a prefix:
+
+| Category | Prefix | Dependency |
+|----------|--------|------------|
+| File-based | `[file-based]` | None — reads project files directly |
+| Editor-backed | `[editor-plugin]` | Godot MCP editor plugin with fresh snapshot |
+| Runtime-backed | `[runtime]` | Running game session + registered runtime companion |
+| Utility | (none) | Server-only diagnostics |
+| Internal bridge | (none) | Plugin-to-server communication (not called by AI) |
+
+### Tool Annotations
+
+All tools include MCP `annotations` in the `tools/list` response:
+- `readOnlyHint` — `true` for read operations, `false` for mutations
+- `destructiveHint` — `true` for `godot.node.delete` and `godot.runtime.log.clear`
+- `idempotentHint` — `true` for read/query operations
+
+### Live Status Discovery
+
+Call `godot.offerings.list` to get live component status. The `status` block reports:
+- `editor_plugin.connected` — whether the editor plugin has a fresh snapshot
+- `runtime_companion.connected` — whether the runtime companion is registered
+- `tool_availability` — summary of which tool categories are currently usable (`"available"` or `"unavailable"`)
+
 ## Naming
 
 Canonical tool names:

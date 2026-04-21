@@ -17,6 +17,12 @@ func (t *BridgeEditorSyncTool) Name() string { return "godot.bridge.editor.sync"
 func (t *BridgeEditorSyncTool) Description() string {
 	return "Synchronizes Godot editor snapshot (internal bridge tool)"
 }
+func (t *BridgeEditorSyncTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(false),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *BridgeEditorSyncTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -59,6 +65,12 @@ func (t *BridgeEditorPingTool) Name() string { return "godot.bridge.editor.ping"
 func (t *BridgeEditorPingTool) Description() string {
 	return "Refreshes editor snapshot freshness (internal bridge tool)"
 }
+func (t *BridgeEditorPingTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(false),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *BridgeEditorPingTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Bridge Editor Ping"}
 }
@@ -92,6 +104,11 @@ type BridgeRuntimeRegisterTool struct{}
 func (t *BridgeRuntimeRegisterTool) Name() string { return "godot.bridge.runtime.register" }
 func (t *BridgeRuntimeRegisterTool) Description() string {
 	return "Registers runtime transport for a game session (internal bridge tool)"
+}
+func (t *BridgeRuntimeRegisterTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
 }
 func (t *BridgeRuntimeRegisterTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -189,6 +206,11 @@ func (t *BridgeRuntimeSnapshotPushTool) Name() string { return "godot.bridge.run
 func (t *BridgeRuntimeSnapshotPushTool) Description() string {
 	return "Pushes runtime snapshot for a game session (internal bridge tool)"
 }
+func (t *BridgeRuntimeSnapshotPushTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *BridgeRuntimeSnapshotPushTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -263,6 +285,11 @@ func (t *BridgeRuntimeLogPushTool) Name() string { return "godot.bridge.runtime.
 func (t *BridgeRuntimeLogPushTool) Description() string {
 	return "Pushes runtime log entries for a game session (internal bridge tool)"
 }
+func (t *BridgeRuntimeLogPushTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *BridgeRuntimeLogPushTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -312,6 +339,11 @@ type BridgeCommandAckTool struct{}
 func (t *BridgeCommandAckTool) Name() string { return "godot.bridge.command.ack" }
 func (t *BridgeCommandAckTool) Description() string {
 	return "Acknowledges completion of an internal runtime command"
+}
+func (t *BridgeCommandAckTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
 }
 func (t *BridgeCommandAckTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{

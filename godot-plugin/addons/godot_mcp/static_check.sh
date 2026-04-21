@@ -3,15 +3,11 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
-if rg -n 'res://addons/godot_mcp/' "$ROOT_DIR"/*.gd >/dev/null; then
-  echo "runtime addon static check failed: found cross-addon dependency on godot_mcp"
-  rg -n 'res://addons/godot_mcp/' "$ROOT_DIR"/*.gd
-  exit 1
-fi
+RUNTIME_AUTOLOAD_SCRIPTS='runtime_companion.gd|runtime_mcp_interface.gd|runtime_mcp_server.gd|runtime_streamable_http_client.gd|runtime_mcp_protocol_adapter.gd|runtime_variant_utils.gd'
 
-if rg -n 'class_name (VariantUtils|RuntimeSnapshotCollector)\b' "$ROOT_DIR"/*.gd >/dev/null; then
-  echo "runtime addon static check failed: found colliding global class_name in runtime addon"
-  rg -n 'class_name (VariantUtils|RuntimeSnapshotCollector)\b' "$ROOT_DIR"/*.gd
+if rg -n 'EditorInterface' "$ROOT_DIR"/runtime_companion.gd "$ROOT_DIR"/runtime_mcp_interface.gd "$ROOT_DIR"/runtime_mcp_server.gd "$ROOT_DIR"/runtime_streamable_http_client.gd "$ROOT_DIR"/runtime_mcp_protocol_adapter.gd "$ROOT_DIR"/runtime_variant_utils.gd >/dev/null; then
+  echo "runtime addon static check failed: runtime autoload scripts reference EditorInterface"
+  rg -n 'EditorInterface' "$ROOT_DIR"/runtime_companion.gd "$ROOT_DIR"/runtime_mcp_interface.gd "$ROOT_DIR"/runtime_mcp_server.gd "$ROOT_DIR"/runtime_streamable_http_client.gd "$ROOT_DIR"/runtime_mcp_protocol_adapter.gd "$ROOT_DIR"/runtime_variant_utils.gd
   exit 1
 fi
 

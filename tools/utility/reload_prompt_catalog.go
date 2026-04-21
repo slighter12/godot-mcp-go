@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/slighter12/godot-mcp-go/mcp"
+	"github.com/slighter12/godot-mcp-go/tools/types"
 )
 
 // PromptCatalogReloader executes a prompt catalog reload and returns structured metadata.
@@ -21,6 +22,12 @@ func (t *ReloadPromptCatalogTool) Name() string { return "godot.prompts.reload" 
 
 func (t *ReloadPromptCatalogTool) Description() string {
 	return "Reloads prompt catalog entries from configured SKILL.md paths"
+}
+func (t *ReloadPromptCatalogTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   types.BoolPtr(false),
+		IdempotentHint: types.BoolPtr(true),
+	}
 }
 
 func (t *ReloadPromptCatalogTool) InputSchema() mcp.InputSchema {

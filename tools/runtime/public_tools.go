@@ -14,7 +14,13 @@ type GetActiveGameSessionTool struct{}
 
 func (t *GetActiveGameSessionTool) Name() string { return "godot.runtime.session.get_active" }
 func (t *GetActiveGameSessionTool) Description() string {
-	return "Returns the active runtime game session for one resolved editor session owner"
+	return "[runtime] Returns the active runtime game session for one resolved editor session owner"
+}
+func (t *GetActiveGameSessionTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *GetActiveGameSessionTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -68,7 +74,13 @@ type RuntimeSyncNowTool struct{}
 
 func (t *RuntimeSyncNowTool) Name() string { return "godot.runtime.sync_now" }
 func (t *RuntimeSyncNowTool) Description() string {
-	return "Requests runtime to emit a fresh snapshot immediately"
+	return "[runtime] Requests runtime to emit a fresh snapshot immediately"
+}
+func (t *RuntimeSyncNowTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeSyncNowTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -115,7 +127,12 @@ type AwaitRuntimeSnapshotTool struct{}
 
 func (t *AwaitRuntimeSnapshotTool) Name() string { return "godot.runtime.await_snapshot" }
 func (t *AwaitRuntimeSnapshotTool) Description() string {
-	return "Waits until a runtime snapshot satisfies frame/freshness conditions"
+	return "[runtime] Waits until a runtime snapshot satisfies frame/freshness conditions"
+}
+func (t *AwaitRuntimeSnapshotTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *AwaitRuntimeSnapshotTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -198,7 +215,13 @@ type RuntimeSceneTreeGetTool struct{}
 
 func (t *RuntimeSceneTreeGetTool) Name() string { return "godot.runtime.scene_tree.get" }
 func (t *RuntimeSceneTreeGetTool) Description() string {
-	return "Returns the runtime scene tree from live game snapshot"
+	return "[runtime] Returns the runtime scene tree from live game snapshot"
+}
+func (t *RuntimeSceneTreeGetTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeSceneTreeGetTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -246,7 +269,13 @@ type RuntimeNodePropertiesGetTool struct{}
 
 func (t *RuntimeNodePropertiesGetTool) Name() string { return "godot.runtime.node_properties.get" }
 func (t *RuntimeNodePropertiesGetTool) Description() string {
-	return "Reads runtime node properties via on-demand runtime fetch"
+	return "[runtime] Reads runtime node properties via on-demand runtime fetch"
+}
+func (t *RuntimeNodePropertiesGetTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeNodePropertiesGetTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -316,7 +345,12 @@ type RuntimeInputTapTool struct{}
 
 func (t *RuntimeInputTapTool) Name() string { return "godot.runtime.input.tap" }
 func (t *RuntimeInputTapTool) Description() string {
-	return "Sends a tap input to runtime game session"
+	return "[runtime] Sends a tap input to runtime game session"
+}
+func (t *RuntimeInputTapTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
 }
 func (t *RuntimeInputTapTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -337,7 +371,12 @@ func (t *RuntimeInputTapTool) Execute(args json.RawMessage) ([]byte, error) {
 type RuntimeInputPressTool struct{}
 
 func (t *RuntimeInputPressTool) Name() string        { return "godot.runtime.input.press" }
-func (t *RuntimeInputPressTool) Description() string { return "Presses a runtime input" }
+func (t *RuntimeInputPressTool) Description() string { return "[runtime] Presses a runtime input" }
+func (t *RuntimeInputPressTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *RuntimeInputPressTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -356,7 +395,12 @@ func (t *RuntimeInputPressTool) Execute(args json.RawMessage) ([]byte, error) {
 type RuntimeInputReleaseTool struct{}
 
 func (t *RuntimeInputReleaseTool) Name() string        { return "godot.runtime.input.release" }
-func (t *RuntimeInputReleaseTool) Description() string { return "Releases a runtime input" }
+func (t *RuntimeInputReleaseTool) Description() string { return "[runtime] Releases a runtime input" }
+func (t *RuntimeInputReleaseTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *RuntimeInputReleaseTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -416,7 +460,13 @@ type RuntimeLogGetTool struct{}
 
 func (t *RuntimeLogGetTool) Name() string { return "godot.runtime.log.get" }
 func (t *RuntimeLogGetTool) Description() string {
-	return "Returns runtime log entries for one game session"
+	return "[runtime] Returns runtime log entries for one game session"
+}
+func (t *RuntimeLogGetTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeLogGetTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -487,7 +537,13 @@ type RuntimeLogClearTool struct{}
 
 func (t *RuntimeLogClearTool) Name() string { return "godot.runtime.log.clear" }
 func (t *RuntimeLogClearTool) Description() string {
-	return "Clears runtime log buffer for one game session"
+	return "[runtime] Clears runtime log buffer for one game session"
+}
+func (t *RuntimeLogClearTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:    tooltypes.BoolPtr(false),
+		DestructiveHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeLogClearTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -528,7 +584,13 @@ type RuntimeScreenshotGetTool struct{}
 
 func (t *RuntimeScreenshotGetTool) Name() string { return "godot.runtime.screenshot.get" }
 func (t *RuntimeScreenshotGetTool) Description() string {
-	return "Captures one runtime screenshot from running game"
+	return "[runtime] Captures one runtime screenshot from running game"
+}
+func (t *RuntimeScreenshotGetTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *RuntimeScreenshotGetTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
