@@ -130,6 +130,9 @@ func (m *Manager) GetTools() []mcp.Tool {
 			Description: tool.Description(),
 			InputSchema: tool.InputSchema(),
 		}
+		if at, ok := tool.(types.AnnotatedTool); ok {
+			mcpTool.Annotations = at.Annotations()
+		}
 		mcpTools = append(mcpTools, mcpTool)
 	}
 

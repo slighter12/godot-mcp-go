@@ -15,7 +15,7 @@
     ln -s /path/to/godot-mcp-go/godot-plugin/addons/godot_mcp /path/to/project/addons/godot_mcp
     ```
 
-3. Enable `Godot MCP` in `Project > Project Settings > Plugins`.
+3. Enable `Godot MCP` in `Project > Project Settings > Plugins`. The runtime companion autoload is registered automatically.
 
 4. Start server (default Streamable HTTP):
 
@@ -32,6 +32,10 @@ strategy, Git tag format, and pinned install guidance.
 
 Current line introduces the following compatibility changes:
 
+0. Single plugin model:
+   - If you previously enabled `Godot MCP Runtime Companion` as a separate plugin, disable it in `Project > Project Settings > Plugins`
+   - The main `Godot MCP` plugin now manages the runtime companion autoload automatically
+   - Runtime companion scripts are now inside `addons/godot_mcp/` — no separate directory needed
 1. Mutating tools require capability negotiation:
    - Send `initialize.params.capabilities.godot.mutating=true`
 2. `godot.script.create` supports `replace` (default `false`)

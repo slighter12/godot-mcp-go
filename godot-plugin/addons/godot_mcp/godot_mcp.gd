@@ -11,6 +11,8 @@ const MAX_RUNTIME_TREE_DEPTH := 12
 const MAX_RUNTIME_NODE_COUNT := 2000
 const CONNECTION_STATE_MACHINE_SCRIPT := preload("res://addons/godot_mcp/connection_state_machine.gd")
 const VARIANT_UTILS := preload("res://addons/godot_mcp/variant_utils.gd")
+const RUNTIME_AUTOLOAD_NAME := "GodotMCPRuntimeCompanion"
+const RUNTIME_AUTOLOAD_PATH := "res://addons/godot_mcp/runtime_companion.gd"
 
 var mcp_client: StreamableHTTPClient
 var mcp_interface: MCPProtocolAdapter
@@ -89,6 +91,10 @@ func _enter_tree():
 	# Defer until mcp_client._ready() initializes its HTTPRequest node.
 	mcp_client.call_deferred("connect_streamable_http", current_streamable_http_url)
 	print("Godot MCP Plugin: Initialized successfully")
+	_ensure_runtime_autoload_registered()
+
+func _enable_plugin() -> void:
+	_ensure_runtime_autoload_registered()
 
 func _exit_tree():
 	print("Godot MCP Plugin: Exiting tree...")
@@ -124,6 +130,31 @@ func _exit_tree():
 	active_game_launch_token = ""
 	active_game_handshake_file = ""
 	print("Godot MCP Plugin: Cleanup complete")
+
+func _disable_plugin() -> void:
+	if ProjectSettings.has_setting("autoload/%s" % RUNTIME_AUTOLOAD_NAME):
+		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
+
+func _ensure_runtime_autoload_registered() -> void:
+	var autoload_key = "autoload/%s" % RUNTIME_AUTOLOAD_NAME
+	if ProjectSettings.has_setting(autoload_key):
+		var current_entry = str(ProjectSettings.get_setting(autoload_key, ""))
+		if _normalize_autoload_target(current_entry) == RUNTIME_AUTOLOAD_PATH:
+			return
+		remove_autoload_singleton(RUNTIME_AUTOLOAD_NAME)
+	add_autoload_singleton(RUNTIME_AUTOLOAD_NAME, RUNTIME_AUTOLOAD_PATH)
+
+func _normalize_autoload_target(entry: String) -> String:
+	var normalized = entry.strip_edges()
+	if normalized.begins_with("*"):
+		normalized = normalized.substr(1)
+	if normalized.begins_with("uid://"):
+		var uid_id = ResourceUID.text_to_id(normalized)
+		if uid_id != ResourceUID.INVALID_ID and ResourceUID.has_id(uid_id):
+			var resolved_path = ResourceUID.get_id_path(uid_id)
+			if resolved_path != "":
+				return resolved_path
+	return normalized
 
 func _cleanup_timer(timer: Timer, timeout_handler: String) -> void:
 	if timer == null:
@@ -936,7 +967,7 @@ func _apply_runtime_bridge_health(health: Dictionary) -> void:
 func _build_editor_snapshot() -> Dictionary:
 	if runtime_snapshot_collector == null:
 		runtime_snapshot_collector = RuntimeSnapshotCollector.new()
-	return runtime_snapshot_collector.build_snapshot(get_editor_interface())
+	return runtime_snapshot_collector.build_editor_snapshot(get_editor_interface())
 
 func _resolve_active_scene_path(edited_root: Node) -> String:
 	if edited_root == null:

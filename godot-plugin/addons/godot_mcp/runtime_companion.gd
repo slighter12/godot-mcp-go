@@ -1,13 +1,11 @@
 extends Node
 
-const CONFIG_PATH := "res://addons/godot_mcp_runtime/config.cfg"
+const CONFIG_PATH := "res://addons/godot_mcp/config.cfg"
 
 const TOOL_RUNTIME_REGISTER := "godot.bridge.runtime.register"
 const TOOL_RUNTIME_SNAPSHOT_PUSH := "godot.bridge.runtime.snapshot.push"
 const TOOL_RUNTIME_LOG_PUSH := "godot.bridge.runtime.log.push"
 const TOOL_COMMAND_ACK := "godot.bridge.command.ack"
-const RUNTIME_SNAPSHOT_COLLECTOR := preload("res://addons/godot_mcp_runtime/runtime_snapshot_collector.gd")
-
 const PROPERTY_WHITELIST := {
 	"position": true,
 	"global_position": true,
@@ -23,7 +21,7 @@ const PROPERTY_WHITELIST := {
 
 var mcp_client: RuntimeStreamableHTTPClient
 var mcp_interface: RuntimeMCPProtocolAdapter
-var snapshot_collector: RefCounted = RUNTIME_SNAPSHOT_COLLECTOR.new()
+var snapshot_collector := RuntimeSnapshotCollector.new()
 
 var bootstrap_timer: Timer
 var snapshot_timer: Timer
@@ -299,7 +297,7 @@ func _push_runtime_snapshot(force: bool) -> bool:
 
 	snapshot_sequence += 1
 	var snapshot_id = "snap_%08d" % snapshot_sequence
-	var snapshot = snapshot_collector.collect_snapshot(game_session_id, snapshot_id)
+	var snapshot = snapshot_collector.collect_runtime_snapshot(game_session_id, snapshot_id)
 	if force:
 		snapshot["force"] = true
 	if force or snapshot_sequence == 1:

@@ -26,7 +26,13 @@ const projectListPageSize = 200
 type GetProjectSettingsTool struct{}
 
 func (t *GetProjectSettingsTool) Name() string        { return "godot.project.settings.get" }
-func (t *GetProjectSettingsTool) Description() string { return "Gets project settings" }
+func (t *GetProjectSettingsTool) Description() string { return "[file-based] Gets project settings" }
+func (t *GetProjectSettingsTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *GetProjectSettingsTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -76,8 +82,16 @@ func (t *GetProjectSettingsTool) Execute(args json.RawMessage) ([]byte, error) {
 
 type ListProjectResourcesTool struct{}
 
-func (t *ListProjectResourcesTool) Name() string        { return "godot.project.resources.list" }
-func (t *ListProjectResourcesTool) Description() string { return "Lists all resources in the project" }
+func (t *ListProjectResourcesTool) Name() string { return "godot.project.resources.list" }
+func (t *ListProjectResourcesTool) Description() string {
+	return "[file-based] Lists all resources in the project"
+}
+func (t *ListProjectResourcesTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *ListProjectResourcesTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -175,8 +189,16 @@ func (t *ListProjectResourcesTool) Execute(args json.RawMessage) ([]byte, error)
 
 type GetEditorStateTool struct{}
 
-func (t *GetEditorStateTool) Name() string        { return "godot.editor.state.get" }
-func (t *GetEditorStateTool) Description() string { return "Gets the current editor state" }
+func (t *GetEditorStateTool) Name() string { return "godot.editor.state.get" }
+func (t *GetEditorStateTool) Description() string {
+	return "[editor-plugin] Gets the current editor state"
+}
+func (t *GetEditorStateTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
+}
 func (t *GetEditorStateTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -219,7 +241,13 @@ type IsProjectRunningTool struct{}
 
 func (t *IsProjectRunningTool) Name() string { return "godot.project.is_running" }
 func (t *IsProjectRunningTool) Description() string {
-	return "Returns whether a game session is running"
+	return "[editor-plugin] Returns whether a game session is running"
+}
+func (t *IsProjectRunningTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint:   tooltypes.BoolPtr(true),
+		IdempotentHint: tooltypes.BoolPtr(true),
+	}
 }
 func (t *IsProjectRunningTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
@@ -290,7 +318,12 @@ func (t *IsProjectRunningTool) Execute(args json.RawMessage) ([]byte, error) {
 type RunProjectTool struct{}
 
 func (t *RunProjectTool) Name() string        { return "godot.project.run" }
-func (t *RunProjectTool) Description() string { return "Runs the project" }
+func (t *RunProjectTool) Description() string { return "[editor-plugin] Runs the project" }
+func (t *RunProjectTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *RunProjectTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
@@ -407,7 +440,12 @@ func (t *RunProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 type StopProjectTool struct{}
 
 func (t *StopProjectTool) Name() string        { return "godot.project.stop" }
-func (t *StopProjectTool) Description() string { return "Stops the running project" }
+func (t *StopProjectTool) Description() string { return "[editor-plugin] Stops the running project" }
+func (t *StopProjectTool) Annotations() *mcp.ToolAnnotations {
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: tooltypes.BoolPtr(false),
+	}
+}
 func (t *StopProjectTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",

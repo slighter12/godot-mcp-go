@@ -1,6 +1,6 @@
 # v1 Runtime Command Protocol
 
-This document defines the runtime command bridge contract between Go server and Godot plugin.
+This document defines the runtime command bridge contract between Go server and the Godot runtime companion. The runtime companion autoload is managed automatically by the main `Godot MCP` plugin; there is no separate `godot_mcp_runtime` plugin to enable.
 
 Tool names in this protocol are strictly canonical v1 names.
 
