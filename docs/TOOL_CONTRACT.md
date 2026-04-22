@@ -466,6 +466,12 @@ Output:
 - optional `launch_token_present`
 - optional `started_at`
 
+`mcp_sessions` fields:
+
+- `total`
+- `fully_initialized`
+- `with_transport`
+
 `editor_store` fields:
 
 - `sessions`
