@@ -33,7 +33,9 @@ Precondition:
 
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`.
-- Runtime-backed reads (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require initialized MCP HTTP session state plus a fresh runtime snapshot.
+- Start with `godot.offerings.list` only when you need a coarse global signal about whether any live editor/runtime path is up.
+- `godot.editor.state.get` is editor-backed and requires initialized MCP HTTP session state plus a fresh editor snapshot.
+- `godot.runtime.scene_tree.get` and `godot.runtime.node_properties.get` are runtime-backed and require an active game `session_id`. Resolve it cautiously: pass `editor_session_id` to `godot.runtime.session.get_active`, then fail closed unless the returned `editor_session_id` still matches the intended editor owner. Use `godot.runtime.await_snapshot` only after that check passes.
 - If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
 
 Inspect:
@@ -46,6 +48,8 @@ Inspect:
 Rules:
 
 - Inspect the existing pattern before adding a new one.
+- If runtime state is required, resolve the runtime session with an explicit `editor_session_id`, verify the returned `editor_session_id` still matches, then pass that `session_id` explicitly to later runtime reads.
+- Use `godot.project.is_running` with the intended `editor_session_id` when run/stop/attach decisions depend on whether the current game session is alive.
 - Do not inspect unrelated scenes or scripts once the owner is clear.
 
 ## Step 3: Choose one vertical slice
@@ -84,6 +88,8 @@ Verification relies on reading back the changed state. The AI cannot observe liv
 Always verify with:
 
 - A state readback using `godot.script.read`, `godot.scene.read`, `godot.runtime.scene_tree.get`, or `godot.runtime.node_properties.get` depending on what the tool actually exposes. For mutating runtime commands, also use the ack payload returned by the tool.
+- `godot.runtime.log.get` when runtime launch, attach, or verification behavior is unclear.
+- `godot.runtime.screenshot.get` as an optional visual aid for manual verification.
 - A logical gameplay scenario analysis: reason through the expected behavior given the code and scene state, and flag any adjacent risk.
 - An owner and callback sanity check: verify the final state still leaves one clear source of truth on the intended timing path.
 - Optionally use `godot.project.run` to launch the game for manual user testing, then confirm the result.

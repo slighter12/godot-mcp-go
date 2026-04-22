@@ -73,8 +73,12 @@ Current line introduces the following compatibility changes:
   - set `tool_controls.allow_mutating_without_capability=true`
   - use only for trusted local clients
 - Runtime tools no longer borrow the latest session implicitly:
-  - resolve the active game session through `godot.runtime.session.get_active`
-  - pass the target `session_id` to runtime tools
+  - use `godot.offerings.list` only as a coarse global signal for `editor_backed` / `runtime_backed` health
+  - use `godot.project.is_running` with the intended `editor_session_id` before run/stop/attach-recover decisions when current runtime state is uncertain
+  - resolve the active game session through `godot.runtime.session.get_active` with explicit `editor_session_id`
+  - fail closed unless the returned `editor_session_id` still matches the intended editor owner
+  - call `godot.runtime.await_snapshot` when the next runtime read depends on fresh live state
+  - pass only that verified `session_id` to runtime tools
 - `stdio` supports read/non-runtime operations and requires strict initialize protocol version.
 - Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`.
 
@@ -122,7 +126,7 @@ Current line introduces the following compatibility changes:
 
 Use this only when you want the MCP server itself to expose file-backed prompt sources through prompt catalog endpoints.
 
-This prompt catalog feature is separate from the repository `skills/` directory. The bundled companion skills are external agent-side artifacts that call this server through the `godot.*` MCP tools; the server does not load them as built-in prompt catalog content.
+The repository `skills/` directory still primarily serves as companion agent-side skill content. By default, the server does not treat `skills/` as built-in prompt catalog content. Prompt catalog can expose those same `SKILL.md` files as prompt sources only if you intentionally point `prompt_catalog.paths` at them and allow the relevant roots.
 
 ## Runtime Bridge Config Additions
 

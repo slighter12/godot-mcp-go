@@ -318,6 +318,7 @@ Runtime log note:
 
 - `godot.offerings.list`
 - `godot.runtime.health.get`
+- `godot.runtime.diagnose`
 - `godot.bridge.editor.sync` (internal)
 - `godot.bridge.editor.ping` (internal)
 - `godot.bridge.runtime.register` (internal)
@@ -343,7 +344,7 @@ Each tool's description includes a category prefix indicating its runtime depend
 - **`[editor-plugin]`** — Requires the Godot MCP editor plugin to be connected with a fresh editor snapshot.
 - **`[runtime]`** — Requires a running game session with the runtime companion registered.
 
-Call `godot.offerings.list` to check live component status before using editor-backed or runtime-backed tools. The response includes a `status.tool_availability` block:
+Call `godot.offerings.list` to get a coarse global view of live component status before probing editor-backed or runtime-backed tools. The `status.tool_availability` block is not a task-scoped guarantee for any specific caller, editor, or game session:
 
 ```json
 {
@@ -400,16 +401,17 @@ godot-mcp-go/
 
 ## Skills Library
 
-The `skills/` directory contains companion AI agent skills for
-**consumers** of this MCP server. They are not runtime features of the
-server itself, not part of the MCP tool contract, and not contributor
-workflow docs for developing this repository.
+The `skills/` directory primarily contains companion AI agent skills for
+**consumers** of this MCP server. They are not part of the `godot.*` MCP tool
+contract and they are not contributor workflow docs for developing this
+repository.
 
-These skills are external prompt/skill artifacts used by an agent that already supports skills. The relationship is:
+These skills are agent-side workflow artifacts used by an agent that already supports skills. The default relationship is:
 
 - the skill decides the workflow
 - the skill calls this server through the `godot.*` MCP tools
-- the server does not load, expose, or execute the skills as built-in MCP functionality
+- default behavior: the server does not load `skills/` as built-in prompt catalog content
+- exception: prompt catalog can expose those files only when you explicitly point `prompt_catalog.paths` at them
 
 These files are authored as agent-side skill artifacts (`SKILL.md` plus
 optional references), not as npm packages. This repository is the current
@@ -451,6 +453,16 @@ Available skills:
   centered on common 2D-oriented gameplay slices and tool recipes. It depends
   on `skills/policy-godot` for design guidance. See
   [`SKILL.md`](skills/godot-game-dev-workflow/SKILL.md) for workflow usage.
+
+Typical conservative live-state flow for the workflow skill:
+
+- use `godot.offerings.list` only as a coarse global signal
+- choose the intended `editor_session_id` for the task
+- use `godot.editor.state.get` only for editor-backed context, preferably with that explicit `editor_session_id`
+- call `godot.runtime.session.get_active` with that explicit `editor_session_id`
+- fail closed unless the returned `editor_session_id` still matches the intended editor owner
+- call `godot.runtime.await_snapshot` when runtime freshness matters
+- pass only that verified `session_id` to later runtime reads and verification tools
 
 ## Limitations
 
