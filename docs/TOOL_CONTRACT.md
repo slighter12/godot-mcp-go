@@ -23,10 +23,10 @@ All tools include MCP `annotations` in the `tools/list` response:
 
 ### Live Status Discovery
 
-Call `godot.offerings.list` to get live component status. The `status` block reports:
+Call `godot.offerings.list` to get a coarse global view of live component status. The `status` block reports:
 - `editor_plugin.connected` — whether the editor plugin has a fresh snapshot
 - `runtime_companion.connected` — whether the runtime companion is registered
-- `tool_availability` — summary of which tool categories are currently usable (`"available"` or `"unavailable"`)
+- `tool_availability` — coarse summary of which tool categories look usable globally (`"available"` or `"unavailable"`), not a task-scoped guarantee for any specific caller, editor, or game session
 
 ## Naming
 
@@ -86,6 +86,7 @@ Canonical tool names:
 
 - `godot.offerings.list`
 - `godot.runtime.health.get`
+- `godot.runtime.diagnose`
 - `godot.bridge.editor.sync` (internal bridge)
 - `godot.bridge.editor.ping` (internal bridge)
 - `godot.bridge.runtime.register` (internal bridge)
@@ -317,10 +318,12 @@ Output:
 
 Notes:
 
-- Resolution order is the same editor-owner model:
+- Resolution order starts with the same editor-owner model:
   1. optional `editor_session_id`
   2. caller session when caller snapshot is fresh
   3. latest fresh editor snapshot session
+- Current implementation detail: after resolving an editor owner, the tool first checks `ActiveForEditor(editor_session_id)` and then may fall back to `LatestRunning()` across all editors if no game session is attached to that editor.
+- Conservative client usage: pass explicit `editor_session_id` and fail closed unless the returned `editor_session_id` still matches the intended editor owner before reusing `session_id` in later runtime tools.
 - If no healthy editor snapshot exists, returns semantic `not_available`.
 
 ### `godot.runtime.await_snapshot`
@@ -435,6 +438,56 @@ Output:
 - `height`
 - `frame`
 - `timestamp`
+
+## Utility Tool Contracts
+
+### `godot.runtime.diagnose`
+
+Input:
+
+- no arguments
+
+Output:
+
+- `timestamp`
+- `game_session`
+- `mcp_sessions`
+- `editor_store`
+- `pipeline_checklist`
+
+`game_session` fields:
+
+- `exists`
+- optional `session_id`
+- optional `running`
+- optional `has_snapshot`
+- optional `runtime_session_id`
+- optional `editor_session_id`
+- optional `launch_token_present`
+- optional `started_at`
+
+`mcp_sessions` fields:
+
+- `total`
+- `fully_initialized`
+- `with_transport`
+
+`editor_store` fields:
+
+- `sessions`
+- `fresh_count`
+
+`pipeline_checklist` entries use:
+
+- `step`
+- `ok`
+- optional `hint`
+
+Current behavior:
+
+- inspects the latest running game session as a global runtime bootstrap diagnostic, not as a task-scoped session guarantee
+- reports whether the bootstrap pipeline appears to be blocked at game session creation, editor freshness, runtime companion connection, runtime registration, or first snapshot arrival
+- intended as a first-line diagnostic tool when runtime bootstrap or attach/recover looks stuck
 
 ## Script Create Conflict Policy
 

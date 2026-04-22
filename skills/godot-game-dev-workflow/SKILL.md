@@ -32,7 +32,9 @@ Do not use this skill for:
 - Keep general Godot guidance short during execution: identify the lane, route to the relevant policy reference, then continue the MCP flow.
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`. If the server is running outside the target project tree, set `GODOT_PROJECT_ROOT` first.
-- Runtime-backed reads (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require an initialized MCP HTTP session plus a fresh runtime snapshot.
+- Treat `godot.offerings.list` as a coarse global health signal only. It can tell you whether some editor/runtime path is alive, but not whether the current task's target session is the one that is available.
+- Editor-backed reads (`godot.editor.state.get`) require an initialized MCP HTTP session plus a fresh editor snapshot.
+- Runtime-backed reads (`godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require an active game `session_id`. Resolve it cautiously: pass an explicit `editor_session_id` to `godot.runtime.session.get_active`, then fail closed unless the returned `editor_session_id` still matches the intended editor owner. Use `godot.runtime.await_snapshot` only after that task-scoped session check passes.
 - Mutating tools require an initialized MCP HTTP session, `initialize.params.capabilities.godot.mutating=true`, and a healthy runtime bridge. Check `godot.runtime.health.get` before mutating.
 - `godot.script.modify` replaces the entire script content. Always read the current script with `godot.script.read` first, apply changes to the full text, then send the complete new content.
 - Never finish a task with an unclear verification story. Every slice needs one gameplay scenario and one readback check.
@@ -59,8 +61,15 @@ Structure responses in this format:
 
 2. Confirm runtime bridge and inspect the real ownership boundary.
 
+- Start with `godot.offerings.list` only as a coarse signal that some live lane may be available.
 - Use file-backed reads first when they are enough to identify ownership.
-- Use runtime-backed reads only when live editor/runtime state is required; these need an initialized MCP HTTP session plus a fresh runtime snapshot.
+- Use `godot.editor.state.get` only when live editor state is required; it is editor-backed and needs an initialized MCP HTTP session plus a fresh editor snapshot.
+- When editor ownership matters, pass `editor_session_id` explicitly to editor-owner tools instead of trusting global freshness alone.
+- Use `godot.project.is_running` with the intended `editor_session_id` as a lifecycle pre-check before `godot.project.run`, `godot.project.stop`, or attach/recover decisions when the current runtime state is uncertain.
+- For runtime-backed reads or runtime verification, call `godot.runtime.session.get_active` with an explicit `editor_session_id`.
+- Fail closed if the returned `editor_session_id` does not match the intended editor owner; do not continue with runtime reads or runtime inputs on that `session_id`.
+- If runtime freshness matters after the session check passes, call `godot.runtime.await_snapshot` before `godot.runtime.scene_tree.get` or `godot.runtime.node_properties.get`.
+- Pass the verified `session_id` explicitly to every runtime-backed tool.
 - If the slice requires mutating tools, ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated, then check `godot.runtime.health.get`.
 - Find the scene, node, script, signal, input action, collision setup, or resource that currently owns the behavior.
 - Inspect only the paths that can actually change the target outcome.
@@ -79,6 +88,9 @@ Structure responses in this format:
 5. Verify with state readback and logical analysis.
 
 - Re-read the changed state via read tools to confirm the update was applied.
+- Use `godot.runtime.log.get` as the first runtime diagnostics stream when verification or bootstrap behavior looks wrong.
+- Use `godot.runtime.screenshot.get` as an optional manual verification aid when a visual outcome matters.
+- Use `godot.runtime.input.tap`, `godot.runtime.input.press`, or `godot.runtime.input.release` only for playable verification paths that genuinely need runtime interaction.
 - Reason through one gameplay scenario, one adjacent regression path, and the owner/callback sanity of the final state.
 - Optionally suggest `godot.project.run` for manual user testing.
 

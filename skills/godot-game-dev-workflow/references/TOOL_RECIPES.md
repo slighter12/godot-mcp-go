@@ -18,15 +18,22 @@ These tools read project files directly and do not require the runtime bridge:
 
 They operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`.
 
-### Runtime-backed reads
+### Editor-backed reads
 
-These tools depend on initialized MCP HTTP session state and a fresh runtime snapshot:
+These tools depend on initialized MCP HTTP session state plus a fresh editor snapshot:
 
 - `godot.editor.state.get`
+
+If they fail with editor session or freshness errors, resolve via `SAFETY_AND_VERIFICATION.md` before continuing.
+
+### Runtime-backed reads
+
+These tools require an active runtime `session_id`:
+
 - `godot.runtime.scene_tree.get`
 - `godot.runtime.node_properties.get`
 
-If they fail with session or freshness errors, resolve via `SAFETY_AND_VERIFICATION.md` before continuing.
+Resolve the session cautiously: pass an explicit `editor_session_id` to `godot.runtime.session.get_active`, then fail closed unless the returned `editor_session_id` still matches the intended editor owner. When freshness matters after that check passes, call `godot.runtime.await_snapshot` before these reads. If they fail with session or freshness errors, resolve via `SAFETY_AND_VERIFICATION.md` before continuing.
 
 ### Mutating tools
 
@@ -47,18 +54,39 @@ Before calling any mutating tool (`godot.project.run`, `godot.project.stop`, `go
 
 Never call `godot.script.modify` without reading the script first.
 
+## Preflight and Session Resolution
+
+Use this order when the task depends on live editor or runtime state:
+
+1. `godot.offerings.list` -> use only as a coarse global signal that some editor/runtime lane may be available.
+2. Choose the intended `editor_session_id` for this task before depending on live state.
+3. `godot.editor.state.get` -> inspect active editor context with that explicit `editor_session_id` when editor-backed state matters.
+4. `godot.project.is_running` with that explicit `editor_session_id` -> confirm whether the target game session is already running before run/stop/attach-recover decisions.
+5. `godot.runtime.session.get_active` -> resolve the active game `session_id` with that explicit `editor_session_id`.
+6. Continue only if the returned `editor_session_id` still matches the intended editor owner.
+7. `godot.runtime.await_snapshot` -> ensure the runtime snapshot is fresh before reading live runtime state.
+
+All later runtime tools should use that verified `session_id` explicitly.
+
+Shorthand used below:
+
+- `follow the session resolution flow above` means: choose the intended `editor_session_id`, resolve `godot.runtime.session.get_active`, verify the returned `editor_session_id`, then use `godot.runtime.await_snapshot` before runtime-backed reads when freshness matters.
+
 ## Find The Current Owner
 
 ### Start from the active gameplay surface
 
-- `godot.editor.state.get` -> confirm the active scene or editor context when runtime-backed reads are available
+- `godot.offerings.list` -> coarse signal only; do not treat it as task-scoped availability
+- `godot.editor.state.get` -> confirm the active scene or editor context when editor-backed state is available, preferably with explicit `editor_session_id`
 - `godot.scene.list` -> locate the scene if the owner is not already known
 - `godot.scene.read` -> inspect the candidate scene structure
 
 ### Inspect the behavior boundary
 
-- `godot.runtime.scene_tree.get` -> identify owner node path and nearby collaborators when runtime-backed reads are available
-- `godot.runtime.node_properties.get` -> inspect runtime state through the phase-1 property whitelist (`position`, `global_position`, `velocity`, `visible`, `modulate`, `text`, `frame`, `animation`, `enabled`, `zoom`) when runtime-backed reads are available
+- `godot.runtime.session.get_active` -> resolve the target runtime `session_id` with explicit `editor_session_id`, then verify the returned `editor_session_id` still matches
+- `godot.runtime.await_snapshot` -> confirm snapshot freshness when the next read depends on current runtime state and the session-owner check already passed
+- `godot.runtime.scene_tree.get` -> identify owner node path and nearby collaborators once runtime-backed reads are available
+- `godot.runtime.node_properties.get` -> inspect runtime state through the phase-1 property whitelist (`position`, `global_position`, `velocity`, `visible`, `modulate`, `text`, `frame`, `animation`, `enabled`, `zoom`) once a runtime `session_id` is resolved
 - `godot.script.read` -> inspect the script that currently owns the behavior
 
 Use `godot.script.list` only when the owner script is not obvious from the scene.
@@ -84,7 +112,8 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.editor.state.get` or `godot.runtime.scene_tree.get` when live context is needed to confirm the active owner
+- `godot.editor.state.get` when active editor context is enough to confirm the owner
+- follow the session resolution flow above, then use `godot.runtime.scene_tree.get` when live runtime ownership must be confirmed
 
 Change:
 
@@ -126,7 +155,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.runtime.scene_tree.get` -> `godot.runtime.node_properties.get` to confirm node path, owner, script, and groups when runtime-backed reads are available
+- follow the session resolution flow above, then use `godot.runtime.scene_tree.get` / `godot.runtime.node_properties.get` to confirm node path, owner, script, and groups when runtime-backed reads are available
 
 Change:
 
@@ -166,7 +195,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.runtime.scene_tree.get` when runtime-backed reads are needed to confirm the active UI owner or gameplay source path
+- follow the session resolution flow above, then use `godot.runtime.scene_tree.get` when runtime-backed reads are needed to confirm the active UI owner or gameplay source path
 
 Change:
 
@@ -210,7 +239,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.runtime.scene_tree.get` when the active edited scene or live hierarchy matters
+- follow the session resolution flow above, then use `godot.runtime.scene_tree.get` when the live hierarchy matters
 
 Change:
 
@@ -255,7 +284,7 @@ Script logic issue:
 
 Runtime ownership issue:
 
-- `godot.runtime.scene_tree.get` only when runtime ownership is unclear and affects the refactor boundary
+- follow the session resolution flow above, then use `godot.runtime.scene_tree.get` only when runtime ownership is unclear and affects the refactor boundary
 
 Change:
 
@@ -299,7 +328,15 @@ Use when the task depends on project-wide configuration:
 
 - `godot.project.settings.get` for input map or engine setting assumptions
 - `godot.project.resources.list` for reusable assets, scenes, or resources
+- `godot.offerings.list` as a coarse global health signal, not task-scoped availability proof
 - `godot.runtime.health.get` as a precondition before mutating, or when runtime state is suspect
+- `godot.project.is_running` with the intended `editor_session_id` before `godot.project.run`, `godot.project.stop`, or attach/recover decisions
+- `godot.runtime.session.get_active` to resolve the runtime `session_id` used by later runtime tools, but only with explicit `editor_session_id` and a returned-owner match check
+- `godot.runtime.await_snapshot` when runtime reads need a fresh snapshot instead of stale state
+- `godot.runtime.diagnose` as the first runtime bootstrap diagnostic when session recovery or snapshot arrival is blocked
+- `godot.runtime.log.get` for runtime verification and failure triage
+- `godot.runtime.screenshot.get` as an optional visual aid for manual verification
+- `godot.runtime.input.tap`, `godot.runtime.input.press`, and `godot.runtime.input.release` only for playable verification paths that genuinely require runtime interaction
 - `godot.project.run` to launch the game for manual user testing
 - `godot.project.stop` to stop the running game
 

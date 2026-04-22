@@ -26,7 +26,7 @@ This document is the canonical implementation status for the repository.
 - Runtime bridge snapshot store with stale + grace freshness policy
 - Runtime bridge internal tools (`godot.bridge.editor.sync`, `godot.bridge.editor.ping`, `godot.bridge.command.ack`)
 - Runtime command broker with dispatch/ack/timeout observability metrics
-- Runtime-backed read tools (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`)
+- Editor-backed/runtime-backed read tools (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`)
 - Runtime mutating command bridge for project/scene/node/script tools
 - Session-scoped mutating capability gate (`initialize.params.capabilities.godot.mutating=true`)
 - Split-session editor owner resolution for editor-backed/session-discovery tools (`godot.editor.state.get`, `godot.project.is_running`, `godot.runtime.session.get_active`, `godot.project.run`, `godot.project.stop`, `godot.editor.scene.apply`)
