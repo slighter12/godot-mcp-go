@@ -1,4 +1,4 @@
-# Development Guide (v1)
+# Development Guide (0.3.0)
 
 This document is the canonical implementation status for the repository.
 
@@ -14,9 +14,9 @@ This document is the canonical implementation status for the repository.
 ### Completed
 
 - Project setup and module layout
-- MCP initialization with strict protocol validation (`2025-11-25` only)
+- MCP 2026-07-28 request metadata and strict version validation
 - Dual transport support (`stdio`, `streamable_http`)
-- Session lifecycle gate (`initialize` -> `notifications/initialized` -> regular methods), protocol header validation, SSE transport lifecycle
+- Stateless HTTP routing with method/name/version headers, request-scoped progress SSE, and `subscriptions/listen`
 - Tool manager and canonical `godot.*` name binding
 - Layered server boundary:
   - `internal/protocol` for MCP frame/version validation
@@ -28,7 +28,7 @@ This document is the canonical implementation status for the repository.
 - Runtime command broker with dispatch/ack/timeout observability metrics
 - Editor-backed/runtime-backed read tools (`godot.editor.state.get`, `godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`)
 - Runtime mutating command bridge for project/scene/node/script tools
-- Session-scoped mutating capability gate (`initialize.params.capabilities.godot.mutating=true`)
+- Per-request mutating capability gate (`_meta` Godot extension `mutating=true`)
 - Split-session editor owner resolution for editor-backed/session-discovery tools (`godot.editor.state.get`, `godot.project.is_running`, `godot.runtime.session.get_active`, `godot.project.run`, `godot.project.stop`, `godot.editor.scene.apply`)
 - Runtime run/attach resilience: `godot.project.run` preserves game session mapping when first snapshot await times out, allowing late runtime register recovery
 - Runtime run attach token consistency: when attach remaps to an existing game session id, server preserves effective launch token (ack token first, existing token fallback) so runtime register validation remains stable
@@ -48,7 +48,7 @@ This document is the canonical implementation status for the repository.
   - `runtime_snapshot_collector.gd`
   - `runtime_command_dispatcher.gd`
   - `tool_catalog.gd`
-- CI and manual verification scripts (Go tests, HTTP smoke/runtime-log smoke/ping/delete/session isolation, Inspector docker)
+- CI and manual verification scripts (Go tests, modern HTTP smoke/runtime-log smoke, unsupported ping, removed DELETE, explicit editor routing, Inspector docker)
 
 ### Release State
 
@@ -58,24 +58,25 @@ This document is the canonical implementation status for the repository.
 ## Verification Gate
 
 1. `go test ./...`
-2. `make test-http-smoke`
-3. `make test-http-runtime-log-smoke`
-4. `make test-http-ping`
-5. `make test-http-delete`
-6. `make test-http-session-isolation`
-7. `make test-http-protocol-header`
-8. `make test-http-allow-list-runtime-bridge`
-9. `make test-lifecycle-initialized-id`
-10. `make test-inspector-docker`
-11. `make test-inspector-header-negative`
+2. `go test ./transport/http -run Modern`
+3. `make test-http-smoke`
+4. `make test-http-runtime-log-smoke`
+5. `make test-http-ping`
+6. `make test-http-delete`
+7. `make test-http-session-isolation`
+8. `make test-http-protocol-header`
+9. `make test-http-allow-list-runtime-bridge`
+10. `make test-lifecycle-initialized-id`
+11. `make test-inspector-docker`
+12. `make test-inspector-header-negative`
 
 ## Acceptance Failure Criteria
 
-- Any JSON-RPC lifecycle deviation from `initialize -> notifications/initialized -> regular methods`
-- Any transport mismatch between stdio and streamable HTTP for lifecycle error semantics
+- Any acceptance of the removed lifecycle or `MCP-Session-Id` transport
+- Any transport mismatch between stdio and Streamable HTTP for request metadata/result semantics
 - Any permission regression where non-internal tools bypass `permission_mode`
 - Any runtime bridge regression where `godot.bridge.editor.sync`, `godot.bridge.editor.ping`, or `godot.bridge.command.ack` is blocked by `read_only` / `allow_list`
-- Any protocol version acceptance outside `2025-11-25`
+- Any protocol version acceptance outside `2026-07-28`
 
 ## Update Rules
 

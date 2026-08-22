@@ -217,8 +217,8 @@ func (t *GetEditorStateTool) Execute(args json.RawMessage) ([]byte, error) {
 
 	ctx := tooltypes.ExtractMCPContext(arguments)
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Editor state requires an initialized MCP HTTP session", t.Name(), "editor_session_missing", map[string]any{
-			"reason": "session_not_initialized",
+		return nil, tooltypes.NewRuntimeNotAvailableError("Editor state requires an explicit editor session context", t.Name(), "editor_session_missing", map[string]any{
+			"reason": "editor_session_missing",
 		})
 	}
 
@@ -267,7 +267,7 @@ func (t *IsProjectRunningTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	ctx := tooltypes.ExtractMCPContext(arguments)
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Project running check requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Project running check requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	querySessionID := ""
 	if raw, ok := arguments["session_id"]; ok {
@@ -343,7 +343,7 @@ func (t *RunProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	ctx := tooltypes.ExtractMCPContext(arguments)
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Project run requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Project run requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 
 	runSessionID := strings.TrimSpace(extractString(arguments["session_id"]))
@@ -464,7 +464,7 @@ func (t *StopProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	ctx := tooltypes.ExtractMCPContext(arguments)
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Project stop requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Project stop requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	targetSessionID := strings.TrimSpace(extractString(arguments["session_id"]))
 	if targetSessionID == "" {
@@ -526,7 +526,7 @@ func dispatchProjectRuntimeCommand(rawArgs json.RawMessage, commandName string) 
 		RawArgs:                  rawArgs,
 		CommandName:              commandName,
 		Timeout:                  projectCommandTimeout,
-		SessionRequiredMessage:   "Project execution requires an initialized MCP HTTP session",
+		SessionRequiredMessage:   "Project execution requires an explicit editor session context",
 		BridgeUnavailableMessage: "Project execution bridge is unavailable",
 	})
 }

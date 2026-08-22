@@ -36,6 +36,8 @@ func TestDispatchRuntimeCommand_EmitsProgressWhenEnabled(t *testing.T) {
 
 	rawArgs, err := json.Marshal(map[string]any{
 		"_mcp": map[string]any{
+			"request_id":                  "client-1",
+			"progress_route_key":          "progress-1",
 			"session_id":                  "session-1",
 			"session_initialized":         true,
 			"emit_progress_notifications": true,
@@ -67,6 +69,12 @@ func TestDispatchRuntimeCommand_EmitsProgressWhenEnabled(t *testing.T) {
 	}
 	if events[1].Progress != 1.0 {
 		t.Fatalf("expected second event progress 1.0, got %v", events[1].Progress)
+	}
+	if events[0].RequestID != "client-1" || events[1].RequestID != "client-1" {
+		t.Fatalf("expected client request id in progress events, got %#v", events)
+	}
+	if events[0].ProgressRouteKey != "progress-1" || events[1].ProgressRouteKey != "progress-1" {
+		t.Fatalf("expected progress route key in progress events, got %#v", events)
 	}
 }
 
@@ -198,9 +206,9 @@ func TestDispatchRuntimeCommand_FallsBackToRuntimeCommandSessionID(t *testing.T)
 
 	rawArgs, err := json.Marshal(map[string]any{
 		"_mcp": map[string]any{
-			"session_id":                  "ai-session",
-			"session_initialized":         true,
-			"runtime_command_session_id":  "editor-1",
+			"session_id":                 "ai-session",
+			"session_initialized":        true,
+			"runtime_command_session_id": "editor-1",
 		},
 	})
 	if err != nil {

@@ -1,6 +1,6 @@
 # v1 Runtime Command Protocol
 
-This document defines the runtime command bridge contract between Go server and the Godot runtime companion. The runtime companion autoload is managed automatically by the main `Godot MCP` plugin; there is no separate `godot_mcp_runtime` plugin to enable.
+This document defines the runtime command bridge contract between Go server and the Godot runtime companion. The runtime companion autoload is managed automatically by the main `Godot MCP` plugin; there is no separate `godot_mcp_runtime` plugin to enable. MCP requests use protocol `2026-07-28` and carry their client capabilities in `params._meta`.
 
 Tool names in this protocol are strictly canonical v1 names.
 
@@ -17,8 +17,10 @@ Payload:
   "jsonrpc": "2.0",
   "method": "notifications/godot/command",
   "params": {
+    "schema_version": "1",
     "command_id": "cmd_...",
     "name": "godot.scene.create",
+    "editor_session_id": "editor_...",
     "arguments": {
       "path": "res://scenes/Main.tscn"
     }
@@ -39,7 +41,7 @@ Payload:
   "command_id": "cmd_...",
   "success": true,
   "result": {
-    "schema_version": "v1"
+    "schema_version": "1"
   },
   "retryable": false
 }
@@ -90,14 +92,14 @@ Common bridge reasons:
 
 - `command_transport_unavailable`
 - `command_ack_timeout`
-- `session_not_initialized`
+- `editor_session_missing`
 - `unknown_or_expired_command`
 
 These are surfaced as semantic `kind=not_available` at tool boundary.
 
 ## Runtime Progress Notification
 
-When `tool_controls.emit_progress_notifications=true`, runtime command tools may emit best-effort SSE notifications:
+When `tool_controls.emit_progress_notifications=true`, runtime command tools may emit best-effort progress notifications. For HTTP, they are written to the SSE response belonging to the same `tools/call` request; for stdio, they are written to the response channel:
 
 - Method: `notifications/progress`
 - Payload:
@@ -121,15 +123,11 @@ Notes:
 - Notification delivery is best-effort and transport-dependent.
 - Missing progress notifications must not be treated as command failure by clients.
 
-## Session Scope
+## Routing Scope
 
-All bridge operations are bound to initialized MCP HTTP sessions.
-Acks with mismatched session/command are rejected.
+Bridge operations are routed by the explicit Godot `editor_session_id` extension value and, for runtime game operations, the explicit game `session_id` argument. These are application identifiers, not MCP protocol session identifiers. Acks with mismatched editor/game ownership or command identifiers are rejected.
 
-Lifecycle requirements:
-
-1. `initialize` must succeed.
-2. `notifications/initialized` must be delivered before bridge tools are callable.
+Every modern `tools/call` must include the standard `_meta` protocol version and client capabilities. Mutating bridge calls must advertise `com.slighter12/godot-mcp` with `mutating=true` unless the trusted-client fallback is enabled.
 
 ## Safety Expectations
 

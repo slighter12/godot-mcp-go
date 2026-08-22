@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/slighter12/godot-mcp-go/mcp"
 )
 
 const defaultStaleAfter = 10 * time.Second
@@ -361,10 +363,10 @@ func HealthSnapshot(now time.Time) map[string]any {
 		"game_sessions":  sessionHealth,
 		"runtime_logs":   logHealth,
 		"command_broker": commandMetrics,
-		"mcp_sessions":   GetSessionCounts(),
-	}
-	if summaries := GetSessionSummaries(); summaries != nil {
-		result["mcp_session_details"] = summaries
+		"transport": map[string]any{
+			"protocol_version": mcp.ProtocolVersion,
+			"session_model":    "stateless",
+		},
 	}
 	return result
 }

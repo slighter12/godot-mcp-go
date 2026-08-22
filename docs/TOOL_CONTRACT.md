@@ -1,4 +1,4 @@
-# v1 Tool Contract
+# 2026-07-28 Tool Contract
 
 This document defines the public tool contract for `godot-mcp-go`.
 
@@ -99,26 +99,25 @@ Canonical tool names:
 
 Canonical names are strictly required. Legacy aliases are rejected with `tool not found`.
 
-## Session Lifecycle Gate
+## Protocol Envelope
 
-For both transports, tool execution requires lifecycle completion:
+For both transports, every request carries `params._meta` with:
 
-1. `initialize` succeeds with `protocolVersion=2025-11-25`
-2. `initialized` or `notifications/initialized` is received
-3. regular methods are accepted
+- `io.modelcontextprotocol/protocolVersion: "2026-07-28"`
+- `io.modelcontextprotocol/clientCapabilities`
+- recommended `io.modelcontextprotocol/clientInfo`
+- optional `progressToken` for `tools/call`
 
-Before lifecycle completion, regular requests return JSON-RPC `invalid_request` with message `Session is not initialized`.
-If `initialized`/`notifications/initialized` is sent before successful `initialize`, server returns JSON-RPC `invalid_request`.
+Streamable HTTP additionally requires `MCP-Protocol-Version`, `Mcp-Method`, and `Accept: application/json, text/event-stream`. `Mcp-Name` must match the tool name, resource URI, or prompt name for named operations. The removed `initialize`, `initialized`, `notifications/initialized`, `MCP-Session-Id`, HTTP `GET /mcp`, and HTTP `DELETE /mcp` forms are not part of the public transport.
+
+Modern successful tool results contain `resultType`, `content`, `structuredContent` when a structured value exists, `isError`, and namespaced `_meta`. Legacy `type`, `tool`, and `result` fields are not emitted by public modern routes. List/discover results also include `ttlMs` and `cacheScope`.
 
 ## Mutating Capability Gate
 
-Mutating tools require session-scoped capability negotiation:
+Mutating tools require per-request capability negotiation:
 
-- Client must send `initialize.params.capabilities.godot.mutating=true`
-- Without this capability, mutating tools return semantic error:
-  - `isError=true`
-  - `error.kind=not_supported`
-  - `error.reason=mutating_capability_required`
+- Client must send `_meta.io.modelcontextprotocol/clientCapabilities.extensions.com.slighter12/godot-mcp.mutating=true`
+- Without this capability, modern mutating calls return JSON-RPC `-32021` with `requiredCapabilities` and `tool` data.
 
 Mutating tools covered by this gate:
 
@@ -137,8 +136,8 @@ Dual MCP sessions are expected:
 
 Scope rules:
 
-- Caller session scoped:
-  - lifecycle gate
+- Request scoped:
+  - protocol metadata and client capabilities
   - mutating capability negotiation
 - Editor-owner sourced:
   - `godot.editor.state.get`
@@ -151,16 +150,16 @@ Scope rules:
     3. latest fresh editor snapshot session
   - when no healthy editor snapshot exists, tools return semantic `not_available` with runtime snapshot reason.
 - Runtime game session scoped:
-  - runtime tools still bind to explicit game `session_id` (except lifecycle/session discovery).
+  - runtime tools still bind to explicit game `session_id` (except session-discovery calls).
 
 ## Transport Support Matrix
 
 - `streamable_http`
   - Supports all read and mutating tools.
-  - Mutating tools require initialized caller session + caller mutating capability + active runtime bridge.
+  - Mutating tools require the per-request mutating capability + active runtime bridge.
 - `stdio`
-  - Supports non-runtime and read-oriented operations.
-  - Runtime mutating command bridge paths are unavailable.
+  - Uses the same modern request envelope and result shapes.
+  - Runtime command paths depend on the configured stdio tool set and active bridge state.
 
 ## Error Semantics
 
@@ -171,7 +170,19 @@ Tool result errors use semantic kinds in `result.error.kind`:
 - `not_available`
 - `execution_failed`
 
-## Mutating Tool Result Envelope
+## Tool Result Envelope
+
+Modern `tools/call` results use:
+
+- `resultType="complete"`
+- `_meta.io.modelcontextprotocol/serverInfo`
+- `content` text/content blocks
+- `structuredContent` for the typed tool payload
+- `isError` for semantic/execution failures
+
+Semantic failures retain `structuredContent.kind` and any tool-specific error data. JSON-RPC errors are reserved for invalid requests, missing capabilities, unknown tools, and transport/protocol failures.
+
+## Mutating Tool Payload
 
 Mutating tool responses include:
 
@@ -451,7 +462,7 @@ Output:
 
 - `timestamp`
 - `game_session`
-- `mcp_sessions`
+- `transport`
 - `editor_store`
 - `pipeline_checklist`
 
@@ -466,11 +477,10 @@ Output:
 - optional `launch_token_present`
 - optional `started_at`
 
-`mcp_sessions` fields:
+`transport` fields:
 
-- `total`
-- `fully_initialized`
-- `with_transport`
+- `protocol_version`
+- `session_model` (`stateless`)
 
 `editor_store` fields:
 

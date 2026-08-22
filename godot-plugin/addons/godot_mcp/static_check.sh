@@ -39,4 +39,17 @@ if ! rg -n 'return "%sZ" % Time.get_datetime_string_from_system\(true\)' "$ROOT_
   exit 1
 fi
 
+if ! rg -n 'const DEFAULT_PROTOCOL_VERSION := "2026-07-28"' "$ROOT_DIR/mcp_server.gd" >/dev/null; then
+  echo "runtime addon static check failed: MCP client is not pinned to protocol 2026-07-28"
+  exit 1
+fi
+
+if rg -n '2025-11-25|MCP-Session-Id|mcp_client\.get\("session_id"\)' \
+  "$ROOT_DIR/mcp_server.gd" \
+  "$ROOT_DIR/godot_mcp.gd" \
+  "$ROOT_DIR/runtime_companion.gd" >/dev/null; then
+  echo "runtime addon static check failed: found removed protocol/session identifiers in the modern client"
+  exit 1
+fi
+
 echo "runtime addon static check passed"

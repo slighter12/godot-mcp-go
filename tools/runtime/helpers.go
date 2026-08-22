@@ -26,10 +26,10 @@ func decodeArgs(args json.RawMessage) (map[string]any, tooltypes.MCPContext, err
 func requireInitializedContext(ctx tooltypes.MCPContext, toolName string) *tooltypes.SemanticError {
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
 		return tooltypes.NewRuntimeNotAvailableError(
-			"Runtime tool requires an initialized MCP HTTP session",
+			"Runtime tool requires an explicit editor session context",
 			toolName,
 			"editor_session_missing",
-			map[string]any{"reason": "session_not_initialized"},
+			map[string]any{"reason": "editor_session_missing"},
 		)
 	}
 	return nil

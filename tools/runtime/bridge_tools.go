@@ -27,7 +27,8 @@ func (t *BridgeEditorSyncTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
 		Properties: map[string]any{
-			"snapshot": map[string]any{"type": "object"},
+			"snapshot":          map[string]any{"type": "object"},
+			"editor_session_id": map[string]any{"type": "string"},
 		},
 		Required: []string{"snapshot"},
 		Title:    "Bridge Editor Sync",
@@ -35,8 +36,9 @@ func (t *BridgeEditorSyncTool) InputSchema() mcp.InputSchema {
 }
 func (t *BridgeEditorSyncTool) Execute(args json.RawMessage) ([]byte, error) {
 	var payload struct {
-		Snapshot runtimebridge.EditorSnapshot `json:"snapshot"`
-		Context  struct {
+		Snapshot        runtimebridge.EditorSnapshot `json:"snapshot"`
+		EditorSessionID string                       `json:"editor_session_id"`
+		Context         struct {
 			SessionID          string `json:"session_id"`
 			SessionInitialized bool   `json:"session_initialized"`
 		} `json:"_mcp"`
@@ -44,16 +46,20 @@ func (t *BridgeEditorSyncTool) Execute(args json.RawMessage) ([]byte, error) {
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Editor sync requires initialized session", t.Name(), "editor_session_missing", nil)
+	editorSessionID := strings.TrimSpace(payload.EditorSessionID)
+	if editorSessionID == "" {
+		editorSessionID = strings.TrimSpace(payload.Context.SessionID)
+	}
+	if editorSessionID == "" || !payload.Context.SessionInitialized {
+		return nil, tooltypes.NewRuntimeNotAvailableError("Editor sync requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 
 	now := time.Now().UTC()
-	runtimebridge.DefaultEditorStore().Upsert(strings.TrimSpace(payload.Context.SessionID), payload.Snapshot, now)
+	runtimebridge.DefaultEditorStore().Upsert(editorSessionID, payload.Snapshot, now)
 	result := map[string]any{
 		"source":     "editor",
 		"synced":     true,
-		"session_id": strings.TrimSpace(payload.Context.SessionID),
+		"session_id": editorSessionID,
 		"updated_at": now.Format(time.RFC3339Nano),
 	}
 	return json.Marshal(result)
@@ -72,11 +78,12 @@ func (t *BridgeEditorPingTool) Annotations() *mcp.ToolAnnotations {
 	}
 }
 func (t *BridgeEditorPingTool) InputSchema() mcp.InputSchema {
-	return mcp.InputSchema{Type: "object", Properties: map[string]any{}, Required: []string{}, Title: "Bridge Editor Ping"}
+	return mcp.InputSchema{Type: "object", Properties: map[string]any{"editor_session_id": map[string]any{"type": "string"}}, Required: []string{}, Title: "Bridge Editor Ping"}
 }
 func (t *BridgeEditorPingTool) Execute(args json.RawMessage) ([]byte, error) {
 	var payload struct {
-		Context struct {
+		EditorSessionID string `json:"editor_session_id"`
+		Context         struct {
 			SessionID          string `json:"session_id"`
 			SessionInitialized bool   `json:"session_initialized"`
 		} `json:"_mcp"`
@@ -84,17 +91,21 @@ func (t *BridgeEditorPingTool) Execute(args json.RawMessage) ([]byte, error) {
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Editor ping requires initialized session", t.Name(), "editor_session_missing", nil)
+	editorSessionID := strings.TrimSpace(payload.EditorSessionID)
+	if editorSessionID == "" {
+		editorSessionID = strings.TrimSpace(payload.Context.SessionID)
+	}
+	if editorSessionID == "" || !payload.Context.SessionInitialized {
+		return nil, tooltypes.NewRuntimeNotAvailableError("Editor ping requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	now := time.Now().UTC()
-	if touched := runtimebridge.DefaultEditorStore().Touch(strings.TrimSpace(payload.Context.SessionID), now); !touched {
+	if touched := runtimebridge.DefaultEditorStore().Touch(editorSessionID, now); !touched {
 		return nil, tooltypes.NewRuntimeNotAvailableError("Editor snapshot is missing", t.Name(), "runtime_snapshot_missing", nil)
 	}
 	return json.Marshal(map[string]any{
 		"source":     "editor",
 		"pong":       true,
-		"session_id": strings.TrimSpace(payload.Context.SessionID),
+		"session_id": editorSessionID,
 		"updated_at": now.Format(time.RFC3339Nano),
 	})
 }
@@ -150,7 +161,7 @@ func (t *BridgeRuntimeRegisterTool) Execute(args json.RawMessage) ([]byte, error
 	)
 	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
 		log.Printf("godot-mcp runtime register rejected: reason=editor_session_missing session_id=%q runtime_session_id=%q", strings.TrimSpace(payload.SessionID), strings.TrimSpace(payload.Context.SessionID))
-		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime register requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime register requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	sessionID := strings.TrimSpace(payload.SessionID)
 	if sessionID == "" {
@@ -244,7 +255,7 @@ func (t *BridgeRuntimeSnapshotPushTool) Execute(args json.RawMessage) ([]byte, e
 	)
 	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
 		log.Printf("godot-mcp runtime snapshot rejected: reason=editor_session_missing session_id=%q runtime_session_id=%q", strings.TrimSpace(payload.SessionID), strings.TrimSpace(payload.Context.SessionID))
-		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime snapshot push requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime snapshot push requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	sessionID := strings.TrimSpace(payload.SessionID)
 	if sessionID == "" {
@@ -314,7 +325,7 @@ func (t *BridgeRuntimeLogPushTool) Execute(args json.RawMessage) ([]byte, error)
 		return nil, err
 	}
 	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime log push requires initialized session", t.Name(), "editor_session_missing", nil)
+		return nil, tooltypes.NewRuntimeNotAvailableError("Runtime log push requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	sessionID := strings.TrimSpace(payload.SessionID)
 	if sessionID == "" {
@@ -349,13 +360,14 @@ func (t *BridgeCommandAckTool) InputSchema() mcp.InputSchema {
 	return mcp.InputSchema{
 		Type: "object",
 		Properties: map[string]any{
-			"command_id":     map[string]any{"type": "string"},
-			"success":        map[string]any{"type": "boolean"},
-			"result":         map[string]any{"type": "object"},
-			"error":          map[string]any{"type": "string"},
-			"reason":         map[string]any{"type": "string"},
-			"retryable":      map[string]any{"type": "boolean"},
-			"schema_version": map[string]any{"type": "string"},
+			"command_id":        map[string]any{"type": "string"},
+			"editor_session_id": map[string]any{"type": "string"},
+			"success":           map[string]any{"type": "boolean"},
+			"result":            map[string]any{"type": "object"},
+			"error":             map[string]any{"type": "string"},
+			"reason":            map[string]any{"type": "string"},
+			"retryable":         map[string]any{"type": "boolean"},
+			"schema_version":    map[string]any{"type": "string"},
 		},
 		Required: []string{"command_id"},
 		Title:    "Bridge Command Ack",
@@ -363,14 +375,15 @@ func (t *BridgeCommandAckTool) InputSchema() mcp.InputSchema {
 }
 func (t *BridgeCommandAckTool) Execute(args json.RawMessage) ([]byte, error) {
 	var payload struct {
-		CommandID string         `json:"command_id"`
-		Success   *bool          `json:"success"`
-		Result    map[string]any `json:"result"`
-		Error     string         `json:"error"`
-		Reason    string         `json:"reason"`
-		Retryable *bool          `json:"retryable"`
-		SchemaVer string         `json:"schema_version"`
-		Context   struct {
+		CommandID       string         `json:"command_id"`
+		EditorSessionID string         `json:"editor_session_id"`
+		Success         *bool          `json:"success"`
+		Result          map[string]any `json:"result"`
+		Error           string         `json:"error"`
+		Reason          string         `json:"reason"`
+		Retryable       *bool          `json:"retryable"`
+		SchemaVer       string         `json:"schema_version"`
+		Context         struct {
 			SessionID          string `json:"session_id"`
 			SessionInitialized bool   `json:"session_initialized"`
 		} `json:"_mcp"`
@@ -378,8 +391,12 @@ func (t *BridgeCommandAckTool) Execute(args json.RawMessage) ([]byte, error) {
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(payload.Context.SessionID) == "" || !payload.Context.SessionInitialized {
-		return nil, tooltypes.NewRuntimeNotAvailableError("Command ack requires initialized session", t.Name(), "editor_session_missing", nil)
+	editorSessionID := strings.TrimSpace(payload.EditorSessionID)
+	if editorSessionID == "" {
+		editorSessionID = strings.TrimSpace(payload.Context.SessionID)
+	}
+	if editorSessionID == "" || !payload.Context.SessionInitialized {
+		return nil, tooltypes.NewRuntimeNotAvailableError("Command ack requires an explicit editor session context", t.Name(), "editor_session_missing", nil)
 	}
 	commandID := strings.TrimSpace(payload.CommandID)
 	if commandID == "" {
@@ -409,7 +426,7 @@ func (t *BridgeCommandAckTool) Execute(args json.RawMessage) ([]byte, error) {
 		Error:     strings.TrimSpace(payload.Error),
 		AckedAt:   time.Now().UTC(),
 	}
-	if ok := runtimebridge.DefaultCommandBroker().Ack(strings.TrimSpace(payload.Context.SessionID), ack); !ok {
+	if ok := runtimebridge.DefaultCommandBroker().Ack(editorSessionID, ack); !ok {
 		return nil, tooltypes.NewRuntimeNotAvailableError("Command acknowledgement rejected", t.Name(), "command_timeout", map[string]any{
 			"command_id": commandID,
 			"reason":     "unknown_or_expired_command",

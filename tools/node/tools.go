@@ -82,7 +82,7 @@ func dispatchNodeRuntimeCommand(rawArgs json.RawMessage, commandName string, val
 		RawArgs:                  rawArgs,
 		CommandName:              commandName,
 		Timeout:                  nodeCommandTimeout,
-		SessionRequiredMessage:   "Node commands require an initialized MCP HTTP session",
+		SessionRequiredMessage:   "Node commands require an explicit editor session context",
 		BridgeUnavailableMessage: "Node runtime bridge is unavailable",
 		InvalidJSONError: func(err error) error {
 			return newNodeInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})

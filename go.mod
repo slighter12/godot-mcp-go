@@ -1,6 +1,6 @@
 module github.com/slighter12/godot-mcp-go
 
-go 1.26
+go 1.27
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0

@@ -198,13 +198,13 @@ func _on_tool_result(tool_name: String, result: Dictionary) -> void:
 		is_registered = true
 		if snapshot_timer != null and snapshot_timer.is_stopped():
 			snapshot_timer.start()
-		print("Godot MCP Runtime: runtime register accepted - session_id=", game_session_id, " editor_session_id=", editor_session_id, " runtime_session_id=", str(mcp_client.get("session_id")))
+		print("Godot MCP Runtime: runtime register accepted - session_id=", game_session_id, " editor_session_id=", editor_session_id, " runtime_session_id=", game_session_id)
 		_append_log("info", "runtime session registered", "runtime_companion", {
 			"game_session_id": game_session_id,
 			"editor_session_id": editor_session_id,
 			"handshake_path": active_handshake_path
 		})
-		print("Godot MCP Runtime: sending first runtime snapshot - game_session_id=", game_session_id, " runtime_session_id=", str(mcp_client.get("session_id")))
+		print("Godot MCP Runtime: sending first runtime snapshot - game_session_id=", game_session_id, " runtime_session_id=", game_session_id)
 		if not _push_runtime_snapshot(true):
 			_append_diagnostic_failure("runtime snapshot push skipped after register", "runtime_companion", "snapshot_push_unavailable")
 		return
@@ -592,13 +592,13 @@ func _ack_runtime_command(command_id: String, payload: Dictionary) -> void:
 	if result.has("retryable"):
 		arguments["retryable"] = bool(result.get("retryable", false))
 	if result.has("schema_version"):
-		arguments["schema_version"] = str(result.get("schema_version", "v1")).strip_edges()
+		arguments["schema_version"] = str(result.get("schema_version", "1")).strip_edges()
 
 	mcp_interface.call_tool(TOOL_COMMAND_ACK, arguments)
 
 func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
 	var result: Dictionary = {
-		"schema_version": "v1"
+		"schema_version": "1"
 	}
 	for key in data.keys():
 		result[key] = data[key]
@@ -619,7 +619,7 @@ func _runtime_failure_result(reason: String, error_message: String) -> Dictionar
 		"result": {
 			"reason": trimmed_reason,
 			"retryable": false,
-			"schema_version": "v1"
+		"schema_version": "1"
 		},
 		"error": trimmed_error
 	}

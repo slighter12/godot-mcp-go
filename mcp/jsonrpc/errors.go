@@ -15,6 +15,10 @@ const (
 
 	// Server error codes (-32000 to -32099)
 	ErrServerError ErrorCode = -32000 // Reserved for implementation-defined server-errors
+
+	ErrHeaderMismatch                  ErrorCode = -32020
+	ErrMissingRequiredClientCapability ErrorCode = -32021
+	ErrUnsupportedProtocolVersion      ErrorCode = -32022
 )
 
 // JSONRPCError represents a JSON-RPC error

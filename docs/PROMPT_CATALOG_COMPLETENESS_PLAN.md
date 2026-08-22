@@ -54,6 +54,7 @@ This document owns prompt catalog runtime contracts only.
 Output:
 
 - `prompts`: `{name, description, title?, arguments?}`
+- `resultType: "complete"`, `ttlMs`, `cacheScope`, and `_meta.io.modelcontextprotocol/serverInfo`
 - optional `nextCursor`
 
 Error semantics:
@@ -73,6 +74,7 @@ Output:
 - `name`
 - `description`
 - `messages`
+- `resultType: "complete"`, `ttlMs`, `cacheScope`, and `_meta.io.modelcontextprotocol/serverInfo`
 
 Rendering modes:
 
@@ -100,15 +102,15 @@ Both modes share the same reload pipeline and list-changed emission logic.
 | kind | JSON-RPC code | Meaning |
 | --- | --- | --- |
 | `not_supported` | `-32601` | Feature disabled or blocked by runtime policy |
-| `not_available` | `-32000` | Runtime dependency/data not ready |
+| `not_available` | `-32603` | Runtime dependency/data not ready |
 | `invalid_params` | `-32602` | Request payload invalid for contract |
-| `execution_failed` | `-32000` | Runtime path failed after acceptance |
+| `execution_failed` | `-32603` | Runtime path failed after acceptance |
 
 All semantic errors include `error.data.kind`.
 
 ## Notifications and Capabilities
 
-- Streamable HTTP target protocol: `2025-11-25`
+- Streamable HTTP target protocol: `2026-07-28`
 - Prompt reload entrypoint: `godot.prompts.reload`
 - `notifications/prompts/list_changed` emits only when visible list metadata changes
 - stdio transport does not emit prompt list changed notifications

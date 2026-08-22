@@ -28,7 +28,7 @@
 See [`SKILLS_PUBLISHING.md`](SKILLS_PUBLISHING.md) for the versioning
 strategy, Git tag format, and pinned install guidance.
 
-## Upgrade (Current pre-1.0 line)
+## Upgrade (0.3.0)
 
 Current line introduces the following compatibility changes:
 
@@ -36,30 +36,34 @@ Current line introduces the following compatibility changes:
    - If you previously enabled `Godot MCP Runtime Companion` as a separate plugin, disable it in `Project > Project Settings > Plugins`
    - The main `Godot MCP` plugin now manages the runtime companion autoload automatically
    - Runtime companion scripts are now inside `addons/godot_mcp/` — no separate directory needed
-1. Mutating tools require capability negotiation:
-   - Send `initialize.params.capabilities.godot.mutating=true`
-2. `godot.script.create` supports `replace` (default `false`)
+1. MCP now uses the strict `2026-07-28` request envelope:
+   - Every request carries `params._meta.io.modelcontextprotocol/protocolVersion` and `clientCapabilities`
+   - HTTP also requires `MCP-Protocol-Version`, `Mcp-Method`, and `Accept: application/json, text/event-stream`
+   - `Mcp-Name` is required for named tool, resource, and prompt operations
+   - Base64 sentinel values in `Mcp-Name` (`=?base64?...?=`) are decoded before comparison
+2. The removed `initialize`, `initialized`, `notifications/initialized`, and `MCP-Session-Id` flow must be deleted from clients.
+   - HTTP `GET /mcp` and `DELETE /mcp` now return `405`
+   - Use `server/discover` for capability discovery and `subscriptions/listen` for long-lived events
+3. Mutating tools require a per-request Godot extension capability:
+   - Set `_meta` client capability `com.slighter12/godot-mcp.mutating=true`
+   - Missing capability returns JSON-RPC `-32021`; the explicit trusted-client fallback remains available
+   - Unknown methods return HTTP `404`; missing required capabilities return HTTP `400`
+4. `godot.script.create` supports `replace` (default `false`)
    - Existing file + `replace=false` returns conflict semantic reason
-3. Prompt rendering mode adds `advanced` with governance enforcement
-4. Runtime observability is exposed through:
+5. Prompt rendering mode adds `advanced` with governance enforcement
+6. Runtime observability is exposed through:
    - tool: `godot.runtime.health.get`
    - resource: `godot://runtime/metrics`
-5. Project tools now return real paginated payloads:
+7. Project tools now return real paginated payloads:
    - `godot.project.settings.get`
    - `godot.project.resources.list`
-6. Protocol compatibility is strict:
-   - HTTP requires `MCP-Protocol-Version: 2025-11-25`
-   - stdio requires `initialize.params.protocolVersion=2025-11-25`
 
 ## Transport Notes
 
-- Dual session model is expected:
-  - Godot IDE/plugin session can be different from AI/agent caller session
-  - this is not an error condition
+- The MCP transport is stateless. Godot editor ownership is application state carried by the explicit `editor_session_id` extension value.
 - Runtime mutating tools require:
   - `streamable_http`
-  - initialized caller session
-  - caller mutating capability negotiation
+  - per-request Godot extension mutating capability
   - active runtime bridge
 - Editor-backed tools resolve editor owner session by:
   1. optional `editor_session_id`
@@ -69,7 +73,7 @@ Current line introduces the following compatibility changes:
   - if no healthy editor snapshot exists, tool returns semantic `not_available`
 - `godot.project.run` keeps game session mapping when first snapshot await times out, so late runtime register can still attach.
 - `godot.project.run` attach/recover now preserves effective launch token when remapping to an already-running session id, preventing `godot.bridge.runtime.register` launch token mismatch on runtime side.
-- Compatibility fallback for clients that cannot send `capabilities.godot.mutating=true`:
+- Compatibility fallback for trusted clients that cannot send the Godot extension:
   - set `tool_controls.allow_mutating_without_capability=true`
   - use only for trusted local clients
 - Runtime tools no longer borrow the latest session implicitly:
@@ -79,8 +83,8 @@ Current line introduces the following compatibility changes:
   - fail closed unless the returned `editor_session_id` still matches the intended editor owner
   - call `godot.runtime.await_snapshot` when the next runtime read depends on fresh live state
   - pass only that verified `session_id` to runtime tools
-- `stdio` supports read/non-runtime operations and requires strict initialize protocol version.
-- Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`.
+- `stdio` and Streamable HTTP share the same request metadata and result envelopes; stdio has no lifecycle handshake.
+- Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`. HTTP keeps progress on that request's SSE response.
 
 ## Tool Controls
 
@@ -148,7 +152,7 @@ File-backed read tools (`godot.scene.list`, `godot.scene.read`, `godot.script.re
 
 If the server is started outside the target Godot project tree, set `GODOT_PROJECT_ROOT=/abs/path/to/project` before using file-backed reads.
 
-Scene mutating tools (`godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`) are runtime-backed operations and still require an initialized HTTP caller session, caller mutating capability negotiation, and a healthy runtime bridge. `godot.editor.scene.apply` also supports optional `editor_session_id` override for explicit editor owner routing.
+Scene mutating tools (`godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`) are runtime-backed operations and still require modern request metadata, the per-request mutating capability, and a healthy runtime bridge. `godot.editor.scene.apply` also supports optional `editor_session_id` override for explicit editor owner routing.
 
 ## Validation Checklist
 

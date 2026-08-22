@@ -5,58 +5,60 @@ GO_BIN="${GO:-go}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 SERVER_URL="${SERVER_URL:-http://${SERVER_HOST}:${SERVER_PORT}/mcp}"
-PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
+
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-modern-lib.sh"
 
 log_file="$(mktemp /tmp/godot-mcp-go-protocol-header.XXXXXX.log)"
-dup_headers="$(mktemp /tmp/godot-mcp-go-protocol-header.dup.headers.XXXXXX)"
-dup_body="$(mktemp /tmp/godot-mcp-go-protocol-header.dup.body.XXXXXX)"
-mixed_body="$(mktemp /tmp/godot-mcp-go-protocol-header.mixed.body.XXXXXX)"
-
+dup_body="$(mktemp /tmp/godot-mcp-go-protocol-header.dup.XXXXXX.body)"
+mixed_body="$(mktemp /tmp/godot-mcp-go-protocol-header.mixed.XXXXXX.body)"
 cleanup() {
   if [ -n "${server_pid:-}" ]; then
     kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" 2>/dev/null || true
   fi
-  rm -f "$log_file" "$dup_headers" "$dup_body" "$mixed_body"
+  rm -f "$log_file" "$dup_body" "$mixed_body"
 }
 trap cleanup EXIT
 
 "$GO_BIN" run main.go >"$log_file" 2>&1 &
 server_pid=$!
 
+ready=0
 for _ in $(seq 1 80); do
   if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 0.2
 done
+test "$ready" = 1
 
-status_dup="$(curl -sS -D "$dup_headers" -o "$dup_body" -w "%{http_code}" \
+payload="$(mcp_request header-test tools/list '{}' editor-http-header)"
+status_dup="$(curl -sS -o "$dup_body" -w "%{http_code}" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION, $PROTOCOL_VERSION" \
+  -H 'Mcp-Method: tools/list' \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-dup-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.2.0\"}}}")"
-test "$status_dup" = "200"
-
-session_dup="$(awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$dup_headers" | tail -n1)"
-test -n "$session_dup"
+  --data "$payload")"
+test "$status_dup" = 400
+case "$(tr -d '[:space:]' < "$dup_body")" in
+  *'"code":-32020'*) ;;
+  *) echo "expected duplicate protocol header rejection:"; cat "$dup_body"; exit 1 ;;
+esac
 
 status_mixed="$(curl -sS -o "$mixed_body" -w "%{http_code}" \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION, 2024-11-05" \
+  -H "MCP-Protocol-Version: $PROTOCOL_VERSION, 2025-11-25" \
+  -H 'Mcp-Method: tools/list' \
   -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-mixed-header\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"protocol-header\",\"version\":\"0.2.0\"}}}")"
-test "$status_mixed" = "400"
-
-compact_mixed="$(tr -d '[:space:]' < "$mixed_body")"
-case "$compact_mixed" in
-  *'"InvalidMCP-Protocol-Versionheader"'*) ;;
-  *)
-    echo "expected invalid protocol header error for mixed header values:"
-    cat "$mixed_body"
-    exit 1
-    ;;
+  --data "$payload")"
+test "$status_mixed" = 400
+case "$(tr -d '[:space:]' < "$mixed_body")" in
+  *'"code":-32020'*|*'"code":-32022'*) ;;
+  *) echo "expected mixed protocol header rejection:"; cat "$mixed_body"; exit 1 ;;
 esac
 
-echo "HTTP protocol header checks passed (duplicate accepted, mixed rejected)"
+echo "HTTP protocol header checks passed (duplicate/mixed values rejected)"

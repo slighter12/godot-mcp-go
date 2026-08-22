@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -16,7 +17,6 @@ import (
 	"github.com/slighter12/godot-mcp-go/config"
 	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
 	"github.com/slighter12/godot-mcp-go/logger"
-	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/tools"
@@ -26,12 +26,14 @@ import (
 )
 
 type Server struct {
-	registry       *mcp.Registry
-	promptCatalog  *promptcatalog.Registry
-	toolManager    *tools.Manager
-	sessionManager *SessionManager
-	config         *config.Config
-	echo           *echo.Echo
+	promptCatalog       *promptcatalog.Registry
+	toolManager         *tools.Manager
+	subscriptionManager *SubscriptionManager
+	config              *config.Config
+	echo                *echo.Echo
+	progressMu          sync.RWMutex
+	progressStreams     map[string]*progressStreamRecord
+	streamRouteSequence atomic.Uint64
 
 	promptCatalogReloadMu                   sync.Mutex
 	promptCatalogFileFingerprint            string
@@ -49,11 +51,11 @@ type Server struct {
 
 func NewServer(cfg *config.Config) *Server {
 	server := &Server{
-		registry:       mcp.NewRegistry(),
-		toolManager:    tools.NewManager(),
-		sessionManager: NewSessionManager(),
-		config:         cfg,
-		echo:           echo.New(),
+		toolManager:         tools.NewManager(),
+		subscriptionManager: NewSubscriptionManager(),
+		config:              cfg,
+		echo:                echo.New(),
+		progressStreams:     make(map[string]*progressStreamRecord),
 	}
 	runtimebridge.DefaultEditorStore().ConfigureFreshness(
 		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
@@ -63,10 +65,19 @@ func NewServer(cfg *config.Config) *Server {
 		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
 		time.Duration(cfg.RuntimeBridge.StaleGraceMS)*time.Millisecond,
 	)
-	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToSession)
-	runtimebridge.SetSessionInfoProvider(server.sessionManager)
+	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToEditor)
 	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
 	return server
+}
+
+// nextStreamRouteKey returns a server-owned key for an HTTP stream. Client
+// JSON-RPC ids are scoped to the client connection and must not be used as
+// keys in the server-wide progress or subscription maps.
+func (s *Server) nextStreamRouteKey(kind string) string {
+	if s == nil || strings.TrimSpace(kind) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s-%d", strings.TrimSpace(kind), s.streamRouteSequence.Add(1))
 }
 
 func (s *Server) Start() error {
@@ -87,17 +98,6 @@ func (s *Server) Start() error {
 		logger.Error("Failed to register runtime tools", "error", err)
 		return err
 	}
-	if err := s.registry.RegisterServer("default", s.toolManager.GetTools()); err != nil {
-		logger.Error("Failed to register default server", "error", err)
-		return err
-	}
-	// Mark default server as persistent so it's not cleaned up
-	if err := s.registry.SetPersistence("default", true); err != nil {
-		logger.Error("Failed to set default server persistence", "error", err)
-		return err
-	}
-	logger.Info("Default server registered successfully", "server_id", "default")
-	go s.startCleanupGoroutine()
 	s.setupEcho()
 	if useStdio {
 		return s.startStdioServer()
@@ -124,26 +124,17 @@ func (s *Server) setupEcho() {
 		AllowOriginFunc: func(origin string) (bool, error) {
 			return s.isAllowedOrigin(origin), nil
 		},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowMethods: []string{http.MethodPost, http.MethodOptions},
 		AllowHeaders: []string{
 			echo.HeaderOrigin,
 			echo.HeaderContentType,
 			echo.HeaderAccept,
-			"MCP-Session-Id",
 			"MCP-Protocol-Version",
-			"Last-Event-ID",
+			"Mcp-Method",
+			"Mcp-Name",
 		},
 	}))
 	RegisterRoutes(s.echo, s)
-}
-
-func (s *Server) startCleanupGoroutine() {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		s.registry.Cleanup(10 * time.Minute)
-		s.sessionManager.CleanupSessions(10 * time.Minute)
-	}
 }
 
 func (s *Server) startStdioServer() error {
@@ -152,6 +143,8 @@ func (s *Server) startStdioServer() error {
 	server.AttachPromptCatalog(s.promptCatalog)
 	server.AttachPromptRenderOptions(s.promptRenderOptions())
 	server.AttachToolCallOptions(s.toolCallOptions())
+	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
+	defer tooltypes.SetRuntimeCommandProgressNotifier(nil)
 	return server.Start()
 }
 
@@ -211,10 +204,6 @@ func (s *Server) isAllowedOrigin(origin string) bool {
 	return ok
 }
 
-func (s *Server) GetRegistry() *mcp.Registry {
-	return s.registry
-}
-
 func (s *Server) initializePromptCatalog() {
 	s.promptCatalog = promptcatalog.NewRegistry(s.config.PromptCatalog.Enabled)
 	if !s.promptCatalog.Enabled() {
@@ -253,9 +242,6 @@ func (s *Server) GetPromptCatalog() *promptcatalog.Registry {
 	return s.promptCatalog
 }
 
-func (s *Server) GetSessionManager() *SessionManager {
-	return s.sessionManager
-}
 func (s *Server) GetConfig() *config.Config {
 	return s.config
 }
@@ -291,48 +277,6 @@ func (s *Server) toolCallOptions() shared.ToolCallOptions {
 	}
 }
 
-func (s *Server) toolCallContext(sessionID string) shared.ToolCallContext {
-	callerSessionID := strings.TrimSpace(sessionID)
-	return shared.ToolCallContext{
-		SessionID:               callerSessionID,
-		RuntimeSessionID:        s.resolveRuntimeReadSessionID(callerSessionID),
-		RuntimeCommandSessionID: s.resolveRuntimeCommandSessionID(callerSessionID),
-		SessionInitialized:      s.sessionManager.IsInitialized(callerSessionID),
-		MutatingAllowed:         s.isMutatingAllowedForSession(callerSessionID),
-	}
-}
-
-func (s *Server) isMutatingAllowedForSession(sessionID string) bool {
-	if s == nil {
-		return false
-	}
-	if s.sessionManager.IsMutatingAllowed(sessionID) {
-		return true
-	}
-	return s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability
-}
-
-func (s *Server) resolveRuntimeReadSessionID(callerSessionID string) string {
-	return strings.TrimSpace(callerSessionID)
-}
-
-func (s *Server) resolveRuntimeCommandSessionID(callerSessionID string) string {
-	callerSessionID = strings.TrimSpace(callerSessionID)
-	now := time.Now().UTC()
-	// If the caller itself is a fresh editor session, use it directly.
-	if callerSessionID != "" {
-		if _, ok, _ := runtimebridge.DefaultEditorStore().FreshForSession(callerSessionID, now); ok {
-			return callerSessionID
-		}
-	}
-	// Otherwise, resolve the latest fresh editor session.
-	if stored, ok, _ := runtimebridge.DefaultEditorStore().LatestFresh(now); ok {
-		return strings.TrimSpace(stored.SessionID)
-	}
-	// Fall back to caller (will fail downstream with a clear error).
-	return callerSessionID
-}
-
 func (s *Server) SendRuntimeCommandProgressNotification(event tooltypes.RuntimeCommandProgressEvent) {
 	if s == nil || s.config == nil || !s.config.ToolControls.EmitProgressNotifications {
 		return
@@ -343,9 +287,61 @@ func (s *Server) SendRuntimeCommandProgressNotification(event tooltypes.RuntimeC
 	if !notifications.IsValidProgressToken(event.ProgressToken) {
 		return
 	}
-	_ = s.SendJSONRPCNotificationToSession(event.SessionID, map[string]any{
+	notification := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "notifications/progress",
 		"params":  notifications.ProgressParams(event.ProgressToken, event.Progress, event.Message),
-	})
+	}
+	progressRouteKey := strings.TrimSpace(event.ProgressRouteKey)
+	if progressRouteKey != "" {
+		if s.isCanceledProgressRequest(progressRouteKey) || s.sendRequestProgress(progressRouteKey, notification) {
+			return
+		}
+		// A non-empty route key belongs to a request-scoped HTTP progress
+		// stream. If that stream is gone, do not leak late progress to an
+		// editor subscription.
+		return
+	}
+	_ = s.SendJSONRPCNotificationToEditor(event.SessionID, notification)
+}
+
+// SendJSONRPCNotificationToEditor delivers an extension notification to the
+// subscription owned by an explicit Godot editor session handle.
+func (s *Server) SendJSONRPCNotificationToEditor(editorSessionID string, message map[string]any) bool {
+	if s == nil || s.subscriptionManager == nil {
+		return false
+	}
+	editorSessionID = strings.TrimSpace(editorSessionID)
+	if s.subscriptionManager.SendToEditor(editorSessionID, message) {
+		return true
+	}
+	return false
+}
+
+// Shutdown stops background prompt watchers, closes active subscriptions with
+// a terminal result, and shuts down the HTTP listener.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.stopPromptCatalogWatchers()
+	if s.subscriptionManager != nil {
+		s.subscriptionManager.CloseAll()
+	}
+	s.progressMu.Lock()
+	progressStreams := make([]*StreamableHTTPTransport, 0, len(s.progressStreams))
+	for routeKey, record := range s.progressStreams {
+		if record != nil && record.transport != nil {
+			progressStreams = append(progressStreams, record.transport)
+		}
+		delete(s.progressStreams, routeKey)
+	}
+	s.progressMu.Unlock()
+	for _, transport := range progressStreams {
+		_ = transport.Close()
+	}
+	if s.echo == nil {
+		return nil
+	}
+	return s.echo.Shutdown(ctx)
 }

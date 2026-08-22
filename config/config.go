@@ -121,7 +121,7 @@ func NewConfig() *Config {
 	}
 	return &Config{
 		Name:        "godot-mcp-go",
-		Version:     "0.2.0",
+		Version:     "0.3.0",
 		Description: "Go-based Model Context Protocol server for Godot",
 		Server: Server{
 			Host:  "localhost",
@@ -141,6 +141,7 @@ func NewConfig() *Config {
 					"Accept":               "application/json, text/event-stream",
 					"Content-Type":         "application/json",
 					"MCP-Protocol-Version": mcp.ProtocolVersion,
+					"Mcp-Method":           "<method>",
 				},
 			},
 		},

@@ -14,7 +14,7 @@ type InitMessage struct {
 	Data     map[string]any `json:"data,omitempty"`
 }
 
-// ToolAnnotations provides hints about tool behavior per MCP 2025-11-25 spec.
+// ToolAnnotations provides hints about tool behavior per MCP 2026-07-28 spec.
 type ToolAnnotations struct {
 	Title           string `json:"title,omitempty"`
 	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
@@ -25,10 +25,11 @@ type ToolAnnotations struct {
 
 // Tool represents a tool definition
 type Tool struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description"`
-	InputSchema InputSchema      `json:"inputSchema"`
-	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description"`
+	InputSchema  InputSchema      `json:"inputSchema"`
+	Annotations  *ToolAnnotations `json:"annotations,omitempty"`
+	OutputSchema map[string]any   `json:"outputSchema,omitempty"`
 }
 
 // InputSchema represents the JSON schema for tool input
@@ -36,7 +37,7 @@ type InputSchema struct {
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties"`
 	Required   []string       `json:"required"`
-	Title      string         `json:"title"`
+	Title      string         `json:"title,omitempty"`
 }
 
 // ToolCallMessage represents a tool call request
@@ -106,7 +107,7 @@ func NewInternalErrorMessage(clientID, serverID string, data any) *ErrorMessage 
 
 // NewServerErrorMessage creates a new server error message
 func NewServerErrorMessage(clientID, serverID string, code jsonrpc.ErrorCode, message string, data any) *ErrorMessage {
-	if code < jsonrpc.ErrServerError || code > -32099 {
+	if code > jsonrpc.ErrServerError || code < -32099 {
 		code = jsonrpc.ErrServerError
 	}
 	return NewErrorMessage(clientID, serverID, code, message, data)

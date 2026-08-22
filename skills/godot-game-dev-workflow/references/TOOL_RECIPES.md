@@ -20,7 +20,7 @@ They operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unse
 
 ### Editor-backed reads
 
-These tools depend on initialized MCP HTTP session state plus a fresh editor snapshot:
+These tools depend on the MCP 2026-07-28 request envelope plus a fresh editor snapshot:
 
 - `godot.editor.state.get`
 
@@ -39,7 +39,7 @@ Resolve the session cautiously: pass an explicit `editor_session_id` to `godot.r
 
 Before calling any mutating tool (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`):
 
-- Ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated.
+- Include `_meta` Godot extension `com.slighter12/godot-mcp.mutating=true` on each mutating call.
 - Call `godot.runtime.health.get` and verify bridge status is healthy.
 - If the bridge is unhealthy, resolve it via `SAFETY_AND_VERIFICATION.md` before proceeding.
 - `godot.node.create`, `godot.node.modify`, `godot.node.delete`, and `godot.scene.save` operate on the currently edited scene. If the target scene is different, open it with `godot.editor.scene.apply` first.

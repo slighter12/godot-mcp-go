@@ -34,9 +34,9 @@ Precondition:
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`.
 - Start with `godot.offerings.list` only when you need a coarse global signal about whether any live editor/runtime path is up.
-- `godot.editor.state.get` is editor-backed and requires initialized MCP HTTP session state plus a fresh editor snapshot.
+- `godot.editor.state.get` is editor-backed and requires the MCP 2026-07-28 request envelope plus a fresh editor snapshot.
 - `godot.runtime.scene_tree.get` and `godot.runtime.node_properties.get` are runtime-backed and require an active game `session_id`. Resolve it cautiously: pass `editor_session_id` to `godot.runtime.session.get_active`, then fail closed unless the returned `editor_session_id` still matches the intended editor owner. Use `godot.runtime.await_snapshot` only after that check passes.
-- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`), ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
+- If the slice requires mutating tools (`godot.project.run`, `godot.project.stop`, `godot.script.modify`, `godot.script.create`, `godot.node.create`, `godot.node.modify`, `godot.node.delete`, `godot.scene.create`, `godot.scene.save`, `godot.editor.scene.apply`), include `_meta` Godot extension `com.slighter12/godot-mcp.mutating=true` on the call and check `godot.runtime.health.get` first. If the bridge is unhealthy, resolve it before proceeding (see `SAFETY_AND_VERIFICATION.md`).
 
 Inspect:
 

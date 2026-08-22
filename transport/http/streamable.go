@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// StreamableHTTPTransport provides optional SSE writer utilities.
-// The current request handling path in router.go is still response-based.
+// StreamableHTTPTransport provides SSE writer utilities for response streams.
 type StreamableHTTPTransport struct {
 	writer  http.ResponseWriter
 	flusher http.Flusher
@@ -69,10 +68,15 @@ func (t *StreamableHTTPTransport) SendComment(comment string) error {
 		return fmt.Errorf("transport is closed")
 	}
 
-	comment = strings.ReplaceAll(comment, "\r\n", "\n")
-	comment = strings.ReplaceAll(comment, "\r", "\n")
-	comment = strings.ReplaceAll(comment, "\n", "\n: ")
-	frame := fmt.Sprintf(": %s\n\n", comment)
+	var frame string
+	if comment == "" {
+		frame = ":\r\n\r\n"
+	} else {
+		comment = strings.ReplaceAll(comment, "\r\n", "\n")
+		comment = strings.ReplaceAll(comment, "\r", "\n")
+		comment = strings.ReplaceAll(comment, "\n", "\r\n: ")
+		frame = fmt.Sprintf(": %s\r\n\r\n", comment)
+	}
 	if err := t.writeLocked(frame, 0); err != nil {
 		return fmt.Errorf("failed to write SSE comment: %w", err)
 	}

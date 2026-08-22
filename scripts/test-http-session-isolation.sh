@@ -3,189 +3,84 @@ set -eu
 
 GO_BIN="${GO:-go}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
-SERVER_PORT="${SERVER_PORT:-9080}"
+SERVER_PORT="${SERVER_PORT:-19080}"
 SERVER_URL="${SERVER_URL:-http://${SERVER_HOST}:${SERVER_PORT}/mcp}"
-PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
-log_file="$(mktemp /tmp/godot-mcp-go-session-isolation.log.XXXXXX)"
-init_headers_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.headers.XXXXXX)"
-init_headers_b="$(mktemp /tmp/godot-mcp-go-session-isolation.b.headers.XXXXXX)"
-init_headers_invalid="$(mktemp /tmp/godot-mcp-go-session-isolation.invalid.headers.XXXXXX)"
-init_body_invalid="$(mktemp /tmp/godot-mcp-go-session-isolation.invalid.body.XXXXXX)"
-sync_body_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.sync.body.XXXXXX)"
-sync_body_b="$(mktemp /tmp/godot-mcp-go-session-isolation.b.sync.body.XXXXXX)"
-state_body_a="$(mktemp /tmp/godot-mcp-go-session-isolation.a.state.body.XXXXXX)"
-state_body_b="$(mktemp /tmp/godot-mcp-go-session-isolation.b.state.body.XXXXXX)"
-runtime_config="$(mktemp /tmp/godot-mcp-go-session-isolation.config.XXXXXX.json)"
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-modern-lib.sh"
 
+log_file="$(mktemp /tmp/godot-mcp-go-session-isolation.XXXXXX.log)"
+sync_a_body="$(mktemp /tmp/godot-mcp-go-session-isolation.a.sync.XXXXXX.body)"
+sync_b_body="$(mktemp /tmp/godot-mcp-go-session-isolation.b.sync.XXXXXX.body)"
+state_a_body="$(mktemp /tmp/godot-mcp-go-session-isolation.a.state.XXXXXX.body)"
+state_b_body="$(mktemp /tmp/godot-mcp-go-session-isolation.b.state.XXXXXX.body)"
 cleanup() {
   if [ -n "${server_pid:-}" ]; then
     kill "$server_pid" >/dev/null 2>&1 || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  rm -f "$log_file" "$init_headers_a" "$init_headers_b" "$init_headers_invalid" "$init_body_invalid" "$sync_body_a" "$sync_body_b" "$state_body_a" "$state_body_b" "$runtime_config"
+  rm -f "$log_file" "$sync_a_body" "$sync_b_body" "$state_a_body" "$state_b_body"
 }
 trap cleanup EXIT
 
 require_contains() {
-  haystack="$1"
-  needle="$2"
-  label="$3"
-  case "$haystack" in
-    *"$needle"*) ;;
-    *)
-      echo "assert failed: $label"
-      echo "expected fragment: $needle"
-      exit 1
-      ;;
+  isolation_haystack="$1"
+  isolation_needle="$2"
+  isolation_label="$3"
+  case "$isolation_haystack" in
+    *"$isolation_needle"*) ;;
+    *) echo "assert failed: $isolation_label"; echo "expected fragment: $isolation_needle"; exit 1 ;;
   esac
 }
 
 require_not_contains() {
-  haystack="$1"
-  needle="$2"
-  label="$3"
-  case "$haystack" in
-    *"$needle"*)
-      echo "assert failed: $label"
-      echo "unexpected fragment: $needle"
-      exit 1
-      ;;
+  isolation_haystack="$1"
+  isolation_needle="$2"
+  isolation_label="$3"
+  case "$isolation_haystack" in
+    *"$isolation_needle"*) echo "assert failed: $isolation_label"; exit 1 ;;
     *) ;;
   esac
 }
 
-extract_session_id() {
-  header_file="$1"
-  awk -F': ' 'tolower($1)=="mcp-session-id" {gsub("\r","",$2); print $2}' "$header_file" | tail -n1
-}
-
-cp "./config/mcp_config.json" "$runtime_config"
-sed -E "s/\"port\"[[:space:]]*:[[:space:]]*[0-9]+/\"port\": ${SERVER_PORT}/" "$runtime_config" > "${runtime_config}.tmp"
-mv "${runtime_config}.tmp" "$runtime_config"
-
-MCP_CONFIG_PATH="$runtime_config" "$GO_BIN" run main.go >"$log_file" 2>&1 &
+"$GO_BIN" run main.go >"$log_file" 2>&1 &
 server_pid=$!
 
+ready=0
 for _ in $(seq 1 80); do
   if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-    echo "server process exited before readiness"
-    cat "$log_file"
-    exit 1
+    echo "server process exited before readiness"; cat "$log_file"; exit 1
   fi
   if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+    ready=1
     break
   fi
   sleep 0.2
 done
+test "$ready" = 1
 
-if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-  echo "server process exited unexpectedly"
-  cat "$log_file"
-  exit 1
-fi
+sync_payload_a="$(mcp_request sync-a tools/call '{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionA.tscn"},"scene_tree":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0},"node_details":{"/RootA":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0}}}}}' editor-session-a)"
+status_sync_a="$(curl -sS -o "$sync_a_body" -w "%{http_code}" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "MCP-Protocol-Version: $PROTOCOL_VERSION" -H 'Mcp-Method: tools/call' -H 'Mcp-Name: godot.bridge.editor.sync' -X POST "$SERVER_URL" --data "$sync_payload_a")"
+test "$status_sync_a" = 200
+require_not_contains "$(tr -d '[:space:]' < "$sync_a_body")" '"isError":true' "editor A sync should succeed"
 
-curl -sS -D "$init_headers_a" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-a\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-a\",\"version\":\"0.2.0\"}}}" >/dev/null
+sync_payload_b="$(mcp_request sync-b tools/call '{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionB.tscn"},"scene_tree":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0},"node_details":{"/RootB":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0}}}}}' editor-session-b)"
+status_sync_b="$(curl -sS -o "$sync_b_body" -w "%{http_code}" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "MCP-Protocol-Version: $PROTOCOL_VERSION" -H 'Mcp-Method: tools/call' -H 'Mcp-Name: godot.bridge.editor.sync' -X POST "$SERVER_URL" --data "$sync_payload_b")"
+test "$status_sync_b" = 200
+require_not_contains "$(tr -d '[:space:]' < "$sync_b_body")" '"isError":true' "editor B sync should succeed"
 
-curl -sS -D "$init_headers_b" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -X POST "$SERVER_URL" \
-  --data "{\"jsonrpc\":\"2.0\",\"id\":\"init-session-b\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"$PROTOCOL_VERSION\",\"capabilities\":{},\"clientInfo\":{\"name\":\"make-session-b\",\"version\":\"0.2.0\"}}}" >/dev/null
+state_payload_a="$(mcp_request state-a tools/call '{"name":"godot.editor.state.get","arguments":{}}' editor-session-a)"
+status_state_a="$(curl -sS -o "$state_a_body" -w "%{http_code}" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "MCP-Protocol-Version: $PROTOCOL_VERSION" -H 'Mcp-Method: tools/call' -H 'Mcp-Name: godot.editor.state.get' -X POST "$SERVER_URL" --data "$state_payload_a")"
+test "$status_state_a" = 200
+state_a_compact="$(tr -d '[:space:]' < "$state_a_body")"
+require_contains "$state_a_compact" '"active_scene":"res://SessionA.tscn"' "editor A state should stay isolated"
+require_not_contains "$state_a_compact" '"active_scene":"res://SessionB.tscn"' "editor A must not see editor B"
 
-session_a="$(extract_session_id "$init_headers_a")"
-session_b="$(extract_session_id "$init_headers_b")"
-test -n "$session_a"
-test -n "$session_b"
-test "$session_a" != "$session_b"
+state_payload_b="$(mcp_request state-b tools/call '{"name":"godot.editor.state.get","arguments":{}}' editor-session-b)"
+status_state_b="$(curl -sS -o "$state_b_body" -w "%{http_code}" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "MCP-Protocol-Version: $PROTOCOL_VERSION" -H 'Mcp-Method: tools/call' -H 'Mcp-Name: godot.editor.state.get' -X POST "$SERVER_URL" --data "$state_payload_b")"
+test "$status_state_b" = 200
+state_b_compact="$(tr -d '[:space:]' < "$state_b_body")"
+require_contains "$state_b_compact" '"active_scene":"res://SessionB.tscn"' "editor B state should stay isolated"
+require_not_contains "$state_b_compact" '"active_scene":"res://SessionA.tscn"' "editor B must not see editor A"
 
-status_invalid_init="$(curl -sS -D "$init_headers_invalid" -o "$init_body_invalid" -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json, text/event-stream' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"init-invalid","method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"bad-client","version":"0.2.0"}}}')"
-test "$status_invalid_init" = "200"
-invalid_session="$(extract_session_id "$init_headers_invalid")"
-test -z "$invalid_session"
-compact_invalid_init="$(tr -d '[:space:]' < "$init_body_invalid")"
-require_contains "$compact_invalid_init" '"code":-32602' "invalid initialize should return invalid params"
-status_after_invalid="$(curl -sS -o /dev/null -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: session-invalid-init" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"list-after-invalid-init","method":"tools/list","params":{}}')"
-test "$status_after_invalid" = "404"
-
-status_notify_a="$(curl -sS -o /dev/null -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_a" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}')"
-test "$status_notify_a" = "202"
-
-status_notify_b="$(curl -sS -o /dev/null -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_b" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","method":"notifications/initialized"}')"
-test "$status_notify_b" = "202"
-
-status_sync_a="$(curl -sS -o "$sync_body_a" -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_a" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"sync-a","method":"tools/call","params":{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionA.tscn","active_script":"res://scripts/A.gd"},"scene_tree":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0},"node_details":{"/RootA":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0}}}}}}')"
-test "$status_sync_a" = "200"
-
-status_sync_b="$(curl -sS -o "$sync_body_b" -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_b" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"sync-b","method":"tools/call","params":{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionB.tscn","active_script":"res://scripts/B.gd"},"scene_tree":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0},"node_details":{"/RootB":{"path":"/RootB","name":"RootB","type":"Node2D","child_count":0}}}}}}')"
-test "$status_sync_b" = "200"
-
-compact_sync_a="$(tr -d '[:space:]' < "$sync_body_a")"
-compact_sync_b="$(tr -d '[:space:]' < "$sync_body_b")"
-require_not_contains "$compact_sync_a" '"isError":true' "sync a should not be error"
-require_not_contains "$compact_sync_b" '"isError":true' "sync b should not be error"
-
-status_state_a="$(curl -sS -o "$state_body_a" -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_a" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"state-a","method":"tools/call","params":{"name":"godot.editor.state.get","arguments":{}}}')"
-test "$status_state_a" = "200"
-
-status_state_b="$(curl -sS -o "$state_body_b" -w "%{http_code}" \
-  -H 'Content-Type: application/json' \
-  -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
-  -H "MCP-Session-Id: $session_b" \
-  -X POST "$SERVER_URL" \
-  --data '{"jsonrpc":"2.0","id":"state-b","method":"tools/call","params":{"name":"godot.editor.state.get","arguments":{}}}')"
-test "$status_state_b" = "200"
-
-compact_state_a="$(tr -d '[:space:]' < "$state_body_a")"
-compact_state_b="$(tr -d '[:space:]' < "$state_body_b")"
-
-require_not_contains "$compact_state_a" '"isError":true' "state a should not be error"
-require_not_contains "$compact_state_b" '"isError":true' "state b should not be error"
-
-require_contains "$compact_state_a" '"active_scene":"res://SessionA.tscn"' "session a should read scene a"
-require_contains "$compact_state_b" '"active_scene":"res://SessionB.tscn"' "session b should read scene b"
-require_not_contains "$compact_state_a" 'res://SessionB.tscn' "session a should not read scene b"
-require_not_contains "$compact_state_b" 'res://SessionA.tscn' "session b should not read scene a"
-
-echo "HTTP session isolation passed (session_a=$session_a session_b=$session_b)"
+echo "Modern explicit editor-session isolation passed"

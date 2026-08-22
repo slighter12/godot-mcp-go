@@ -1,7 +1,6 @@
 extends Node
 
 const VARIANT_UTILS := preload("res://addons/godot_mcp/variant_utils.gd")
-const LEGACY_MCP_SERVER_PATH := "res://addons/godot_mcp/mcp_server.gd"
 
 signal tool_called(tool_name: String, arguments: Dictionary)
 signal tool_result(tool_name: String, result: Dictionary)
@@ -76,7 +75,7 @@ func _is_client_connected(client: Node) -> bool:
 	if client is StreamableHTTPClient:
 		return VARIANT_UTILS.to_bool(client.get("is_connected"), false)
 	var script: Variant = client.get_script()
-	if script is Script and str(script.resource_path) == LEGACY_MCP_SERVER_PATH:
+	if script is Script:
 		return VARIANT_UTILS.to_bool(client.get("is_connected"), false)
 	return false
 
@@ -88,7 +87,6 @@ func _on_connected():
 	editor_sync_in_flight = false
 	editor_ping_in_flight = false
 
-	_send_initialized_notification()
 	_request_tools_list("")
 
 func _on_disconnected():
@@ -126,7 +124,8 @@ func sync_editor_snapshot(snapshot: Dictionary) -> bool:
 
 	editor_sync_in_flight = true
 	var request_id = _send_tools_call_request("godot.bridge.editor.sync", {
-		"snapshot": snapshot
+		"snapshot": snapshot,
+		"editor_session_id": str(mcp_client.get("editor_session_id")).strip_edges()
 	}, {
 		"kind": "runtime_sync"
 	})
@@ -155,7 +154,9 @@ func ping_editor_bridge() -> void:
 		return
 
 	editor_ping_in_flight = true
-	var request_id = _send_tools_call_request("godot.bridge.editor.ping", {}, {
+	var request_id = _send_tools_call_request("godot.bridge.editor.ping", {
+		"editor_session_id": str(mcp_client.get("editor_session_id")).strip_edges()
+	}, {
 		"kind": "runtime_ping"
 	})
 	if request_id == "":
@@ -200,6 +201,9 @@ func _handle_server_notification(message: Dictionary):
 		return
 	if method == "notifications/godot/command":
 		var params = _as_dictionary(message.get("params", {}))
+		var target_editor_session_id := str(params.get("editor_session_id", "")).strip_edges()
+		if target_editor_session_id != "" and target_editor_session_id != client_id:
+			return
 		var command_id = str(params.get("command_id", "")).strip_edges()
 		var command_name = str(params.get("name", "")).strip_edges()
 		var arguments = _as_dictionary(params.get("arguments", {}))
@@ -280,19 +284,13 @@ func _handle_tool_call_result(result: Variant, pending: Dictionary):
 		return
 
 	var result_dict: Dictionary = result
-	var response_tool_name = str(result_dict.get("tool", "")).strip_edges()
-	if response_tool_name != "":
-		tool_name = response_tool_name
-
 	var is_error = VARIANT_UTILS.to_bool(result_dict.get("isError", false), false)
 	if is_error:
 		var err_msg = _extract_tool_error_message(result_dict)
 		emit_signal("tool_error", tool_name, err_msg)
 		return
 
-	var payload: Variant = result_dict.get("result", null)
-	if payload == null:
-		payload = result_dict.get("structuredContent", {})
+	var payload: Variant = result_dict.get("structuredContent", {})
 
 	if payload is Dictionary:
 		emit_signal("tool_result", tool_name, payload)
@@ -374,7 +372,7 @@ func _handle_runtime_tool_result(result: Variant, invalid_payload_message: Strin
 	if VARIANT_UTILS.to_bool(result_dict.get("isError", false), false):
 		emit_signal("runtime_sync_failed", _extract_tool_error_message(result_dict))
 
-func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "v1") -> void:
+func ack_runtime_command(command_id: String, success: bool, result: Dictionary = {}, error_message: String = "", reason: String = "", retryable: Variant = null, schema_version: String = "1") -> void:
 	if mcp_client == null:
 		return
 	if not tools.has("godot.bridge.command.ack"):
@@ -383,7 +381,8 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
 	var arguments = {
 		"command_id": command_id,
 		"success": success,
-		"result": result
+		"result": result,
+		"editor_session_id": str(mcp_client.get("editor_session_id")).strip_edges()
 	}
 	var trimmed_error = error_message.strip_edges()
 	if trimmed_error != "":
@@ -405,20 +404,6 @@ func ack_runtime_command(command_id: String, success: bool, result: Dictionary =
 func handle_error(payload: Dictionary):
 	var message = payload.get("message", "Unknown error")
 	print("MCP error: ", message)
-
-func _send_initialized_notification():
-	if mcp_client == null:
-		handle_error({"message": "Failed to send initialized notification: MCP client is unavailable"})
-		return
-	var initialized_notification = {
-		"jsonrpc": "2.0",
-		"method": "notifications/initialized",
-		"params": {
-			"clientId": client_id
-		}
-	}
-	if not mcp_client.send_message(initialized_notification):
-		handle_error({"message": "Failed to send initialized notification"})
 
 func _request_tools_list(cursor: String):
 	if mcp_client == null:
@@ -456,11 +441,18 @@ func _new_request_id() -> String:
 	return "godot-%s-%d" % [client_id, request_counter]
 
 func _ensure_client_id() -> void:
+	if mcp_client != null:
+		var remote_id = mcp_client.get("editor_session_id")
+		if remote_id is String and str(remote_id).strip_edges() != "":
+			client_id = str(remote_id).strip_edges()
+			return
 	if client_id != "":
 		return
 	var rng = RandomNumberGenerator.new()
 	rng.randomize()
 	client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
+	if mcp_client != null:
+		mcp_client.set("editor_session_id", client_id)
 
 func _extract_tool_error_message(result: Dictionary) -> String:
 	var content = result.get("content", [])

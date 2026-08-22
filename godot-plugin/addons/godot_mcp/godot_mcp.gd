@@ -260,7 +260,7 @@ func _ack_runtime_command_with_payload(command_id: String, payload: Dictionary) 
 	var retryable: Variant = null
 	if result.has("retryable") and result["retryable"] is bool:
 		retryable = result["retryable"]
-	var schema_version := str(result.get("schema_version", "v1")).strip_edges()
+	var schema_version := str(result.get("schema_version", "1")).strip_edges()
 	mcp_interface.ack_runtime_command(command_id, success, result, error_message, reason, retryable, schema_version)
 
 func _sync_editor_snapshot_if_success(payload: Dictionary) -> void:
@@ -269,7 +269,7 @@ func _sync_editor_snapshot_if_success(payload: Dictionary) -> void:
 
 func _runtime_success_result(data: Dictionary = {}) -> Dictionary:
 	var result = {
-		"schema_version": "v1"
+		"schema_version": "1"
 	}
 	for key in data.keys():
 		result[key] = data[key]
@@ -284,7 +284,7 @@ func _runtime_failure_result(reason: String, error_message: String) -> Dictionar
 		"result": {
 			"reason": reason,
 			"retryable": false,
-			"schema_version": "v1"
+		"schema_version": "1"
 		},
 		"error": error_message
 	}
@@ -327,7 +327,7 @@ func _handle_project_run(arguments: Dictionary, _editor_interface: EditorInterfa
 			handshake_file = DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE
 
 	var handshake_payload = {
-		"schema_version": "v1",
+		"schema_version": "1",
 		"state": "launch_requested" if not already_running else "attach_requested",
 		"source": "editor_plugin",
 		"game_session_id": session_id,
@@ -398,7 +398,7 @@ func _handle_project_stop(arguments: Dictionary, _editor_interface: EditorInterf
 
 	if session_id != "" and handshake_file != "":
 		var teardown_payload = {
-			"schema_version": "v1",
+		"schema_version": "1",
 			"state": "stopped",
 			"source": "editor_plugin",
 			"game_session_id": session_id,
@@ -462,7 +462,7 @@ func _resolve_launch_scene_path() -> String:
 func _current_editor_session_id() -> String:
 	if mcp_client == null:
 		return ""
-	var raw_session_id = mcp_client.get("session_id")
+	var raw_session_id = mcp_client.get("editor_session_id")
 	if raw_session_id is String:
 		return str(raw_session_id).strip_edges()
 	return ""

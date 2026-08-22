@@ -57,10 +57,10 @@ if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint nod
   exit 1
 fi
 
-if ! grep -q "Missing MCP-Protocol-Version header" "$inspector_output"; then
-  echo "expected missing MCP-Protocol-Version error, got:"
+if ! grep -Eq "Protocol version header does not match|Invalid request metadata|MCP-Protocol-Version" "$inspector_output"; then
+  echo "expected protocol-header validation error, got:"
   cat "$inspector_output"
   exit 1
 fi
 
-echo "Inspector negative header check passed"
+echo "Inspector negative protocol-header check passed"

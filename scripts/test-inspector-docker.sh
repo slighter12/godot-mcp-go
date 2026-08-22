@@ -6,7 +6,7 @@ SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERVER_PORT}/mcp}"
 INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
-PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
 log_file="$(mktemp /tmp/godot-mcp-go-inspector.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector.config.XXXXXX.json)"

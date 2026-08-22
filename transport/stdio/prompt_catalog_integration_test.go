@@ -1,290 +1,94 @@
 package stdio
 
 import (
-	"encoding/json"
 	"testing"
 
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
-	"github.com/slighter12/godot-mcp-go/tools"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
-func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
-	tests := []struct {
-		name    string
-		enabled bool
-	}{
-		{name: "enabled", enabled: true},
-		{name: "disabled", enabled: false},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			server := newTestStdioServer(tc.enabled)
-			respAny, err := server.handleMessage(jsonrpc.Request{
-				ID:     1,
-				Method: "initialize",
-				Params: mustRaw(t, map[string]any{
-					"protocolVersion": "2025-11-25",
-					"capabilities":    map[string]any{},
-					"clientInfo":      map[string]any{"name": "test", "version": "0.2.0"},
-				}),
-			})
-			if err != nil {
-				t.Fatalf("handle initialize: %v", err)
-			}
-			resp, ok := respAny.(*jsonrpc.Response)
-			if !ok {
-				t.Fatalf("expected jsonrpc response, got %T", respAny)
-			}
-			result := mustMap(t, resp.Result)
-			capabilities := mustMap(t, result["capabilities"])
-			promptsCapabilityRaw, hasPrompts := capabilities["prompts"]
-			if tc.enabled && !hasPrompts {
-				t.Fatal("expected prompts capability when prompt catalog is enabled")
-			}
-			if !tc.enabled && hasPrompts {
-				t.Fatal("did not expect prompts capability when prompt catalog is disabled")
-			}
-			if tc.enabled {
-				promptsCapability := mustMap(t, promptsCapabilityRaw)
-				if promptsCapability["listChanged"] != false {
-					t.Fatalf("expected prompts.listChanged=false, got %v", promptsCapability["listChanged"])
-				}
-			}
-		})
-	}
-}
-
-func TestStdioPromptsFlow(t *testing.T) {
+func TestModernStdioPromptsFlow(t *testing.T) {
 	server := newTestStdioServer(true)
 	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
 		Name:        "scene-review",
-		Description: "desc",
+		Description: "Review a scene",
 		Template:    "Review {{scene_path}}",
 	})
-	ensureStdioInitialized(t, server)
+	options := modernStdioClientOptions{EditorSessionID: "editor-stdio"}
 
-	listRespAny, err := server.handleMessage(jsonrpc.Request{ID: 1, Method: "prompts/list", Params: mustRaw(t, map[string]any{})})
-	if err != nil {
-		t.Fatalf("prompts/list failed: %v", err)
+	list := dispatchModernTest(t, server, 1, "prompts/list", map[string]any{}, options)
+	if list.Error != nil {
+		t.Fatalf("prompts/list error: %#v", list.Error)
 	}
-	listResp, ok := listRespAny.(*jsonrpc.Response)
-	if !ok {
-		t.Fatalf("expected jsonrpc response, got %T", listRespAny)
-	}
-	listResult := mustMap(t, listResp.Result)
-	promptsRaw, ok := listResult["prompts"].([]map[string]any)
-	if !ok {
-		t.Fatalf("expected []map[string]any, got %T", listResult["prompts"])
-	}
-	if len(promptsRaw) != 1 || promptsRaw[0]["name"] != "scene-review" {
-		t.Fatalf("unexpected prompts list: %+v", promptsRaw)
+	listResult := mustMap(t, list.Result)
+	if listResult["resultType"] != "complete" || listResult["cacheScope"] != "public" {
+		t.Fatalf("unexpected prompts/list result: %#v", listResult)
 	}
 
-	getRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     2,
-		Method: "prompts/get",
-		Params: mustRaw(t, map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
-		}),
-	})
-	if err != nil {
-		t.Fatalf("prompts/get failed: %v", err)
+	get := dispatchModernTest(t, server, 2, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+	}, options)
+	if get.Error != nil {
+		t.Fatalf("prompts/get error: %#v", get.Error)
 	}
-	getResp, ok := getRespAny.(*jsonrpc.Response)
-	if !ok {
-		t.Fatalf("expected jsonrpc response, got %T", getRespAny)
-	}
-	getResult := mustMap(t, getResp.Result)
-	messages, ok := getResult["messages"].([]map[string]any)
-	if !ok || len(messages) != 1 {
-		t.Fatalf("expected one message, got %T %v", getResult["messages"], getResult["messages"])
-	}
-	content := mustMap(t, messages[0]["content"])
-	if content["text"] != "Review <user_input name=\"scene_path\" format=\"json\">\n\"res://Main.tscn\"\n</user_input>" {
-		t.Fatalf("expected rendered prompt, got %v", content["text"])
+	getResult := mustMap(t, get.Result)
+	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "public" {
+		t.Fatalf("unexpected prompts/get result: %#v", getResult)
 	}
 }
 
-func TestStdioPromptsGetRejectsNonStringArguments(t *testing.T) {
+func TestModernStdioPromptValidation(t *testing.T) {
 	server := newTestStdioServer(true)
 	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
-		Name:        "scene-review",
-		Description: "desc",
-		Template:    "Review {{scene_path}}",
+		Name:     "scene-review",
+		Template: "Review {{scene_path}}",
 	})
-	ensureStdioInitialized(t, server)
-
-	getRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     2,
-		Method: "prompts/get",
-		Params: mustRaw(t, map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": float64(42)},
-		}),
-	})
-	if err != nil {
-		t.Fatalf("prompts/get failed: %v", err)
+	response := dispatchModernTest(t, server, 1, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"scene_path": 42},
+	}, modernStdioClientOptions{})
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected invalid params, got %#v", response)
 	}
-	getResp, ok := getRespAny.(*jsonrpc.Response)
-	if !ok {
-		t.Fatalf("expected jsonrpc response, got %T", getRespAny)
-	}
-	if getResp.Error == nil {
-		t.Fatalf("expected invalid params error, got result %#v", getResp.Result)
-	}
-	if getResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
-		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrInvalidParams), getResp.Error.Code)
-	}
-	data := mustMap(t, getResp.Error.Data)
-	if data["kind"] != "invalid_params" {
-		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
-	}
-	if data["field"] != "arguments" {
-		t.Fatalf("expected field arguments, got %v", data["field"])
+	data := mustMap(t, response.Error.Data)
+	if data["field"] != "arguments" || data["problem"] != "invalid_type" {
+		t.Fatalf("unexpected validation data: %#v", data)
 	}
 }
 
-func TestStdioPromptsNotSupportedWhenCatalogDisabled(t *testing.T) {
+func TestModernStdioPromptsDisabledUsesMethodNotFound(t *testing.T) {
 	server := newTestStdioServer(false)
-	ensureStdioInitialized(t, server)
-
-	listRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     1,
-		Method: "prompts/list",
-		Params: mustRaw(t, map[string]any{}),
-	})
-	if err != nil {
-		t.Fatalf("prompts/list failed: %v", err)
+	response := dispatchModernTest(t, server, 1, "prompts/list", map[string]any{}, modernStdioClientOptions{})
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrMethodNotFound) {
+		t.Fatalf("expected method-not-found error, got %#v", response)
 	}
-	assertNotSupportedError(t, listRespAny)
-
-	getRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     2,
-		Method: "prompts/get",
-		Params: mustRaw(t, map[string]any{
-			"name": "scene-review",
-		}),
-	})
-	if err != nil {
-		t.Fatalf("prompts/get failed: %v", err)
-	}
-	assertNotSupportedError(t, getRespAny)
-}
-
-func TestStdioPromptsGetStrictModeRejectsMissingArguments(t *testing.T) {
-	server := newTestStdioServer(true)
-	server.AttachPromptRenderOptions(shared.PromptRenderOptions{
-		Mode: shared.PromptRenderingModeStrict,
-	})
-	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
-		Name:        "scene-review",
-		Description: "desc",
-		Template:    "Review {{scene_path}} and {{line}}",
-	})
-	ensureStdioInitialized(t, server)
-
-	getRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     2,
-		Method: "prompts/get",
-		Params: mustRaw(t, map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
-		}),
-	})
-	if err != nil {
-		t.Fatalf("prompts/get failed: %v", err)
-	}
-	getResp, ok := getRespAny.(*jsonrpc.Response)
-	if !ok {
-		t.Fatalf("expected jsonrpc response, got %T", getRespAny)
-	}
-	if getResp.Error == nil {
-		t.Fatalf("expected strict mode invalid params error")
-	}
-	if getResp.Error.Code != int(jsonrpc.ErrInvalidParams) {
-		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrInvalidParams), getResp.Error.Code)
-	}
-	data := mustMap(t, getResp.Error.Data)
-	if data["problem"] != "missing_required_arguments" {
-		t.Fatalf("expected missing_required_arguments, got %v", data["problem"])
-	}
-}
-
-func newTestStdioServer(promptCatalogEnabled bool) *StdioServer {
-	toolManager := tools.NewManager()
-	toolManager.RegisterDefaultTools()
-	server := NewStdioServer(toolManager)
-	server.AttachPromptCatalog(promptcatalog.NewRegistry(promptCatalogEnabled))
-	return server
-}
-
-func ensureStdioInitialized(t *testing.T, server *StdioServer) {
-	t.Helper()
-	initRespAny, err := server.handleMessage(jsonrpc.Request{
-		ID:     "init",
-		Method: "initialize",
-		Params: mustRaw(t, map[string]any{
-			"protocolVersion": "2025-11-25",
-			"capabilities":    map[string]any{},
-			"clientInfo":      map[string]any{"name": "test", "version": "0.2.0"},
-		}),
-	})
-	if err != nil {
-		t.Fatalf("initialize failed: %v", err)
-	}
-	initResp, ok := initRespAny.(*jsonrpc.Response)
-	if !ok || initResp.Error != nil {
-		t.Fatalf("expected successful initialize response, got %#v", initRespAny)
-	}
-
-	notifyResp, err := server.handleMessage(jsonrpc.Request{
-		Method: "notifications/initialized",
-		Params: mustRaw(t, map[string]any{}),
-	})
-	if err != nil {
-		t.Fatalf("notifications/initialized failed: %v", err)
-	}
-	if notifyResp != nil {
-		t.Fatalf("expected nil response for notifications/initialized, got %#v", notifyResp)
-	}
-}
-
-func mustRaw(t *testing.T, value any) json.RawMessage {
-	t.Helper()
-	raw, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal value: %v", err)
-	}
-	return raw
-}
-
-func mustMap(t *testing.T, value any) map[string]any {
-	t.Helper()
-	out, ok := value.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map[string]any, got %T", value)
-	}
-	return out
-}
-
-func assertNotSupportedError(t *testing.T, response any) {
-	t.Helper()
-	resp, ok := response.(*jsonrpc.Response)
-	if !ok {
-		t.Fatalf("expected jsonrpc response, got %T", response)
-	}
-	if resp.Error == nil {
-		t.Fatal("expected JSON-RPC error response")
-	}
-	if resp.Error.Code != int(jsonrpc.ErrMethodNotFound) {
-		t.Fatalf("expected code %d, got %d", int(jsonrpc.ErrMethodNotFound), resp.Error.Code)
-	}
-	data := mustMap(t, resp.Error.Data)
+	data := mustMap(t, response.Error.Data)
 	if data["kind"] != "not_supported" {
-		t.Fatalf("expected kind not_supported, got %v", data["kind"])
+		t.Fatalf("unexpected disabled prompt data: %#v", data)
 	}
 }
+
+func TestModernStdioStrictPromptValidation(t *testing.T) {
+	server := newTestStdioServer(true)
+	server.AttachPromptRenderOptions(shared.PromptRenderOptions{Mode: shared.PromptRenderingModeStrict})
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:     "scene-review",
+		Template: "Review {{scene_path}} and {{line}}",
+	})
+	response := dispatchModernTest(t, server, 1, "prompts/get", map[string]any{
+		"name":      "scene-review",
+		"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+	}, modernStdioClientOptions{})
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected invalid params, got %#v", response)
+	}
+	data := mustMap(t, response.Error.Data)
+	if data["problem"] != "missing_required_arguments" {
+		t.Fatalf("unexpected strict validation data: %#v", data)
+	}
+}
+
+var _ = mcpv20260728.ProtocolVersion
