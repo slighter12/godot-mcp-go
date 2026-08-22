@@ -7,6 +7,7 @@ SERVER_PORT="${SERVER_PORT:-19080}"
 SERVER_URL="${SERVER_URL:-http://${SERVER_HOST}:${SERVER_PORT}/mcp}"
 PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-modern-lib.sh"
 
 log_file="$(mktemp /tmp/godot-mcp-go-allow-list-bridge.XXXXXX.log)"
@@ -16,10 +17,7 @@ state_body="$(mktemp /tmp/godot-mcp-go-allow-list-bridge.state.XXXXXX.body)"
 ping_body="$(mktemp /tmp/godot-mcp-go-allow-list-bridge.ping.XXXXXX.body)"
 ack_body="$(mktemp /tmp/godot-mcp-go-allow-list-bridge.ack.XXXXXX.body)"
 cleanup() {
-  if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  stop_test_server
   rm -f "$log_file" "$runtime_config" "$sync_body" "$state_body" "$ping_body" "$ack_body"
 }
 trap cleanup EXIT
@@ -53,8 +51,7 @@ sed -E \
   "$runtime_config" > "${runtime_config}.tmp"
 mv "${runtime_config}.tmp" "$runtime_config"
 
-MCP_CONFIG_PATH="$runtime_config" "$GO_BIN" run main.go >"$log_file" 2>&1 &
-server_pid=$!
+start_test_server "$log_file" "$runtime_config"
 
 ready=0
 for _ in $(seq 1 80); do

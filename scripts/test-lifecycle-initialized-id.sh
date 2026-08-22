@@ -7,6 +7,7 @@ SERVER_PORT="${SERVER_PORT:-9080}"
 SERVER_URL="${SERVER_URL:-http://${SERVER_HOST}:${SERVER_PORT}/mcp}"
 PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-modern-lib.sh"
 
 log_file="$(mktemp /tmp/godot-mcp-go-modern-lifecycle.XXXXXX.log)"
@@ -14,16 +15,12 @@ initialize_body="$(mktemp /tmp/godot-mcp-go-modern-lifecycle.initialize.XXXXXX.b
 notify_body="$(mktemp /tmp/godot-mcp-go-modern-lifecycle.notify.XXXXXX.body)"
 tools_body="$(mktemp /tmp/godot-mcp-go-modern-lifecycle.tools.XXXXXX.body)"
 cleanup() {
-  if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  stop_test_server
   rm -f "$log_file" "$initialize_body" "$notify_body" "$tools_body"
 }
 trap cleanup EXIT
 
-"$GO_BIN" run main.go >"$log_file" 2>&1 &
-server_pid=$!
+start_test_server "$log_file"
 
 ready=0
 for _ in $(seq 1 80); do

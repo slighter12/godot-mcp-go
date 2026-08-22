@@ -8,14 +8,13 @@ INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERV
 INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
 PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"
+
 log_file="$(mktemp /tmp/godot-mcp-go-inspector.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector.config.XXXXXX.json)"
 
 cleanup() {
-  if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
+  stop_test_server
   rm -f "$log_file" "$runtime_config"
 }
 trap cleanup EXIT
@@ -28,8 +27,7 @@ sed -E \
   "$runtime_config" > "${runtime_config}.tmp"
 mv "${runtime_config}.tmp" "$runtime_config"
 
-MCP_CONFIG_PATH="$runtime_config" "$GO_BIN" run main.go >"$log_file" 2>&1 &
-server_pid=$!
+start_test_server "$log_file" "$runtime_config"
 
 ready=0
 for _ in $(seq 1 120); do
