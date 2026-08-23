@@ -19,32 +19,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-require_contains() {
-  runtime_haystack="$1"
-  runtime_needle="$2"
-  runtime_label="$3"
-  case "$runtime_haystack" in
-    *"$runtime_needle"*) ;;
-    *) echo "assert failed: $runtime_label"; echo "expected fragment: $runtime_needle"; exit 1 ;;
-  esac
-}
-
 start_test_server "$log_file"
 
-ready=0
-for _ in $(seq 1 80); do
-  if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-    echo "server process exited before readiness"
-    cat "$log_file"
-    exit 1
-  fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 0.2
-done
-test "$ready" = 1
+wait_for_test_server
 
 get_payload="$(mcp_request runtime-log-get tools/call '{"name":"godot.runtime.log.get","arguments":{"session_id":"game_missing","level":"error","limit":10}}' editor-runtime-log)"
 status_get="$(curl -sS -o "$log_get_body" -w "%{http_code}" \

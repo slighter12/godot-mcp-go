@@ -14,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
 	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
+	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
@@ -34,7 +35,16 @@ type StdioServer struct {
 	pendingMu       sync.Mutex
 	pending         map[string]context.CancelFunc
 	subscriptionsMu sync.Mutex
-	subscriptions   map[string]context.CancelFunc
+	subscriptions   map[string]*stdioSubscription
+}
+
+type stdioSubscription struct {
+	key             string
+	id              any
+	editorSessionID string
+	commandEnabled  bool
+	notifications   map[string]any
+	cancel          context.CancelFunc
 }
 
 func NewStdioServer(toolManager *tools.Manager) *StdioServer {
@@ -43,7 +53,7 @@ func NewStdioServer(toolManager *tools.Manager) *StdioServer {
 		promptRenderOptions: shared.DefaultPromptRenderOptions(),
 		toolCallOptions:     shared.DefaultToolCallOptions(),
 		pending:             make(map[string]context.CancelFunc),
-		subscriptions:       make(map[string]context.CancelFunc),
+		subscriptions:       make(map[string]*stdioSubscription),
 	}
 }
 
@@ -66,13 +76,14 @@ func (s *StdioServer) Start() error {
 	for {
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				s.cancelAll()
 				return nil
 			}
 			logger.Error("Error decoding message", "error", err)
 			s.write(jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
-			continue
+			s.cancelAll()
+			return fmt.Errorf("decode stdio message: %w", err)
 		}
 
 		requests, prebuiltResponses, acceptedOneWay, parseErr := shared.ParseJSONRPCFrame(raw)
@@ -122,7 +133,7 @@ func (s *StdioServer) handleRequest(request jsonrpc.Request) {
 	}
 
 	if request.Method == "subscriptions/listen" {
-		s.handleSubscription(ctx, request, meta)
+		s.handleSubscription(ctx, cancel, request, meta)
 		return
 	}
 
@@ -196,14 +207,17 @@ func (s *StdioServer) handleCancellation(request jsonrpc.Request) {
 		cancel()
 	}
 	s.subscriptionsMu.Lock()
-	if subscriptionCancel := s.subscriptions[key]; subscriptionCancel != nil {
+	subscription := s.subscriptions[key]
+	if subscription != nil {
 		delete(s.subscriptions, key)
-		subscriptionCancel()
 	}
 	s.subscriptionsMu.Unlock()
+	if subscription != nil && subscription.cancel != nil {
+		subscription.cancel()
+	}
 }
 
-func (s *StdioServer) handleSubscription(ctx context.Context, request jsonrpc.Request, meta mcpv20260728.RequestMeta) {
+func (s *StdioServer) handleSubscription(ctx context.Context, cancel context.CancelFunc, request jsonrpc.Request, meta mcpv20260728.RequestMeta) {
 	if request.ID == nil {
 		return
 	}
@@ -218,16 +232,46 @@ func (s *StdioServer) handleSubscription(ctx context.Context, request jsonrpc.Re
 	requested, _ := params["notifications"].(map[string]any)
 	for _, key := range []string{"promptsListChanged", "resourcesListChanged", "toolsListChanged", "resourceSubscriptions"} {
 		if value, exists := requested[key]; exists {
-			notifications[key] = value
+			if key != "promptsListChanged" || (s.promptCatalog != nil && s.promptCatalog.Enabled()) {
+				notifications[key] = value
+			}
 		}
 	}
+	editorSessionID := ""
+	commandEnabled := false
 	if filter, exists := requested[mcpv20260728.CommandStreamExtensionID]; exists {
 		if mcpv20260728.ExtensionSettings(meta.ClientCapabilities, mcpv20260728.CommandStreamExtensionID) == nil {
 			s.write(jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Command stream extension is not advertised", nil))
 			return
 		}
-		notifications[mcpv20260728.CommandStreamExtensionID] = filter
+		settings, _ := meta.Raw[mcpv20260728.CommandStreamExtensionID].(map[string]any)
+		if settings == nil {
+			s.write(jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "command stream subscription settings are required", nil))
+			return
+		}
+		editorSessionID, _ = settings["editor_session_id"].(string)
+		editorSessionID = strings.TrimSpace(editorSessionID)
+		filterSettings, _ := filter.(map[string]any)
+		commandEnabled, _ = filterSettings["command"].(bool)
+		if commandEnabled && editorSessionID == "" {
+			s.write(jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "editor_session_id is required for command subscriptions", nil))
+			return
+		}
+		if commandEnabled {
+			notifications[mcpv20260728.CommandStreamExtensionID] = map[string]any{"command": true}
+		}
 	}
+	subscription := &stdioSubscription{
+		key:             subscriptionKey,
+		id:              subscriptionID,
+		editorSessionID: editorSessionID,
+		commandEnabled:  commandEnabled,
+		notifications:   cloneStdioMap(notifications),
+		cancel:          cancel,
+	}
+	s.subscriptionsMu.Lock()
+	s.subscriptions[subscriptionKey] = subscription
+	s.subscriptionsMu.Unlock()
 	s.write(map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "notifications/subscriptions/acknowledged",
@@ -236,12 +280,11 @@ func (s *StdioServer) handleSubscription(ctx context.Context, request jsonrpc.Re
 			"notifications": notifications,
 		},
 	})
-	s.subscriptionsMu.Lock()
-	s.subscriptions[subscriptionKey] = func() {}
-	s.subscriptionsMu.Unlock()
 	<-ctx.Done()
 	s.subscriptionsMu.Lock()
-	delete(s.subscriptions, subscriptionKey)
+	if current := s.subscriptions[subscriptionKey]; current == subscription {
+		delete(s.subscriptions, subscriptionKey)
+	}
 	s.subscriptionsMu.Unlock()
 }
 
@@ -253,11 +296,95 @@ func (s *StdioServer) cancelAll() {
 	}
 	s.pendingMu.Unlock()
 	s.subscriptionsMu.Lock()
-	for key, cancel := range s.subscriptions {
-		cancel()
+	subscriptions := make([]*stdioSubscription, 0, len(s.subscriptions))
+	for key, subscription := range s.subscriptions {
+		subscriptions = append(subscriptions, subscription)
 		delete(s.subscriptions, key)
 	}
 	s.subscriptionsMu.Unlock()
+	for _, subscription := range subscriptions {
+		if subscription == nil {
+			continue
+		}
+		s.write(gracefulStdioSubscriptionResponse(subscription.id))
+		if subscription.cancel != nil {
+			subscription.cancel()
+		}
+	}
+}
+
+func (s *StdioServer) SendJSONRPCNotificationToEditor(editorSessionID string, message map[string]any) bool {
+	if s == nil || strings.TrimSpace(editorSessionID) == "" {
+		return false
+	}
+	editorSessionID = strings.TrimSpace(editorSessionID)
+	s.subscriptionsMu.Lock()
+	targets := make([]*stdioSubscription, 0)
+	for _, subscription := range s.subscriptions {
+		if subscription != nil && subscription.commandEnabled && subscription.editorSessionID == editorSessionID {
+			targets = append(targets, subscription)
+		}
+	}
+	s.subscriptionsMu.Unlock()
+	for _, subscription := range targets {
+		s.write(withStdioSubscriptionID(message, subscription.id))
+	}
+	return len(targets) > 0
+}
+
+func (s *StdioServer) SendNotification(filterKey string, message map[string]any) int {
+	if s == nil || strings.TrimSpace(filterKey) == "" {
+		return 0
+	}
+	s.subscriptionsMu.Lock()
+	targets := make([]*stdioSubscription, 0)
+	for _, subscription := range s.subscriptions {
+		if enabled, _ := subscription.notifications[filterKey].(bool); enabled {
+			targets = append(targets, subscription)
+		}
+	}
+	s.subscriptionsMu.Unlock()
+	for _, subscription := range targets {
+		s.write(withStdioSubscriptionID(message, subscription.id))
+	}
+	return len(targets)
+}
+
+func cloneStdioMap(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func withStdioSubscriptionID(message map[string]any, subscriptionID any) map[string]any {
+	copyMessage := cloneStdioMap(message)
+	params, _ := copyMessage["params"].(map[string]any)
+	if params == nil {
+		params = map[string]any{}
+	} else {
+		params = cloneStdioMap(params)
+	}
+	meta, _ := params["_meta"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+	} else {
+		meta = cloneStdioMap(meta)
+	}
+	meta["io.modelcontextprotocol/subscriptionId"] = subscriptionID
+	params["_meta"] = meta
+	copyMessage["params"] = params
+	return copyMessage
+}
+
+func gracefulStdioSubscriptionResponse(subscriptionID any) *jsonrpc.Response {
+	return jsonrpc.NewResponse(subscriptionID, map[string]any{
+		"resultType": "complete",
+		"_meta": map[string]any{
+			"io.modelcontextprotocol/subscriptionId": subscriptionID,
+		},
+	})
 }
 
 func (s *StdioServer) write(value any) {
@@ -303,7 +430,7 @@ func readGodotResource(path string) (any, error) {
 	case "godot://scene/current":
 		return map[string]any{"type": "scene", "path": "current"}, nil
 	case "godot://project/info":
-		return map[string]any{"name": "godot-mcp", "version": "0.3.0", "type": "godot"}, nil
+		return map[string]any{"name": "godot-mcp", "version": mcp.ServerVersion, "type": "godot"}, nil
 	case "godot://policy/godot-checks":
 		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
 	case "godot://runtime/metrics":

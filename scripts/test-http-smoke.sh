@@ -21,36 +21,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-require_contains() {
-  smoke_haystack="$1"
-  smoke_needle="$2"
-  smoke_label="$3"
-  case "$smoke_haystack" in
-    *"$smoke_needle"*) ;;
-    *)
-      echo "assert failed: $smoke_label"
-      echo "expected fragment: $smoke_needle"
-      exit 1
-      ;;
-  esac
-}
-
 start_test_server "$log_file"
 
-ready=0
-for _ in $(seq 1 80); do
-  if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-    echo "server process exited before readiness"
-    cat "$log_file"
-    exit 1
-  fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 0.2
-done
-test "$ready" = 1
+wait_for_test_server
 
 editor_id="editor-http-smoke"
 discover_payload="$(mcp_request discover server/discover '{}' "$editor_id")"
@@ -64,7 +37,7 @@ status_discover="$(curl -sS -o "$discover_body" -w "%{http_code}" \
 test "$status_discover" = 200
 discover_compact="$(tr -d '[:space:]' < "$discover_body")"
 require_contains "$discover_compact" '"resultType":"complete"' "server/discover should use modern result envelope"
-require_contains "$discover_compact" '"supportedVersions":["2026-07-28"]' "server/discover should advertise 2026-07-28"
+require_contains "$discover_compact" "\"supportedVersions\":[\"$PROTOCOL_VERSION\"]" "server/discover should advertise the configured protocol version"
 
 tools_payload="$(mcp_request tools-list tools/list '{}' "$editor_id")"
 status_tools="$(curl -sS -o "$tools_body" -w "%{http_code}" \

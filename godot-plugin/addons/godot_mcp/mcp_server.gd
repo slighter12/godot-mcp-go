@@ -37,6 +37,7 @@ var subscription_line_buffer: String = ""
 var subscription_event_name: String = "message"
 var subscription_data_lines: Array[String] = []
 var subscription_should_run: bool = false
+var sequence_counter: int = 0
 
 func _ready() -> void:
 	_ensure_editor_session_id()
@@ -140,6 +141,8 @@ func _build_request_meta() -> Dictionary:
 					"version": "1",
 					"role": "editor",
 					"editor_session_id": editor_session_id,
+					# The editor client supports mutating tools; the server still
+					# enforces per-tool permissions and capability checks.
 					"mutating": true
 				},
 				COMMAND_STREAM_EXTENSION_ID: {"version": "1"}
@@ -421,17 +424,39 @@ func _parse_http_endpoint(url: String) -> Dictionary:
 	var host_port := remainder
 	var path := "/"
 	var path_index := remainder.find("/")
+	var query_index := remainder.find("?")
+	if path_index == -1 or (query_index != -1 and query_index < path_index):
+		path_index = query_index
 	if path_index != -1:
 		host_port = remainder.substr(0, path_index)
-		path = remainder.substr(path_index)
+		path = "/" + remainder.substr(path_index) if remainder[path_index] == "?" else remainder.substr(path_index)
 	if host_port == "" or host_port.find("@") != -1:
 		return {}
 	var host := host_port
 	var port := 443 if use_tls else 80
-	var colon := host_port.rfind(":")
-	if colon > 0 and host_port.find(":") == colon:
-		host = host_port.substr(0, colon)
-		port = int(host_port.substr(colon + 1))
+	if host_port.begins_with("["):
+		var close_bracket := host_port.find("]")
+		if close_bracket <= 1:
+			return {}
+		host = host_port.substr(1, close_bracket - 1)
+		var suffix := host_port.substr(close_bracket + 1)
+		if suffix != "":
+			if not suffix.begins_with(":"):
+				return {}
+			var bracket_port := suffix.substr(1)
+			if not bracket_port.is_valid_int():
+				return {}
+			port = int(bracket_port)
+	else:
+		if host_port.count(":") > 1:
+			return {}
+		var colon := host_port.find(":")
+		if colon != -1:
+			host = host_port.substr(0, colon)
+			var host_port_text := host_port.substr(colon + 1)
+			if not host_port_text.is_valid_int():
+				return {}
+			port = int(host_port_text)
 	if host == "" or port <= 0 or port > 65535:
 		return {}
 	return {"host": host, "port": port, "use_tls": use_tls, "path": path}
@@ -451,8 +476,8 @@ func _ensure_editor_session_id() -> void:
 	editor_session_id = "editor-%s-%s" % [str(Time.get_unix_time_from_system()), str(randi())]
 
 func _next_sequence() -> int:
-	var value := Time.get_ticks_msec()
-	return value
+	sequence_counter += 1
+	return sequence_counter
 
 func _fail_connect(message: String) -> void:
 	is_connecting = false

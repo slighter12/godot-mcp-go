@@ -168,7 +168,7 @@ func buildToolSuccessResultForProtocol(toolName string, result any, modern bool)
 	}
 	return map[string]any{
 		"resultType":        "complete",
-		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"content":           ToolContentFromResult(result),
 		"structuredContent": result,
 		"isError":           false,
@@ -181,7 +181,7 @@ func buildToolExecutionErrorResultForProtocol(toolName string, modern bool) map[
 	}
 	return map[string]any{
 		"resultType": "complete",
-		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"content":    []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
 		"isError":    true,
 	}
@@ -206,7 +206,7 @@ func buildToolSemanticErrorResultForProtocol(toolName string, semanticErr *toolt
 	}
 	return map[string]any{
 		"resultType":        "complete",
-		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"content":           []map[string]any{{"type": "text", "text": message}},
 		"structuredContent": errorPayload,
 		"isError":           true,
@@ -216,7 +216,7 @@ func buildToolSemanticErrorResultForProtocol(toolName string, semanticErr *toolt
 func BuildToolSuccessResult(toolName string, result any) map[string]any {
 	return map[string]any{
 		"resultType":        "complete",
-		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"type":              string(mcp.TypeResult),
 		"tool":              toolName,
 		"result":            result,
@@ -237,7 +237,7 @@ func ToolContentFromResult(result any) []map[string]any {
 func buildToolExecutionErrorResult(toolName string) map[string]any {
 	return map[string]any{
 		"resultType": "complete",
-		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"content":    []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
 		"isError":    true,
 		"type":       string(mcp.TypeResult),
@@ -264,7 +264,7 @@ func buildToolSemanticErrorResult(toolName string, semanticErr *tooltypes.Semant
 	}
 	return map[string]any{
 		"resultType":        "complete",
-		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": "0.3.0"}},
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"content":           []map[string]any{{"type": "text", "text": message}},
 		"isError":           true,
 		"type":              string(mcp.TypeResult),

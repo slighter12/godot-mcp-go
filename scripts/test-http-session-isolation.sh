@@ -21,40 +21,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-require_contains() {
-  isolation_haystack="$1"
-  isolation_needle="$2"
-  isolation_label="$3"
-  case "$isolation_haystack" in
-    *"$isolation_needle"*) ;;
-    *) echo "assert failed: $isolation_label"; echo "expected fragment: $isolation_needle"; exit 1 ;;
-  esac
-}
-
-require_not_contains() {
-  isolation_haystack="$1"
-  isolation_needle="$2"
-  isolation_label="$3"
-  case "$isolation_haystack" in
-    *"$isolation_needle"*) echo "assert failed: $isolation_label"; exit 1 ;;
-    *) ;;
-  esac
-}
-
 start_test_server "$log_file"
 
-ready=0
-for _ in $(seq 1 80); do
-  if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-    echo "server process exited before readiness"; cat "$log_file"; exit 1
-  fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 0.2
-done
-test "$ready" = 1
+wait_for_test_server
 
 sync_payload_a="$(mcp_request sync-a tools/call '{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://SessionA.tscn"},"scene_tree":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0},"node_details":{"/RootA":{"path":"/RootA","name":"RootA","type":"Node2D","child_count":0}}}}}' editor-session-a)"
 status_sync_a="$(curl -sS -o "$sync_a_body" -w "%{http_code}" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H "MCP-Protocol-Version: $PROTOCOL_VERSION" -H 'Mcp-Method: tools/call' -H 'Mcp-Name: godot.bridge.editor.sync' -X POST "$SERVER_URL" --data "$sync_payload_a")"

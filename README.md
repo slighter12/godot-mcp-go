@@ -211,8 +211,7 @@ Default config shape:
       "headers": {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": "2026-07-28",
-        "Mcp-Method": "<method>"
+        "MCP-Protocol-Version": "2026-07-28"
       }
     }
   ],

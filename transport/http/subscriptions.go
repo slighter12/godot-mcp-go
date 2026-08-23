@@ -10,6 +10,8 @@ import (
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 )
 
+const subscriptionWriteTimeout = 5 * time.Second
+
 // SubscriptionManager owns long-lived subscriptions independently from MCP
 // request processing.  The editor session handle is application state; it is
 // deliberately not an MCP protocol session identifier.
@@ -110,7 +112,7 @@ func (m *SubscriptionManager) CloseAll() {
 	m.mu.Unlock()
 
 	for _, subscription := range subscriptions {
-		_ = subscription.transport.SendSSEWithTimeout("message", gracefulSubscriptionResponse(subscription.id), 5*time.Second)
+		_ = subscription.transport.SendSSEWithTimeout("message", gracefulSubscriptionResponse(subscription.id), subscriptionWriteTimeout)
 		if subscription.close != nil {
 			subscription.close()
 		}
@@ -119,7 +121,10 @@ func (m *SubscriptionManager) CloseAll() {
 }
 
 func (m *SubscriptionManager) SendToEditor(editorSessionID string, message map[string]any) bool {
-	return m.send(editorSessionID, "command", message)
+	if m == nil || strings.TrimSpace(editorSessionID) == "" {
+		return false
+	}
+	return m.send(editorSessionID, message)
 }
 
 func (m *SubscriptionManager) SendNotification(filterKey string, message map[string]any) int {
@@ -135,37 +140,55 @@ func (m *SubscriptionManager) SendNotification(filterKey string, message map[str
 	}
 	m.mu.RUnlock()
 
-	sent := 0
+	results := make(chan bool, len(targets))
 	for _, subscription := range targets {
-		if err := subscription.transport.SendSSEWithTimeout("message", withSubscriptionID(message, subscription.id), 5*time.Second); err != nil {
-			m.Remove(subscription.key, subscription.transport)
-			continue
+		go func(subscription *commandSubscription) {
+			if err := subscription.transport.SendSSEWithTimeout("message", withSubscriptionID(message, subscription.id), subscriptionWriteTimeout); err != nil {
+				m.Remove(subscription.key, subscription.transport)
+				results <- false
+				return
+			}
+			results <- true
+		}(subscription)
+	}
+	sent := 0
+	for range targets {
+		if <-results {
+			sent++
 		}
-		sent++
 	}
 	return sent
 }
 
-func (m *SubscriptionManager) send(editorSessionID, filterKey string, message map[string]any) bool {
+func (m *SubscriptionManager) send(editorSessionID string, message map[string]any) bool {
 	if m == nil || editorSessionID == "" {
 		return false
 	}
 	m.mu.RLock()
 	targets := make([]*commandSubscription, 0)
 	for _, subscription := range m.subscriptions {
-		if subscription.commandEnabled && filterKey == "command" && subscription.editorSessionID == editorSessionID {
+		if subscription.commandEnabled && subscription.editorSessionID == editorSessionID {
 			targets = append(targets, subscription)
 		}
 	}
 	m.mu.RUnlock()
 
 	sent := false
+	results := make(chan bool, len(targets))
 	for _, subscription := range targets {
-		if err := subscription.transport.SendSSEWithTimeout("message", withSubscriptionID(message, subscription.id), 5*time.Second); err != nil {
-			m.Remove(subscription.key, subscription.transport)
-			continue
+		go func(subscription *commandSubscription) {
+			if err := subscription.transport.SendSSEWithTimeout("message", withSubscriptionID(message, subscription.id), subscriptionWriteTimeout); err != nil {
+				m.Remove(subscription.key, subscription.transport)
+				results <- false
+				return
+			}
+			results <- true
+		}(subscription)
+	}
+	for range targets {
+		if <-results {
+			sent = true
 		}
-		sent = true
 	}
 	return sent
 }
@@ -239,7 +262,7 @@ func commandSubscriptionRequest(meta mcpv20260728.RequestMeta, params map[string
 	}
 	settings, _ := meta.Raw[mcpv20260728.CommandStreamExtensionID].(map[string]any)
 	if settings == nil {
-		return "", false, nil, fmt.Errorf("_%s subscription settings are required", mcpv20260728.CommandStreamExtensionID)
+		return "", false, nil, fmt.Errorf("%s subscription settings are required", mcpv20260728.CommandStreamExtensionID)
 	}
 	editorSessionID, _ := settings["editor_session_id"].(string)
 	if editorSessionID == "" {

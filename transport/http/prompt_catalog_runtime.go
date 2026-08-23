@@ -584,6 +584,9 @@ func (s *Server) BroadcastPromptListChanged() int {
 	if s.subscriptionManager != nil {
 		sent += s.subscriptionManager.SendNotification("promptsListChanged", modernNotification)
 	}
+	if s.stdioServer != nil {
+		sent += s.stdioServer.SendNotification("promptsListChanged", modernNotification)
+	}
 	return sent
 }
 

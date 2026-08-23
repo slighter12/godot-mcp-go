@@ -382,9 +382,3 @@ func TestModernHTTPProgressCancellationSuppressesLateEditorFallback(t *testing.T
 		t.Fatalf("expected no late editor fallback after cancellation, got %d", lateFallbackCalls)
 	}
 }
-
-func toolStructuredContent(t *testing.T, response map[string]any) map[string]any {
-	t.Helper()
-	result := mustMap(t, response["result"])
-	return mustMap(t, result["structuredContent"])
-}

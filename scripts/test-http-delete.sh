@@ -18,15 +18,7 @@ trap cleanup EXIT
 
 start_test_server "$log_file"
 
-ready=0
-for _ in $(seq 1 80); do
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 0.2
-done
-test "$ready" = 1
+wait_for_test_server
 
 status_delete="$(curl -sS -o /dev/null -w "%{http_code}" \
   -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \

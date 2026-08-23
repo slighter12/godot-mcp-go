@@ -37,13 +37,35 @@ type RuntimeCommandDispatchOptions struct {
 
 var (
 	runtimeCommandProgressNotifierMu sync.RWMutex
-	runtimeCommandProgressNotifier   RuntimeCommandProgressNotifier
+	runtimeCommandProgressNotifier   progressNotifierRegistration
+	runtimeCommandProgressToken      uint64
 )
 
 func SetRuntimeCommandProgressNotifier(notifier RuntimeCommandProgressNotifier) {
 	runtimeCommandProgressNotifierMu.Lock()
 	defer runtimeCommandProgressNotifierMu.Unlock()
-	runtimeCommandProgressNotifier = notifier
+	runtimeCommandProgressNotifier = progressNotifierRegistration{notifier: notifier}
+}
+
+// RegisterRuntimeCommandProgressNotifier installs an owner-scoped notifier.
+// Releasing an older registration never clears a newer active notifier.
+func RegisterRuntimeCommandProgressNotifier(notifier RuntimeCommandProgressNotifier) func() {
+	runtimeCommandProgressNotifierMu.Lock()
+	runtimeCommandProgressToken++
+	token := runtimeCommandProgressToken
+	runtimeCommandProgressNotifier = progressNotifierRegistration{token: token, notifier: notifier}
+	runtimeCommandProgressNotifierMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			runtimeCommandProgressNotifierMu.Lock()
+			defer runtimeCommandProgressNotifierMu.Unlock()
+			if runtimeCommandProgressNotifier.token == token {
+				runtimeCommandProgressNotifier = progressNotifierRegistration{}
+			}
+		})
+	}
 }
 
 func DispatchRuntimeCommand(options RuntimeCommandDispatchOptions) ([]byte, error) {
@@ -134,7 +156,7 @@ func emitRuntimeCommandProgress(ctx MCPContext, commandName string, progress flo
 	}
 
 	runtimeCommandProgressNotifierMu.RLock()
-	notifier := runtimeCommandProgressNotifier
+	notifier := runtimeCommandProgressNotifier.notifier
 	runtimeCommandProgressNotifierMu.RUnlock()
 	if notifier == nil {
 		return
@@ -149,4 +171,9 @@ func emitRuntimeCommandProgress(ctx MCPContext, commandName string, progress flo
 		Message:          message,
 		ProgressToken:    ctx.ProgressToken,
 	})
+}
+
+type progressNotifierRegistration struct {
+	token    uint64
+	notifier RuntimeCommandProgressNotifier
 }

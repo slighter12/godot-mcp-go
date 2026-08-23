@@ -14,6 +14,7 @@ import (
 	"github.com/slighter12/godot-mcp-go/internal/domain/toolspec"
 	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
+	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
@@ -39,7 +40,7 @@ func RegisterRoutes(e *echo.Echo, s *Server) {
 
 func (s *Server) handleHTTPInfo(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{
-		"version": "0.3.0",
+		"version": mcp.ServerVersion,
 		"type":    "godot-mcp",
 		"protocol": map[string]any{
 			"version": mcpv20260728.ProtocolVersion,
@@ -169,26 +170,54 @@ func validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv202
 		}
 	}
 
-	headerVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	if headerVersion == "" || headerVersion != meta.ProtocolVersion {
+	headerVersion, versionHeaderOK := singleHeaderValue(c.Request().Header, headerProtocolVersion)
+	headerVersion = strings.TrimSpace(headerVersion)
+	if !versionHeaderOK || headerVersion == "" || headerVersion != meta.ProtocolVersion {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Protocol version header does not match request metadata", mcpv20260728.HeaderMismatchData(headerProtocolVersion, headerVersion, meta.ProtocolVersion))
 	}
 
-	methodHeader := strings.TrimSpace(c.Request().Header.Get(headerMethod))
+	methodHeader, methodHeaderOK := singleHeaderValue(c.Request().Header, headerMethod)
+	methodHeader = strings.TrimSpace(methodHeader)
+	if !methodHeaderOK {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Method header does not match request", mcpv20260728.HeaderMismatchData(headerMethod, methodHeader, request.Method))
+	}
 	if err := mcpv20260728.ValidateMethodHeader(request.Method, methodHeader); err != nil {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Method header does not match request", mcpv20260728.HeaderMismatchData(headerMethod, methodHeader, request.Method))
 	}
 
 	name := requestName(request)
-	nameHeader := strings.TrimSpace(c.Request().Header.Get(headerName))
+	nameHeader, nameHeaderOK := optionalSingleHeaderValue(c.Request().Header, headerName)
+	nameHeader = strings.TrimSpace(nameHeader)
+	if !nameHeaderOK {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Name header does not match request", mcpv20260728.HeaderMismatchData(headerName, nameHeader, name))
+	}
 	if err := mcpv20260728.ValidateNameHeader(request.Method, name, nameHeader); err != nil {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Name header does not match request", mcpv20260728.HeaderMismatchData(headerName, nameHeader, name))
 	}
 
-	if !acceptsJSONAndEventStream(c.Request().Header.Get(echo.HeaderAccept)) {
+	if !acceptsJSONAndEventStream(strings.Join(c.Request().Header.Values(echo.HeaderAccept), ",")) {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidRequest), "Accept header must include application/json and text/event-stream", nil)
 	}
 	return meta, nil
+}
+
+func singleHeaderValue(headers http.Header, name string) (string, bool) {
+	values := headers.Values(name)
+	if len(values) != 1 {
+		return strings.Join(values, ","), false
+	}
+	return values[0], true
+}
+
+func optionalSingleHeaderValue(headers http.Header, name string) (string, bool) {
+	values := headers.Values(name)
+	if len(values) == 0 {
+		return "", true
+	}
+	if len(values) != 1 {
+		return strings.Join(values, ","), false
+	}
+	return values[0], true
 }
 
 func requestName(request jsonrpc.Request) string {
@@ -228,7 +257,9 @@ func (s *Server) dispatchModernMessage(msg jsonrpc.Request, meta mcpv20260728.Re
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", mcpv20260728.AddSupportedVersionsForInitialize(msg.Method, map[string]any{"method": msg.Method})), nil
 	}
 	if msg.Method == "notifications/cancelled" {
-		return nil, nil
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
+			"method": msg.Method,
+		}), nil
 	}
 	if msg.Method == "tools/call" {
 		return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.modernToolCallContext(meta, requestIDKey(msg.ID), progressRouteKey), s.toolCallOptions()), nil
@@ -299,7 +330,7 @@ func (s *Server) handleProgressToolCall(c echo.Context, request jsonrpc.Request,
 		response = jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil)
 	}
 	if response != nil {
-		if err := transport.SendSSE("message", response); err != nil {
+		if err := transport.SendSSEWithTimeout("message", response, progressWriteTimeout); err != nil {
 			return nil
 		}
 	}
@@ -331,20 +362,24 @@ func (s *Server) handleSubscription(c echo.Context, request jsonrpc.Request, met
 	if !ok {
 		return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "SSE stream is not available", nil))
 	}
-	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
-	c.Response().Header().Set("Cache-Control", "no-cache")
-	c.Response().Header().Set("X-Accel-Buffering", "no")
-	c.Response().WriteHeader(http.StatusOK)
-	flusher.Flush()
-
 	subscriptionID := request.ID
 	subscriptionRouteKey := s.nextStreamRouteKey("subscription")
 	streamCtx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
 	transport := NewStreamableHTTPTransport(c.Response().Writer, flusher, cancel)
-	if err := s.subscriptionManager.Open(subscriptionRouteKey, subscriptionID, strings.TrimSpace(editorSessionID), transport, cancel, commandEnabled, acceptedNotifications); err != nil {
-		return nil
+	if s.subscriptionManager == nil {
+		_ = transport.Close()
+		return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Subscription manager is not configured", nil))
 	}
+	if err := s.subscriptionManager.Open(subscriptionRouteKey, subscriptionID, strings.TrimSpace(editorSessionID), transport, cancel, commandEnabled, acceptedNotifications); err != nil {
+		_ = transport.Close()
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil))
+	}
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+	c.Response().WriteHeader(http.StatusOK)
+	flusher.Flush()
 	defer s.subscriptionManager.Remove(subscriptionRouteKey, transport)
 	if err := transport.SendSSE("message", acknowledgedNotification(subscriptionID, acceptedNotifications)); err != nil {
 		return nil

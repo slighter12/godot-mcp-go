@@ -21,11 +21,11 @@ var editor_sync_in_flight: bool = false
 var editor_ping_in_flight: bool = false
 
 func _ready():
-	_ensure_client_id()
 	if mcp_client == null:
 		mcp_client = get_parent().get_node_or_null("mcp_client")
 	if mcp_client == null:
 		mcp_client = get_parent().get_node_or_null("mcp_server")
+	_ensure_client_id()
 	if mcp_client == null:
 		return
 	_bind_client_signals(mcp_client)
@@ -33,13 +33,14 @@ func _ready():
 func set_mcp_client(client: Node):
 	if client == null:
 		return
-	_ensure_client_id()
 	if mcp_client == client:
+		_ensure_client_id()
 		_bind_client_signals(mcp_client)
 		return
 	if mcp_client != null:
 		_unbind_client_signals(mcp_client)
 	mcp_client = client
+	_ensure_client_id()
 	if is_node_ready():
 		_bind_client_signals(mcp_client)
 		if _is_client_connected(mcp_client):
@@ -446,12 +447,11 @@ func _ensure_client_id() -> void:
 		if remote_id is String and str(remote_id).strip_edges() != "":
 			client_id = str(remote_id).strip_edges()
 			return
-	if client_id != "":
-		return
-	var rng = RandomNumberGenerator.new()
-	rng.randomize()
-	client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
-	if mcp_client != null:
+	if client_id == "":
+		var rng = RandomNumberGenerator.new()
+		rng.randomize()
+		client_id = "%s_%s" % [str(Time.get_unix_time_from_system()), str(rng.randi())]
+	if mcp_client != null and str(mcp_client.get("editor_session_id")).strip_edges() != client_id:
 		mcp_client.set("editor_session_id", client_id)
 
 func _extract_tool_error_message(result: Dictionary) -> String:

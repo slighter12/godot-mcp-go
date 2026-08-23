@@ -3,7 +3,6 @@ package stdio
 import (
 	"testing"
 
-	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
@@ -35,7 +34,7 @@ func TestModernStdioPromptsFlow(t *testing.T) {
 		t.Fatalf("prompts/get error: %#v", get.Error)
 	}
 	getResult := mustMap(t, get.Result)
-	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "public" {
+	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "private" {
 		t.Fatalf("unexpected prompts/get result: %#v", getResult)
 	}
 }
@@ -90,5 +89,3 @@ func TestModernStdioStrictPromptValidation(t *testing.T) {
 		t.Fatalf("unexpected strict validation data: %#v", data)
 	}
 }
-
-var _ = mcpv20260728.ProtocolVersion

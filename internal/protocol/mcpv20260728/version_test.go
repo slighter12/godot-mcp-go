@@ -25,6 +25,22 @@ func TestValidateNameHeaderAcceptsBase64Sentinel(t *testing.T) {
 	}
 }
 
+func TestValidateNameHeaderRejectsUnsafeLiteral(t *testing.T) {
+	for _, name := range []string{"godot://scene/當前", "godot://scene/\ncurrent"} {
+		if err := ValidateNameHeader("resources/read", name, name); err == nil {
+			t.Fatalf("expected unsafe literal %q to require Base64 sentinel", name)
+		}
+	}
+}
+
+func TestValidateNameHeaderAcceptsEncodedUnsafeValue(t *testing.T) {
+	name := "godot://scene/當前"
+	header := base64HeaderPrefix + base64.StdEncoding.EncodeToString([]byte(name)) + base64HeaderSuffix
+	if err := ValidateNameHeader("resources/read", name, header); err != nil {
+		t.Fatalf("validate encoded unsafe Mcp-Name: %v", err)
+	}
+}
+
 func TestDecodeHeaderValueRejectsMalformedSentinel(t *testing.T) {
 	if _, err := DecodeHeaderValue("=?base64?not-valid?="); err == nil {
 		t.Fatal("expected malformed Base64 sentinel error")

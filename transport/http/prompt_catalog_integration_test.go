@@ -52,7 +52,7 @@ func TestModernHTTPPromptsFlow(t *testing.T) {
 		t.Fatalf("prompts/get status=%d", status)
 	}
 	getResult := mustMap(t, get["result"])
-	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "public" {
+	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "private" {
 		t.Fatalf("unexpected prompts/get result: %#v", getResult)
 	}
 	messages := getResult["messages"].([]any)
@@ -211,6 +211,39 @@ func TestModernHTTPPostRejectsMismatchedProtocolHeader(t *testing.T) {
 	assertRPCError(t, response, jsonrpc.ErrHeaderMismatch)
 }
 
+func TestModernHTTPPostRejectsDuplicateProtocolHeaders(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	response, status := postRawMCPWithHeaderValues(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "duplicate-header",
+		"method":  "tools/list",
+		"params":  modernParams(map[string]any{}, modernClientOptions{}),
+	}, map[string][]string{
+		headerProtocolVersion: {mcpv20260728.ProtocolVersion, mcpv20260728.ProtocolVersion},
+		headerMethod:          {"tools/list"},
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, status)
+	}
+	assertRPCError(t, response, jsonrpc.ErrHeaderMismatch)
+}
+
+func TestModernHTTPRejectsHTTPClientCancellationNotification(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	response, _, status := postRawMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/cancelled",
+		"params":  modernParams(map[string]any{"requestId": "request-1"}, modernClientOptions{}),
+	}, map[string]string{
+		headerProtocolVersion: mcpv20260728.ProtocolVersion,
+		headerMethod:          "notifications/cancelled",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, status)
+	}
+	assertRPCError(t, response, jsonrpc.ErrMethodNotFound)
+}
+
 func TestModernHTTPOriginValidation(t *testing.T) {
 	server := newTestHTTPServer(t, true)
 	server.setupEcho()
@@ -221,16 +254,4 @@ func TestModernHTTPOriginValidation(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("expected forbidden origin status, got %d", recorder.Code)
 	}
-}
-
-func waitForBodyContains(t *testing.T, recorder *synchronizedResponseRecorder, needle string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(recorder.BodyString(), needle) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %q; body=%q", needle, recorder.BodyString())
 }

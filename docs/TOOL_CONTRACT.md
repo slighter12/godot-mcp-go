@@ -116,7 +116,7 @@ Modern successful tool results contain `resultType`, `content`, `structuredConte
 
 Mutating tools require per-request capability negotiation:
 
-- Client must send `_meta.io.modelcontextprotocol/clientCapabilities.extensions.com.slighter12/godot-mcp.mutating=true`
+- Client must send the JSON key path `_meta["io.modelcontextprotocol/clientCapabilities"]["extensions"]["com.slighter12/godot-mcp"]["mutating"] = true`.
 - Without this capability, modern mutating calls return JSON-RPC `-32021` with `requiredCapabilities` and `tool` data.
 
 Mutating tools covered by this gate:
@@ -496,7 +496,7 @@ Output:
 Current behavior:
 
 - inspects the latest running game session as a global runtime bootstrap diagnostic, not as a task-scoped session guarantee
-- reports whether the bootstrap pipeline appears to be blocked at game session creation, editor freshness, runtime companion connection, runtime registration, or first snapshot arrival
+	- reports whether the bootstrap pipeline appears to be blocked at game session creation, editor freshness, runtime registration, or first snapshot arrival
 - intended as a first-line diagnostic tool when runtime bootstrap or attach/recover looks stuck
 
 ## Script Create Conflict Policy

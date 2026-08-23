@@ -35,8 +35,8 @@ func TestRuntimeDiagnoseTool_ReturnsChecklist(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected pipeline_checklist array, got %T", result["pipeline_checklist"])
 	}
-	if len(checklist) != 5 {
-		t.Fatalf("expected 5 checklist steps, got %d", len(checklist))
+	if len(checklist) != 4 {
+		t.Fatalf("expected 4 checklist steps, got %d", len(checklist))
 	}
 
 	// Step 1: game_session_exists should be true
@@ -51,22 +51,16 @@ func TestRuntimeDiagnoseTool_ReturnsChecklist(t *testing.T) {
 		t.Fatalf("expected editor_session_fresh=true, got %v", step2)
 	}
 
-	// Step 3: runtime_session_connected should be false (no session info provider)
+	// Step 3: runtime_session_registered should be false
 	step3, _ := checklist[2].(map[string]any)
-	if step3["step"] != "runtime_session_connected" || step3["ok"] != false {
-		t.Fatalf("expected runtime_session_connected=false, got %v", step3)
+	if step3["step"] != "runtime_session_registered" || step3["ok"] != false {
+		t.Fatalf("expected runtime_session_registered=false, got %v", step3)
 	}
 
-	// Step 4: runtime_session_registered should be false
+	// Step 4: first snapshot received should be false
 	step4, _ := checklist[3].(map[string]any)
-	if step4["step"] != "runtime_session_registered" || step4["ok"] != false {
-		t.Fatalf("expected runtime_session_registered=false, got %v", step4)
-	}
-
-	// Step 5: first_snapshot_received should be false
-	step5, _ := checklist[4].(map[string]any)
-	if step5["step"] != "first_snapshot_received" || step5["ok"] != false {
-		t.Fatalf("expected first_snapshot_received=false, got %v", step5)
+	if step4["step"] != "first_snapshot_received" || step4["ok"] != false {
+		t.Fatalf("expected first_snapshot_received=false, got %v", step4)
 	}
 }
 

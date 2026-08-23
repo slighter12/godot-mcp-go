@@ -165,6 +165,38 @@ func TestBridgeRuntimeRegisterTool_RejectsLaunchTokenMismatch(t *testing.T) {
 	}
 }
 
+func TestBridgeRuntimeRegisterTool_UsesNestedEditorAndRuntimeSessionIDs(t *testing.T) {
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_context", "editor-context", "res://Main.tscn", "launch-context", now)
+
+	tool := &BridgeRuntimeRegisterTool{}
+	raw := json.RawMessage(`{
+		"session_id":"game_context",
+		"launch_token":"launch-context",
+		"_mcp":{
+			"session_id":"wrong-context-fallback",
+			"editor_session_id":"editor-context",
+			"runtime_session_id":"runtime-context",
+			"session_initialized":true
+		}
+	}`)
+	resultRaw, err := tool.Execute(raw)
+	if err != nil {
+		t.Fatalf("execute runtime register: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(resultRaw, &result); err != nil {
+		t.Fatalf("unmarshal runtime register result: %v", err)
+	}
+	if result["runtime_session_id"] != "runtime-context" {
+		t.Fatalf("expected nested runtime session id, got %#v", result["runtime_session_id"])
+	}
+	if result["editor_session_id"] != "editor-context" {
+		t.Fatalf("expected nested editor session id, got %#v", result["editor_session_id"])
+	}
+}
+
 func TestBridgeRuntimeSnapshotPushTool_RejectsMismatchedRuntimeSession(t *testing.T) {
 	runtimebridge.ResetDefaultGameSessionRegistryForTests()
 	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
@@ -188,6 +220,29 @@ func TestBridgeRuntimeSnapshotPushTool_RejectsMismatchedRuntimeSession(t *testin
 	}
 	if semanticErr.Data["code"] != "game_session_missing" {
 		t.Fatalf("expected code game_session_missing, got %v", semanticErr.Data["code"])
+	}
+}
+
+func TestBridgeRuntimeSnapshotPushTool_UsesNestedRuntimeSessionID(t *testing.T) {
+	runtimebridge.ResetDefaultGameSessionRegistryForTests()
+	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
+	now := time.Now().UTC()
+	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun("game_context", "editor-context", "res://Main.tscn", "launch-context", now)
+	runtimebridge.DefaultGameSessionRegistry().RegisterRuntimeTransport("game_context", "runtime-context", "editor-context", "res://Main.tscn", now, "launch-context")
+
+	tool := &BridgeRuntimeSnapshotPushTool{}
+	raw := json.RawMessage(`{
+		"session_id":"game_context",
+		"snapshot":{"snapshot_id":"snapshot-context","frame":1,"running":true},
+		"_mcp":{
+			"session_id":"wrong-context-fallback",
+			"editor_session_id":"editor-context",
+			"runtime_session_id":"runtime-context",
+			"session_initialized":true
+		}
+	}`)
+	if _, err := tool.Execute(raw); err != nil {
+		t.Fatalf("execute runtime snapshot push: %v", err)
 	}
 }
 

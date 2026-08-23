@@ -13,10 +13,24 @@ $ROOT_DIR/runtime_variant_utils.gd
 $ROOT_DIR/runtime_snapshot_collector.gd
 "
 
-if printf '%s\n' "$RUNTIME_AUTOLOAD_FILES" | xargs rg -n 'EditorInterface' >/dev/null; then
+set -- $RUNTIME_AUTOLOAD_FILES
+for runtime_file in "$@"; do
+  if [ ! -f "$runtime_file" ]; then
+    echo "runtime addon static check failed: missing runtime script: $runtime_file"
+    exit 1
+  fi
+done
+
+if rg -n 'EditorInterface' "$@" >/dev/null; then
   echo "runtime addon static check failed: runtime autoload scripts reference EditorInterface"
-  printf '%s\n' "$RUNTIME_AUTOLOAD_FILES" | xargs rg -n 'EditorInterface'
+  rg -n 'EditorInterface' "$@"
   exit 1
+else
+  rg_status=$?
+  if [ "$rg_status" -gt 1 ]; then
+    echo "runtime addon static check failed: unable to scan runtime scripts"
+    exit 1
+  fi
 fi
 
 if rg -n 'GDScriptFunctionState' "$ROOT_DIR/runtime_companion.gd" >/dev/null; then

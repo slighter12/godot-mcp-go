@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+
+	"github.com/slighter12/godot-mcp-go/mcp"
 )
 
-const ProtocolVersion = "2026-07-28"
+const ProtocolVersion = mcp.ProtocolVersion
 
 const (
 	GodotExtensionID          = "com.slighter12/godot-mcp"
@@ -179,11 +182,28 @@ func ValidateNameHeader(method, name, headerValue string) error {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(headerValue) == "" {
 		return fmt.Errorf("Mcp-Name must match request name")
 	}
+	trimmedHeaderValue := strings.TrimSpace(headerValue)
+	encoded := strings.HasPrefix(trimmedHeaderValue, base64HeaderPrefix) && strings.HasSuffix(trimmedHeaderValue, base64HeaderSuffix)
+	if !encoded && !isSafeLiteralHeaderValue(trimmedHeaderValue) {
+		return fmt.Errorf("Mcp-Name must use Base64 sentinel for unsafe values")
+	}
 	decoded, err := DecodeHeaderValue(headerValue)
 	if err != nil || decoded != name {
 		return fmt.Errorf("Mcp-Name must match request name")
 	}
 	return nil
+}
+
+func isSafeLiteralHeaderValue(value string) bool {
+	if value == "" || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r > 0x7e || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // AddSupportedVersionsForInitialize adds the modern-only support hint to an

@@ -47,6 +47,10 @@ type Server struct {
 	promptCatalogEventWatchMu     sync.Mutex
 	promptCatalogEventWatchCancel context.CancelFunc
 	promptCatalogEventWatchDone   chan struct{}
+
+	releaseNotificationSender func()
+	releaseProgressNotifier   func()
+	stdioServer               *stdio.StdioServer
 }
 
 func NewServer(cfg *config.Config) *Server {
@@ -65,8 +69,8 @@ func NewServer(cfg *config.Config) *Server {
 		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
 		time.Duration(cfg.RuntimeBridge.StaleGraceMS)*time.Millisecond,
 	)
-	runtimebridge.SetNotificationSender(server.SendJSONRPCNotificationToEditor)
-	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
+	server.releaseNotificationSender = runtimebridge.RegisterNotificationSender(server.SendJSONRPCNotificationToEditor)
+	server.releaseProgressNotifier = tooltypes.RegisterRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
 	return server
 }
 
@@ -140,11 +144,14 @@ func (s *Server) setupEcho() {
 func (s *Server) startStdioServer() error {
 	logger.Info("Starting MCP server in stdio mode", "config", s.config)
 	server := stdio.NewStdioServer(s.toolManager)
+	s.stdioServer = server
 	server.AttachPromptCatalog(s.promptCatalog)
 	server.AttachPromptRenderOptions(s.promptRenderOptions())
 	server.AttachToolCallOptions(s.toolCallOptions())
-	tooltypes.SetRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
-	defer tooltypes.SetRuntimeCommandProgressNotifier(nil)
+	releaseNotificationSender := runtimebridge.RegisterNotificationSender(server.SendJSONRPCNotificationToEditor)
+	defer releaseNotificationSender()
+	releaseProgressNotifier := tooltypes.RegisterRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
+	defer releaseProgressNotifier()
 	return server.Start()
 }
 
@@ -325,6 +332,12 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.stopPromptCatalogWatchers()
+	if s.releaseNotificationSender != nil {
+		s.releaseNotificationSender()
+	}
+	if s.releaseProgressNotifier != nil {
+		s.releaseProgressNotifier()
+	}
 	if s.subscriptionManager != nil {
 		s.subscriptionManager.CloseAll()
 	}

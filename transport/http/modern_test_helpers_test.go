@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/slighter12/godot-mcp-go/config"
@@ -87,6 +89,28 @@ func postRawMCP(t *testing.T, server *Server, body map[string]any, headers map[s
 		t.Fatalf("handleStreamableHTTPPost: %v", err)
 	}
 	return decodeHTTPResponse(t, rec), "", rec.Code
+}
+
+func postRawMCPWithHeaderValues(t *testing.T, server *Server, body map[string]any, headers map[string][]string) (map[string]any, int) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	req.Header.Set(echo.HeaderAccept, "application/json, text/event-stream")
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	ctx := echo.New().NewContext(req, recorder)
+	if err := server.handleStreamableHTTPPost(ctx); err != nil {
+		t.Fatalf("handleStreamableHTTPPost: %v", err)
+	}
+	return decodeHTTPResponse(t, recorder), recorder.Code
 }
 
 func modernParams(params map[string]any, options modernClientOptions) map[string]any {
@@ -228,4 +252,16 @@ func assertRPCError(t *testing.T, response map[string]any, code jsonrpc.ErrorCod
 		t.Fatalf("expected JSON-RPC error %d, got %v", int(code), errorObject["code"])
 	}
 	return errorObject
+}
+
+func waitForBodyContains(t *testing.T, recorder *synchronizedResponseRecorder, needle string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(recorder.BodyString(), needle) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q; body=%q", needle, recorder.BodyString())
 }

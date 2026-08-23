@@ -71,7 +71,7 @@ if docker run --rm --no-healthcheck --add-host host.docker.internal:host-gateway
   exit 1
 fi
 
-if ! grep -Eq "Protocol version header does not match|Invalid request metadata|MCP-Protocol-Version" "$inspector_output"; then
+if ! grep -Eq "Protocol version header does not match|Invalid request metadata|Mcp-Method header does not match" "$inspector_output"; then
   echo "expected protocol-header validation error, got:"
   cat "$inspector_output"
   exit 1

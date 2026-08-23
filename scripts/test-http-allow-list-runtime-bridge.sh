@@ -22,26 +22,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-require_contains() {
-  allow_haystack="$1"
-  allow_needle="$2"
-  allow_label="$3"
-  case "$allow_haystack" in
-    *"$allow_needle"*) ;;
-    *) echo "assert failed: $allow_label"; echo "expected fragment: $allow_needle"; exit 1 ;;
-  esac
-}
-
-require_not_contains() {
-  allow_haystack="$1"
-  allow_needle="$2"
-  allow_label="$3"
-  case "$allow_haystack" in
-    *"$allow_needle"*) echo "assert failed: $allow_label"; echo "unexpected fragment: $allow_needle"; exit 1 ;;
-    *) ;;
-  esac
-}
-
 cp "./config/mcp_config.json" "$runtime_config"
 sed -E \
   -e "s/\"port\"[[:space:]]*:[[:space:]]*[0-9]+/\"port\": ${SERVER_PORT}/" \
@@ -53,18 +33,7 @@ mv "${runtime_config}.tmp" "$runtime_config"
 
 start_test_server "$log_file" "$runtime_config"
 
-ready=0
-for _ in $(seq 1 80); do
-  if ! kill -0 "$server_pid" >/dev/null 2>&1; then
-    echo "server process exited before readiness"; cat "$log_file"; exit 1
-  fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
-    ready=1
-    break
-  fi
-  sleep 0.2
-done
-test "$ready" = 1
+wait_for_test_server
 
 editor_id="editor-allow-list"
 sync_payload="$(mcp_request sync tools/call '{"name":"godot.bridge.editor.sync","arguments":{"snapshot":{"root_summary":{"active_scene":"res://AllowList.tscn"},"scene_tree":{"path":"/Root","name":"Root","type":"Node2D","child_count":0},"node_details":{"/Root":{"path":"/Root","name":"Root","type":"Node2D","child_count":0}}}}}' "$editor_id")"

@@ -66,6 +66,7 @@ func main() {
 		defer cancel()
 		if err := server.Shutdown(ctx); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
 			logger.Error("Server shutdown error", "error", err)
+			os.Exit(1)
 		}
 		if err := <-serverErr; err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
 			logger.Error("Server error during shutdown", "error", err)

@@ -104,7 +104,7 @@ Both modes share the same reload pipeline and list-changed emission logic.
 | `not_supported` | `-32601` | Feature disabled or blocked by runtime policy |
 | `not_available` | `-32603` | Runtime dependency/data not ready |
 | `invalid_params` | `-32602` | Request payload invalid for contract |
-| `execution_failed` | `-32603` | Runtime path failed after acceptance |
+| `execution_failed` | tool result `isError: true` | Runtime path failed after the tool call was accepted |
 
 All semantic errors include `error.data.kind`.
 

@@ -63,7 +63,8 @@ func TestModernStdioInvalidMetadataAndUnknownMethod(t *testing.T) {
 		t.Fatalf("expected invalid metadata response, got %#v", response)
 	}
 	data := mustMap(t, response.Error.Data)
-	if data["supported"].([]string)[0] != mcpv20260728.ProtocolVersion {
+	supported, ok := data["supported"].([]string)
+	if !ok || len(supported) != 1 || supported[0] != mcpv20260728.ProtocolVersion {
 		t.Fatalf("expected supported version diagnostic, got %#v", data)
 	}
 

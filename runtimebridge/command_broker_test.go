@@ -122,10 +122,11 @@ func TestCommandBrokerAck_RejectsWrongSession(t *testing.T) {
 	ResetDefaultCommandBrokerForTests(2 * time.Second)
 	broker := DefaultCommandBroker()
 
-	var capturedCommandID string
+	commandCaptured := make(chan string, 1)
 	SetNotificationSender(func(sessionID string, message map[string]any) bool {
 		params, _ := message["params"].(map[string]any)
-		capturedCommandID, _ = params["command_id"].(string)
+		commandID, _ := params["command_id"].(string)
+		commandCaptured <- commandID
 		// Do NOT auto-ack here — we'll ack manually to test rejection.
 		return true
 	})
@@ -138,15 +139,14 @@ func TestCommandBrokerAck_RejectsWrongSession(t *testing.T) {
 		broker.DispatchAndWait("editor-1", "godot.node.create", map[string]any{}, 2*time.Second)
 	}()
 
-	// Wait for the command to be dispatched and capturedCommandID to be set.
-	for i := 0; i < 50; i++ {
-		if capturedCommandID != "" {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	var capturedCommandID string
+	select {
+	case capturedCommandID = <-commandCaptured:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("command was not dispatched")
 	}
 	if capturedCommandID == "" {
-		t.Fatal("command was not dispatched")
+		t.Fatal("command was dispatched without an ID")
 	}
 
 	// Ack from wrong session should be rejected.

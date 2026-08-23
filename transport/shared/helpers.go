@@ -181,7 +181,7 @@ func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 		"resultType": "complete",
 		"_meta":      resultMeta(),
 		"ttlMs":      int64(0),
-		"cacheScope": "public",
+		"cacheScope": "private",
 		"contents": []map[string]any{
 			{
 				"uri":      params.URI,
@@ -323,7 +323,7 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 		"resultType":  "complete",
 		"_meta":       resultMeta(),
 		"ttlMs":       int64(0),
-		"cacheScope":  "public",
+		"cacheScope":  "private",
 		"name":        prompt.Name,
 		"description": prompt.Description,
 		"messages": []map[string]any{
@@ -846,7 +846,7 @@ func resultMeta() map[string]any {
 	return map[string]any{
 		"io.modelcontextprotocol/serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
-			"version": "0.3.0",
+			"version": mcp.ServerVersion,
 		},
 	}
 }
