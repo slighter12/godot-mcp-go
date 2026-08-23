@@ -60,6 +60,7 @@ printf '%s\n' \
   '    }' \
   '  }' \
   '}' >"$inspector_config"
+chmod 0644 "$inspector_config"
 
 run_inspector() {
   method="$1"

@@ -60,6 +60,7 @@ printf '%s\n' \
   '    }' \
   '  }' \
   '}' >"$inspector_config"
+chmod 0644 "$inspector_config"
 
 if docker run --rm --no-healthcheck --add-host host.docker.internal:host-gateway \
   -v "$inspector_config:/tmp/godot-mcp-inspector.json:ro" "$INSPECTOR_IMAGE" \
