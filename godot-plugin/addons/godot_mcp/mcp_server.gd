@@ -174,6 +174,7 @@ func _on_post_request_completed(result: int, response_code: int, headers: Packed
 		else:
 			emit_signal("error", "MCP request failed: " + str(result))
 		_flush_reconnect()
+		_flush_pending_messages()
 		return
 	if is_connecting:
 		_handle_discover_response(response_code, body)

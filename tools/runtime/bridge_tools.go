@@ -165,12 +165,13 @@ func (t *BridgeRuntimeRegisterTool) Execute(args json.RawMessage) ([]byte, error
 	}
 	editorContextID := editorContextSessionID(payload.Context)
 	runtimeSessionID := runtimeContextSessionID(payload.Context)
+	launchTokenPresent := strings.TrimSpace(payload.LaunchToken) != ""
 	log.Printf(
-		"godot-mcp runtime.register received: game_session_id=%q runtime_session_id=%q editor_session_id=%q launch_token=%q scene_path=%q started_at=%q",
+		"godot-mcp runtime.register received: game_session_id=%q runtime_session_id=%q editor_session_id=%q launch_token_present=%t scene_path=%q started_at=%q",
 		strings.TrimSpace(payload.SessionID),
 		runtimeSessionID,
 		strings.TrimSpace(payload.EditorSessionID),
-		strings.TrimSpace(payload.LaunchToken),
+		launchTokenPresent,
 		strings.TrimSpace(payload.ScenePath),
 		strings.TrimSpace(payload.StartedAt),
 	)
@@ -218,7 +219,7 @@ func (t *BridgeRuntimeRegisterTool) Execute(args json.RawMessage) ([]byte, error
 		startedAt,
 		strings.TrimSpace(payload.LaunchToken),
 	)
-	log.Printf("godot-mcp runtime register accepted: game_session_id=%q runtime_session_id=%q editor_session_id=%q launch_token=%q", sessionID, runtimeSessionID, editorSessionID, strings.TrimSpace(payload.LaunchToken))
+	log.Printf("godot-mcp runtime register accepted: game_session_id=%q runtime_session_id=%q editor_session_id=%q launch_token_present=%t", sessionID, runtimeSessionID, editorSessionID, launchTokenPresent)
 	return json.Marshal(map[string]any{
 		"source":             "runtime",
 		"registered":         true,

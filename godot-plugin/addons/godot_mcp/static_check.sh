@@ -3,17 +3,14 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
-RUNTIME_AUTOLOAD_FILES="
-$ROOT_DIR/runtime_companion.gd
-$ROOT_DIR/runtime_mcp_interface.gd
-$ROOT_DIR/runtime_mcp_server.gd
-$ROOT_DIR/runtime_streamable_http_client.gd
-$ROOT_DIR/runtime_mcp_protocol_adapter.gd
-$ROOT_DIR/runtime_variant_utils.gd
-$ROOT_DIR/runtime_snapshot_collector.gd
-"
-
-set -- $RUNTIME_AUTOLOAD_FILES
+set -- \
+  "$ROOT_DIR/runtime_companion.gd" \
+  "$ROOT_DIR/runtime_mcp_interface.gd" \
+  "$ROOT_DIR/runtime_mcp_server.gd" \
+  "$ROOT_DIR/runtime_streamable_http_client.gd" \
+  "$ROOT_DIR/runtime_mcp_protocol_adapter.gd" \
+  "$ROOT_DIR/runtime_variant_utils.gd" \
+  "$ROOT_DIR/runtime_snapshot_collector.gd"
 for runtime_file in "$@"; do
   if [ ! -f "$runtime_file" ]; then
     echo "runtime addon static check failed: missing runtime script: $runtime_file"

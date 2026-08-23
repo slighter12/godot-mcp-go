@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -100,8 +101,15 @@ func (m *SubscriptionManager) Remove(key string, expected ...*StreamableHTTPTran
 // its stream. This gives clients a protocol-level distinction between a
 // graceful server shutdown and an unexpected connection failure.
 func (m *SubscriptionManager) CloseAll() {
+	m.closeAll(context.Background())
+}
+
+func (m *SubscriptionManager) closeAll(ctx context.Context) {
 	if m == nil {
 		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	m.mu.Lock()
 	subscriptions := make([]*commandSubscription, 0, len(m.subscriptions))
@@ -111,13 +119,49 @@ func (m *SubscriptionManager) CloseAll() {
 	}
 	m.mu.Unlock()
 
+	done := make(chan struct{})
+	var waitGroup sync.WaitGroup
 	for _, subscription := range subscriptions {
-		_ = subscription.transport.SendSSEWithTimeout("message", gracefulSubscriptionResponse(subscription.id), subscriptionWriteTimeout)
-		if subscription.close != nil {
-			subscription.close()
+		if subscription == nil {
+			continue
 		}
-		_ = subscription.transport.Close()
+		waitGroup.Add(1)
+		go func(subscription *commandSubscription) {
+			defer waitGroup.Done()
+			if timeout, ok := subscriptionWriteTimeoutForContext(ctx); ok {
+				_ = subscription.transport.SendSSEWithTimeout("message", gracefulSubscriptionResponse(subscription.id), timeout)
+			}
+			if subscription.close != nil {
+				subscription.close()
+			}
+			_ = subscription.transport.Close()
+		}(subscription)
 	}
+	go func() {
+		waitGroup.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+func subscriptionWriteTimeoutForContext(ctx context.Context) (time.Duration, bool) {
+	if err := ctx.Err(); err != nil {
+		return 0, false
+	}
+	timeout := subscriptionWriteTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return 0, false
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	return timeout, true
 }
 
 func (m *SubscriptionManager) SendToEditor(editorSessionID string, message map[string]any) bool {

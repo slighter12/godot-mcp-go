@@ -37,7 +37,7 @@ for _ in $(seq 1 120); do
     cat "$log_file"
     exit 1
   fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+  if curl -sS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
     ready=1
     break
   fi

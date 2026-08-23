@@ -302,7 +302,7 @@ func _handle_project_run(arguments: Dictionary, _editor_interface: EditorInterfa
 	var already_running = _editor_is_playing_scene()
 	var runtime_autoload_key = "autoload/GodotMCPRuntimeCompanion"
 	var runtime_autoload_enabled = ProjectSettings.has_setting(runtime_autoload_key)
-	print("Godot MCP Plugin: project.run received - requested_session_id=", session_id, " editor_session_id=", editor_session_id, " launch_token=", launch_token, " already_running=", already_running, " runtime_autoload_enabled=", runtime_autoload_enabled)
+	print("Godot MCP Plugin: project.run received - requested_session_id=", session_id, " editor_session_id=", editor_session_id, " launch_token_present=", launch_token != "", " already_running=", already_running, " runtime_autoload_enabled=", runtime_autoload_enabled)
 	if already_running:
 		print("Godot MCP Plugin: Editor is already playing, attempting attach/recover")
 		var persisted_identity = _read_runtime_handshake_identity(DEFAULT_RUNTIME_ACTIVE_HANDSHAKE_FILE)

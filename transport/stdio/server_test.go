@@ -1,8 +1,11 @@
 package stdio
 
 import (
+	"context"
+	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
@@ -72,4 +75,69 @@ func TestModernStdioInvalidMetadataAndUnknownMethod(t *testing.T) {
 	if unknown.Error == nil || unknown.Error.Code != int(jsonrpc.ErrMethodNotFound) {
 		t.Fatalf("expected unknown method error, got %#v", unknown)
 	}
+}
+
+func TestModernStdioDuplicateSubscriptionIDsRemainIndependent(t *testing.T) {
+	server := newTestStdioServer(false)
+	server.output = io.Discard
+	request := jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      1,
+		Method:  "subscriptions/listen",
+		Params: mustRaw(t, modernStdioParams(map[string]any{
+			"notifications": map[string]any{"toolsListChanged": true},
+		}, modernStdioClientOptions{})),
+	}
+	meta, err := mcpv20260728.ParseRequestMeta(request.Params)
+	if err != nil {
+		t.Fatalf("parse subscription metadata: %v", err)
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+	doneA := make(chan struct{})
+	doneB := make(chan struct{})
+	go func() {
+		defer close(doneA)
+		server.handleSubscription(ctxA, cancelA, request, meta)
+	}()
+	go func() {
+		defer close(doneB)
+		server.handleSubscription(ctxB, cancelB, request, meta)
+	}()
+
+	waitForStdioSubscriptionCount(t, server, 2)
+	server.handleCancellation(jsonrpc.Request{
+		Params: mustRaw(t, map[string]any{"requestId": 1}),
+	})
+	waitForStdioSubscriptionCount(t, server, 0)
+
+	select {
+	case <-doneA:
+	case <-time.After(time.Second):
+		t.Fatal("first duplicate subscription did not stop")
+	}
+	select {
+	case <-doneB:
+	case <-time.After(time.Second):
+		t.Fatal("second duplicate subscription did not stop")
+	}
+}
+
+func waitForStdioSubscriptionCount(t *testing.T, server *StdioServer, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		server.subscriptionsMu.Lock()
+		got := len(server.subscriptions)
+		server.subscriptionsMu.Unlock()
+		if got == want {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	server.subscriptionsMu.Lock()
+	got := len(server.subscriptions)
+	server.subscriptionsMu.Unlock()
+	t.Fatalf("expected %d active subscriptions, got %d", want, got)
 }

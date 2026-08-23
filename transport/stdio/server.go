@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
@@ -31,16 +32,19 @@ type StdioServer struct {
 	promptRenderOptions shared.PromptRenderOptions
 	toolCallOptions     shared.ToolCallOptions
 
-	writeMu         sync.Mutex
-	pendingMu       sync.Mutex
-	pending         map[string]context.CancelFunc
-	subscriptionsMu sync.Mutex
-	subscriptions   map[string]*stdioSubscription
+	writeMu                   sync.Mutex
+	output                    io.Writer
+	pendingMu                 sync.Mutex
+	pending                   map[string]context.CancelFunc
+	subscriptionsMu           sync.Mutex
+	subscriptions             map[string]*stdioSubscription
+	subscriptionRouteSequence atomic.Uint64
 }
 
 type stdioSubscription struct {
 	key             string
 	id              any
+	idKey           string
 	editorSessionID string
 	commandEnabled  bool
 	notifications   map[string]any
@@ -52,6 +56,7 @@ func NewStdioServer(toolManager *tools.Manager) *StdioServer {
 		toolManager:         toolManager,
 		promptRenderOptions: shared.DefaultPromptRenderOptions(),
 		toolCallOptions:     shared.DefaultToolCallOptions(),
+		output:              os.Stdout,
 		pending:             make(map[string]context.CancelFunc),
 		subscriptions:       make(map[string]*stdioSubscription),
 	}
@@ -111,8 +116,9 @@ func (s *StdioServer) Start() error {
 
 func (s *StdioServer) handleRequest(request jsonrpc.Request) {
 	requestKey := requestIDKey(request.ID)
+	tracksPending := requestKey != "" && request.Method != "subscriptions/listen"
 	ctx, cancel := context.WithCancel(context.Background())
-	if requestKey != "" {
+	if tracksPending {
 		s.pendingMu.Lock()
 		s.pending[requestKey] = cancel
 		s.pendingMu.Unlock()
@@ -207,13 +213,18 @@ func (s *StdioServer) handleCancellation(request jsonrpc.Request) {
 		cancel()
 	}
 	s.subscriptionsMu.Lock()
-	subscription := s.subscriptions[key]
-	if subscription != nil {
-		delete(s.subscriptions, key)
+	subscriptions := make([]*stdioSubscription, 0)
+	for subscriptionKey, subscription := range s.subscriptions {
+		if subscription != nil && subscription.idKey == key {
+			delete(s.subscriptions, subscriptionKey)
+			subscriptions = append(subscriptions, subscription)
+		}
 	}
 	s.subscriptionsMu.Unlock()
-	if subscription != nil && subscription.cancel != nil {
-		subscription.cancel()
+	for _, subscription := range subscriptions {
+		if subscription.cancel != nil {
+			subscription.cancel()
+		}
 	}
 }
 
@@ -227,7 +238,7 @@ func (s *StdioServer) handleSubscription(ctx context.Context, cancel context.Can
 		return
 	}
 	subscriptionID := request.ID
-	subscriptionKey := requestIDKey(subscriptionID)
+	subscriptionKey := s.nextSubscriptionRouteKey()
 	notifications := map[string]any{}
 	requested, _ := params["notifications"].(map[string]any)
 	for _, key := range []string{"promptsListChanged", "resourcesListChanged", "toolsListChanged", "resourceSubscriptions"} {
@@ -264,6 +275,7 @@ func (s *StdioServer) handleSubscription(ctx context.Context, cancel context.Can
 	subscription := &stdioSubscription{
 		key:             subscriptionKey,
 		id:              subscriptionID,
+		idKey:           requestIDKey(subscriptionID),
 		editorSessionID: editorSessionID,
 		commandEnabled:  commandEnabled,
 		notifications:   cloneStdioMap(notifications),
@@ -286,6 +298,10 @@ func (s *StdioServer) handleSubscription(ctx context.Context, cancel context.Can
 		delete(s.subscriptions, subscriptionKey)
 	}
 	s.subscriptionsMu.Unlock()
+}
+
+func (s *StdioServer) nextSubscriptionRouteKey() string {
+	return fmt.Sprintf("subscription-%d", s.subscriptionRouteSequence.Add(1))
 }
 
 func (s *StdioServer) cancelAll() {
@@ -390,7 +406,11 @@ func gracefulStdioSubscriptionResponse(subscriptionID any) *jsonrpc.Response {
 func (s *StdioServer) write(value any) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := json.NewEncoder(os.Stdout).Encode(value); err != nil {
+	output := s.output
+	if output == nil {
+		output = os.Stdout
+	}
+	if err := json.NewEncoder(output).Encode(value); err != nil {
 		logger.Error("Error encoding stdio response", "error", err)
 	}
 }

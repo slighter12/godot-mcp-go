@@ -19,7 +19,7 @@ func dispatch(command_id: String, command_name: String, arguments: Dictionary, e
 				if raw_session_id is String:
 					editor_session_id = str(raw_session_id).strip_edges()
 			var launch_token := str(arguments.get("launch_token", "")).strip_edges()
-			print("Godot MCP Plugin: received godot.project.run - command_id=", command_id, " editor_session_id=", editor_session_id, " game_session_id=", game_session_id, " launch_token=", launch_token)
+			print("Godot MCP Plugin: received godot.project.run - command_id=", command_id, " editor_session_id=", editor_session_id, " game_session_id=", game_session_id, " launch_token_present=", launch_token != "")
 		var handler_callable: Callable = mutating_handlers[command_name]
 		var payload: Dictionary = handler_callable.call(arguments, editor_interface)
 		if command_name == "godot.project.run":

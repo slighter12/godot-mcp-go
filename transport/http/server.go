@@ -339,7 +339,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.releaseProgressNotifier()
 	}
 	if s.subscriptionManager != nil {
-		s.subscriptionManager.CloseAll()
+		s.subscriptionManager.closeAll(ctx)
 	}
 	s.progressMu.Lock()
 	progressStreams := make([]*StreamableHTTPTransport, 0, len(s.progressStreams))

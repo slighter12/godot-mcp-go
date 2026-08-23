@@ -873,7 +873,7 @@ func _apply_handshake_payload(payload: Dictionary, source_path: String) -> bool:
 		"scene_path": game_scene_path,
 		"streamable_http_url": streamable_http_url
 	})
-	print("Godot MCP Runtime: handshake loaded - game_session_id=", game_session_id, " editor_session_id=", editor_session_id, " launch_token=", launch_token, " scene_path=", game_scene_path)
+	print("Godot MCP Runtime: handshake loaded - game_session_id=", game_session_id, " editor_session_id=", editor_session_id, " launch_token_present=", launch_token != "", " scene_path=", game_scene_path)
 
 	return true
 

@@ -357,7 +357,7 @@ func (t *RunProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 	if semErr != nil {
 		return nil, semErr
 	}
-	log.Printf("godot-mcp project.run request received: caller_session_id=%q editor_session_id=%q game_session_id=%q launch_token=%q scene_path=%q", strings.TrimSpace(ctx.SessionID), editorCommandSessionID, runSessionID, launchToken, scenePath)
+	log.Printf("godot-mcp project.run request received: caller_session_id=%q editor_session_id=%q game_session_id=%q launch_token_present=%t scene_path=%q", strings.TrimSpace(ctx.SessionID), editorCommandSessionID, runSessionID, strings.TrimSpace(launchToken) != "", scenePath)
 
 	// Clean up zombie game sessions left by previous project.run calls that
 	// timed out waiting for the first runtime snapshot.  These are sessions
@@ -374,7 +374,7 @@ func (t *RunProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 		"launch_token": launchToken,
 		"scene_path":   scenePath,
 	}, projectCommandTimeout)
-	log.Printf("godot-mcp project.run dispatched: editor_session_id=%q game_session_id=%q launch_token=%q dispatch_ok=%t reason=%q", editorCommandSessionID, runSessionID, launchToken, ok, strings.TrimSpace(reason))
+	log.Printf("godot-mcp project.run dispatched: editor_session_id=%q game_session_id=%q launch_token_present=%t dispatch_ok=%t reason=%q", editorCommandSessionID, runSessionID, strings.TrimSpace(launchToken) != "", ok, strings.TrimSpace(reason))
 	if !ok {
 		cleanupFailedRunSession(runSessionID)
 		return nil, tooltypes.NewRuntimeNotAvailableError("Project run bridge is unavailable", t.Name(), mapProjectCommandReason(reason), map[string]any{
@@ -412,7 +412,7 @@ func (t *RunProjectTool) Execute(args json.RawMessage) ([]byte, error) {
 		}
 	}
 	runtimebridge.DefaultGameSessionRegistry().UpsertFromRun(runSessionID, editorCommandSessionID, scenePath, launchToken, startedAt)
-	log.Printf("godot-mcp project.run ack accepted: editor_session_id=%q game_session_id=%q launch_token=%q scene_path=%q", editorCommandSessionID, runSessionID, launchToken, scenePath)
+	log.Printf("godot-mcp project.run ack accepted: editor_session_id=%q game_session_id=%q launch_token_present=%t scene_path=%q", editorCommandSessionID, runSessionID, strings.TrimSpace(launchToken) != "", scenePath)
 
 	if _, reason, ready := runtimebridge.DefaultRuntimeSnapshotStore().Await(runSessionID, 0, projectCommandTimeout, runtimebridge.FreshnessStateFresh); !ready {
 		log.Printf("godot-mcp project.run await first snapshot failed: editor_session_id=%q game_session_id=%q reason=%q", editorCommandSessionID, runSessionID, strings.TrimSpace(reason))

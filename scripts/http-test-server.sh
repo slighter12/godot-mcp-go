@@ -27,7 +27,7 @@ wait_for_test_server() {
       cat "$test_server_log_file"
       return 1
     fi
-    if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+    if curl -sS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
       test_server_ready=1
       break
     fi
