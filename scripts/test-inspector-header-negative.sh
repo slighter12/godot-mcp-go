@@ -12,10 +12,11 @@ INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:lates
 log_file="$(mktemp /tmp/godot-mcp-go-inspector-negative.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector-negative.config.XXXXXX.json)"
 inspector_output="$(mktemp /tmp/godot-mcp-go-inspector-negative.output.XXXXXX.log)"
+inspector_config="$(mktemp /tmp/godot-mcp-go-inspector-negative.cli.XXXXXX.json)"
 
 cleanup() {
   stop_test_server
-  rm -f "$log_file" "$runtime_config" "$inspector_output"
+  rm -f "$log_file" "$runtime_config" "$inspector_output" "$inspector_config"
 }
 trap cleanup EXIT
 
@@ -49,7 +50,21 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint node "$INSPECTOR_IMAGE" /app/cli/build/index.js "$INSPECTOR_SERVER_URL" --transport http --method tools/list >"$inspector_output" 2>&1; then
+printf '%s\n' \
+  '{' \
+  '  "mcpServers": {' \
+  '    "godot-mcp": {' \
+  '      "type": "streamable-http",' \
+  "      \"url\": \"$INSPECTOR_SERVER_URL\"," \
+  '      "protocolEra": "legacy"' \
+  '    }' \
+  '  }' \
+  '}' >"$inspector_config"
+
+if docker run --rm --no-healthcheck --add-host host.docker.internal:host-gateway \
+  -v "$inspector_config:/tmp/godot-mcp-inspector.json:ro" "$INSPECTOR_IMAGE" \
+  --cli --config /tmp/godot-mcp-inspector.json --server godot-mcp \
+  --method tools/list >"$inspector_output" 2>&1; then
   echo "expected inspector call to fail when MCP-Protocol-Version header is missing"
   cat "$inspector_output"
   exit 1
