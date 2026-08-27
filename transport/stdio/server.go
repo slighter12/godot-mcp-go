@@ -1,6 +1,7 @@
 package stdio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -201,7 +202,9 @@ func (s *StdioServer) handleCancellation(request jsonrpc.Request) {
 	var params struct {
 		RequestID any `json:"requestId"`
 	}
-	if err := json.Unmarshal(request.Params, &params); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(request.Params))
+	decoder.UseNumber()
+	if err := decoder.Decode(&params); err != nil {
 		return
 	}
 	key := requestIDKey(params.RequestID)
@@ -440,7 +443,11 @@ func requestIDKey(id any) string {
 	if id == nil {
 		return ""
 	}
-	return fmt.Sprint(id)
+	encoded, err := json.Marshal(id)
+	if err != nil {
+		return fmt.Sprintf("%T:%v", id, id)
+	}
+	return string(encoded)
 }
 
 func readGodotResource(path string) (any, error) {

@@ -941,6 +941,11 @@ func ParseJSONRPCFrame(frame []byte) ([]jsonrpc.Request, []any, bool, error) {
 			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 			continue
 		}
+		if hasID {
+			// json.Unmarshal converts numbers stored in an interface to float64.
+			// Reuse the validated representation so large integer IDs remain exact.
+			msg.ID = requestID
+		}
 
 		if msg.Method == "" {
 			_, hasResult := envelope["result"]

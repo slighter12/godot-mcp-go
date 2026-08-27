@@ -2,6 +2,7 @@ package stdio
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"testing"
@@ -121,6 +122,113 @@ func TestModernStdioDuplicateSubscriptionIDsRemainIndependent(t *testing.T) {
 	case <-doneB:
 	case <-time.After(time.Second):
 		t.Fatal("second duplicate subscription did not stop")
+	}
+}
+
+func TestModernStdioCancellationDistinguishesNumericAndStringIDs(t *testing.T) {
+	server := newTestStdioServer(false)
+	server.output = io.Discard
+	params := mustRaw(t, modernStdioParams(map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+	}, modernStdioClientOptions{}))
+	numericRequest := jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      1,
+		Method:  "subscriptions/listen",
+		Params:  params,
+	}
+	stringRequest := numericRequest
+	stringRequest.ID = "1"
+	meta, err := mcpv20260728.ParseRequestMeta(params)
+	if err != nil {
+		t.Fatalf("parse subscription metadata: %v", err)
+	}
+
+	numericCtx, numericCancel := context.WithCancel(context.Background())
+	defer numericCancel()
+	stringCtx, stringCancel := context.WithCancel(context.Background())
+	defer stringCancel()
+	numericDone := make(chan struct{})
+	stringDone := make(chan struct{})
+	go func() {
+		defer close(numericDone)
+		server.handleSubscription(numericCtx, numericCancel, numericRequest, meta)
+	}()
+	go func() {
+		defer close(stringDone)
+		server.handleSubscription(stringCtx, stringCancel, stringRequest, meta)
+	}()
+
+	waitForStdioSubscriptionCount(t, server, 2)
+	server.handleCancellation(jsonrpc.Request{
+		Params: mustRaw(t, map[string]any{"requestId": 1}),
+	})
+	select {
+	case <-numericDone:
+	case <-time.After(time.Second):
+		t.Fatal("numeric subscription was not cancelled")
+	}
+	select {
+	case <-stringDone:
+		t.Fatal("string subscription was cancelled by numeric request ID")
+	case <-time.After(50 * time.Millisecond):
+	}
+	waitForStdioSubscriptionCount(t, server, 1)
+
+	server.handleCancellation(jsonrpc.Request{
+		Params: mustRaw(t, map[string]any{"requestId": "1"}),
+	})
+	select {
+	case <-stringDone:
+	case <-time.After(time.Second):
+		t.Fatal("string subscription was not cancelled")
+	}
+	waitForStdioSubscriptionCount(t, server, 0)
+}
+
+func TestModernStdioCancellationPreservesLargeIntegerIDs(t *testing.T) {
+	server := newTestStdioServer(false)
+	server.output = io.Discard
+	requestID := json.Number("9007199254740993")
+	params := mustRaw(t, modernStdioParams(map[string]any{
+		"notifications": map[string]any{"toolsListChanged": true},
+	}, modernStdioClientOptions{}))
+	request := jsonrpc.Request{
+		JSONRPC: jsonrpc.Version,
+		ID:      requestID,
+		Method:  "subscriptions/listen",
+		Params:  params,
+	}
+	meta, err := mcpv20260728.ParseRequestMeta(params)
+	if err != nil {
+		t.Fatalf("parse subscription metadata: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.handleSubscription(ctx, cancel, request, meta)
+	}()
+
+	waitForStdioSubscriptionCount(t, server, 1)
+	server.handleCancellation(jsonrpc.Request{
+		Params: mustRaw(t, map[string]any{"requestId": requestID}),
+	})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("large integer subscription was not cancelled")
+	}
+	waitForStdioSubscriptionCount(t, server, 0)
+}
+
+func TestRequestIDKeyPreservesJSONTypeAndPrecision(t *testing.T) {
+	if requestIDKey(1) == requestIDKey("1") {
+		t.Fatal("numeric and string request IDs must have distinct routing keys")
+	}
+	if requestIDKey(json.Number("9007199254740992")) == requestIDKey(json.Number("9007199254740993")) {
+		t.Fatal("distinct large integer request IDs must have distinct routing keys")
 	}
 }
 
