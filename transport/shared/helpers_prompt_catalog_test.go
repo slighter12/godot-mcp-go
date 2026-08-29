@@ -63,8 +63,8 @@ func TestBuildPromptsListResponse_NotAvailable(t *testing.T) {
 	if resp == nil || resp.Error == nil {
 		t.Fatal("expected error response")
 	}
-	if resp.Error.Code != int(jsonrpc.ErrServerError) {
-		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrServerError), resp.Error.Code)
+	if resp.Error.Code != int(jsonrpc.ErrInternalError) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInternalError), resp.Error.Code)
 	}
 	assertErrorKindFeature(t, resp.Error.Data, "not_available", "prompt_catalog")
 	data := mustErrorDataMap(t, resp.Error.Data)
@@ -357,8 +357,8 @@ func TestBuildPromptsGetResponse_NotAvailable(t *testing.T) {
 	if resp == nil || resp.Error == nil {
 		t.Fatal("expected error response")
 	}
-	if resp.Error.Code != int(jsonrpc.ErrServerError) {
-		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrServerError), resp.Error.Code)
+	if resp.Error.Code != int(jsonrpc.ErrInternalError) {
+		t.Fatalf("expected %d, got %d", int(jsonrpc.ErrInternalError), resp.Error.Code)
 	}
 	assertErrorKindFeature(t, resp.Error.Data, "not_available", "prompt_catalog")
 

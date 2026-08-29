@@ -169,7 +169,7 @@ func dispatchScriptRuntimeCommand(rawArgs json.RawMessage, commandName string, v
 		RawArgs:                  rawArgs,
 		CommandName:              commandName,
 		Timeout:                  scriptCommandTimeout,
-		SessionRequiredMessage:   "Script commands require an initialized MCP HTTP session",
+		SessionRequiredMessage:   "Script commands require an explicit editor session context",
 		BridgeUnavailableMessage: "Script runtime bridge is unavailable",
 		InvalidJSONError: func(err error) error {
 			return newScriptInvalidParamsError("Invalid JSON arguments", commandName, "invalid_json", map[string]any{"error": err.Error()})

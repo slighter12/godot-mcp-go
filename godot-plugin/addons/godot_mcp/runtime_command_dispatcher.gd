@@ -15,11 +15,11 @@ func dispatch(command_id: String, command_name: String, arguments: Dictionary, e
 			var game_session_id := str(arguments.get("session_id", arguments.get("game_session_id", ""))).strip_edges()
 			var editor_session_id := ""
 			if protocol_adapter != null and protocol_adapter.mcp_client != null:
-				var raw_session_id = protocol_adapter.mcp_client.get("session_id")
+				var raw_session_id = protocol_adapter.mcp_client.get("editor_session_id")
 				if raw_session_id is String:
 					editor_session_id = str(raw_session_id).strip_edges()
 			var launch_token := str(arguments.get("launch_token", "")).strip_edges()
-			print("Godot MCP Plugin: received godot.project.run - command_id=", command_id, " editor_session_id=", editor_session_id, " game_session_id=", game_session_id, " launch_token=", launch_token)
+			print("Godot MCP Plugin: received godot.project.run - command_id=", command_id, " editor_session_id=", editor_session_id, " game_session_id=", game_session_id, " launch_token_present=", launch_token != "")
 		var handler_callable: Callable = mutating_handlers[command_name]
 		var payload: Dictionary = handler_callable.call(arguments, editor_interface)
 		if command_name == "godot.project.run":
@@ -34,7 +34,7 @@ func dispatch(command_id: String, command_name: String, arguments: Dictionary, e
 		var retryable: Variant = null
 		if result.has("retryable") and result["retryable"] is bool:
 			retryable = result["retryable"]
-		var schema_version := str(result.get("schema_version", "v1")).strip_edges()
+		var schema_version := str(result.get("schema_version", "1")).strip_edges()
 		protocol_adapter.ack_runtime_command(command_id, success, result, error_message, reason, retryable, schema_version)
 		if success:
 			sync_callback.call(true)

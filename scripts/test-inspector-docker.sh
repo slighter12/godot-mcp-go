@@ -6,17 +6,17 @@ SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERVER_PORT}/mcp}"
 INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
-PROTOCOL_VERSION="${PROTOCOL_VERSION:-2025-11-25}"
+PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
+
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"
 
 log_file="$(mktemp /tmp/godot-mcp-go-inspector.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector.config.XXXXXX.json)"
+inspector_config="$(mktemp /tmp/godot-mcp-go-inspector.cli.XXXXXX.json)"
 
 cleanup() {
-  if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
-  rm -f "$log_file" "$runtime_config"
+  stop_test_server
+  rm -f "$log_file" "$runtime_config" "$inspector_config"
 }
 trap cleanup EXIT
 
@@ -28,8 +28,7 @@ sed -E \
   "$runtime_config" > "${runtime_config}.tmp"
 mv "${runtime_config}.tmp" "$runtime_config"
 
-MCP_CONFIG_PATH="$runtime_config" "$GO_BIN" run main.go >"$log_file" 2>&1 &
-server_pid=$!
+start_test_server "$log_file" "$runtime_config"
 
 ready=0
 for _ in $(seq 1 120); do
@@ -38,7 +37,7 @@ for _ in $(seq 1 120); do
     cat "$log_file"
     exit 1
   fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+  if curl -sS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -51,12 +50,27 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
+printf '%s\n' \
+  '{' \
+  '  "mcpServers": {' \
+  '    "godot-mcp": {' \
+  '      "type": "streamable-http",' \
+  "      \"url\": \"$INSPECTOR_SERVER_URL\"," \
+  '      "protocolEra": "modern"' \
+  '    }' \
+  '  }' \
+  '}' >"$inspector_config"
+chmod 0644 "$inspector_config"
+
 run_inspector() {
   method="$1"
   shift
   attempt=1
   while [ "$attempt" -le 5 ]; do
-    if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint node "$INSPECTOR_IMAGE" /app/cli/build/index.js "$INSPECTOR_SERVER_URL" --transport http --header "MCP-Protocol-Version: $PROTOCOL_VERSION" --method "$method" "$@" >/dev/null; then
+    if docker run --rm --no-healthcheck --add-host host.docker.internal:host-gateway \
+      -v "$inspector_config:/tmp/godot-mcp-inspector.json:ro" "$INSPECTOR_IMAGE" \
+      --cli --config /tmp/godot-mcp-inspector.json --server godot-mcp \
+      --header "MCP-Protocol-Version: $PROTOCOL_VERSION" --method "$method" "$@" >/dev/null; then
       return 0
     fi
     attempt=$((attempt + 1))

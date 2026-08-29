@@ -21,7 +21,6 @@ import (
 
 const snapshotWarningHeartbeatInterval = 10 * time.Minute
 const promptCatalogLoadConsistencyMaxAttempts = 3
-const promptCatalogNotificationWriteTimeout = 2 * time.Second
 const promptCatalogEventDebounce = 300 * time.Millisecond
 
 var snapshotFingerprintFunc = promptcatalog.SnapshotFingerprint
@@ -577,37 +576,18 @@ func dedupeSortedWarnings(warnings []string) []string {
 }
 
 func (s *Server) BroadcastPromptListChanged() int {
-	sessionIDs := s.sessionManager.SessionIDsWithTransport()
-	if len(sessionIDs) == 0 {
-		return 0
-	}
-
-	notification := map[string]any{
+	modernNotification := map[string]any{
 		"jsonrpc": jsonrpc.Version,
 		"method":  "notifications/prompts/list_changed",
 	}
-
 	sent := 0
-	for _, sessionID := range sessionIDs {
-		if s.SendJSONRPCNotificationToSession(sessionID, notification) {
-			sent++
-		}
+	if s.subscriptionManager != nil {
+		sent += s.subscriptionManager.SendNotification("promptsListChanged", modernNotification)
+	}
+	if s.stdioServer != nil {
+		sent += s.stdioServer.SendNotification("promptsListChanged", modernNotification)
 	}
 	return sent
-}
-
-func (s *Server) SendJSONRPCNotificationToSession(sessionID string, message map[string]any) bool {
-	transport, ok := s.sessionManager.GetTransport(sessionID)
-	if !ok || transport == nil {
-		return false
-	}
-
-	if err := transport.SendSSEWithTimeout("message", message, promptCatalogNotificationWriteTimeout); err != nil {
-		logger.Warn("Failed to send SSE notification", "session_id", sessionID, "error", err)
-		s.sessionManager.ClearTransportIfMatch(sessionID, transport)
-		return false
-	}
-	return true
 }
 
 type listPromptDigest struct {

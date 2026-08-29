@@ -6,8 +6,8 @@ A Go implementation of an MCP server for Godot with `stdio` and Streamable HTTP 
 
 - Dual transport support: `stdio` and `streamable_http`
 - Canonical `godot.*` tool contract
-- Session-scoped runtime bridge with stale + grace freshness policy
-- Session mutating capability gate (`capabilities.godot.mutating=true`)
+- Explicit editor/game session routing for the runtime bridge with stale + grace freshness policy
+- Per-request mutating capability gate (`_meta` Godot extension `mutating=true`)
 - Prompt catalog with `legacy`, `strict`, and `advanced` rendering modes
 - Prompt source governance tiers (`restricted`, `trusted`)
 - Prompt source watch modes (`poll`, `event`)
@@ -57,7 +57,8 @@ Endpoints:
 
 - MCP: `http://localhost:9080/mcp`
 - Info: `http://localhost:9080/`
-- Required header: `MCP-Protocol-Version: 2025-11-25`
+- Required headers: `MCP-Protocol-Version: 2026-07-28`, `Mcp-Method`, and `Accept: application/json, text/event-stream`
+- `Mcp-Name` is also required for `tools/call`, `resources/read`, and `prompts/get`.
 
 ### Codex/Desktop Session Attach
 
@@ -67,7 +68,7 @@ Recommended sequence:
 
 1. Start the HTTP server with `make run-http` (or an equivalent foreground/background process manager).
 2. Open a new Codex session after `http://localhost:9080/` is reachable.
-3. If the server was down when the session started, create a fresh session after the server is back up. Existing sessions do not hot-attach `godot.*` tools mid-lifecycle.
+3. If the server was down when the session started, create a fresh session after the server is back up. The MCP transport is stateless; editor ownership is carried by the request metadata.
 
 ### Stdio
 
@@ -75,52 +76,69 @@ Recommended sequence:
 MCP_USE_STDIO=true ./godot-mcp-go
 ```
 
-Initialize requests over stdio must include `params.protocolVersion="2025-11-25"`.
+Every stdio request must include the same `_meta` protocol envelope described below. There is no initialize handshake.
 
 ## Protocol and Progress Contract
 
-- Supported protocol version is strict: `2025-11-25` only.
-- Tool progress is emitted only as `notifications/progress`.
-- Progress notifications require `tools/call` `_meta.progressToken`.
+- Supported protocol version is strict: `2026-07-28` only.
+- Every request includes `params._meta` with namespaced `protocolVersion` and `clientCapabilities`; `clientInfo` is recommended.
+- `server/discover` returns supported versions, capabilities, server identity, and cache metadata.
+- Tool progress is emitted as `notifications/progress` and requires `tools/call` `_meta.progressToken`.
+- HTTP progress is written to the same request's SSE response; closing that response cancels the request. Long-lived command and prompt events use `subscriptions/listen`, which sends typed subscription IDs, periodic SSE comments, and a terminal `resultType: "complete"` result on graceful server shutdown.
 
-## Streamable HTTP Lifecycle
+## Request Envelope and HTTP Methods
 
-Streamable HTTP requests are strictly lifecycle-gated:
-
-1. `initialize` must succeed.
-2. Client must send `notifications/initialized`.
-3. Only then regular methods are accepted (`tools/*`, `resources/*`, `prompts/*`, `ping`).
-
-If `initialize` fails validation, the server does not create a usable new session and does not return `MCP-Session-Id`.
-If `initialized` is sent before successful `initialize`, server returns JSON-RPC `invalid_request`.
-
-## Mutating Capability Negotiation
-
-Mutating tools are blocked by default. Clients must negotiate during `initialize`:
+Requests are stateless and do not use the removed `initialize`/`initialized` lifecycle or `MCP-Session-Id` header. A normal request looks like:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "init-1",
-  "method": "initialize",
+  "id": "tools-1",
+  "method": "tools/list",
   "params": {
-    "protocolVersion": "2025-11-25",
-    "capabilities": {
-      "godot": {
-        "mutating": true
-      }
-    },
-    "clientInfo": {
-      "name": "demo",
-      "version": "0.2.0"
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": {"name": "demo", "version": "0.3.0"},
+      "io.modelcontextprotocol/clientCapabilities": {"extensions": {}}
     }
   }
 }
 ```
 
-Without this capability, mutating calls return semantic `not_supported` with `reason=mutating_capability_required`.
+HTTP `POST /mcp` requires `MCP-Protocol-Version`, `Mcp-Method`, and both JSON and SSE media types in `Accept`. `Mcp-Name` must match the tool, resource URI, or prompt name when applicable. `GET /mcp` and `DELETE /mcp` return `405`; use `subscriptions/listen` for a long-lived SSE stream.
 
-For clients that cannot send custom Godot capabilities during `initialize` (for example some Codex/Desktop URL-based sessions), the server can opt into a compatibility fallback:
+## Mutating Capability Negotiation
+
+Mutating tools are blocked by default. Clients must advertise the Godot extension on every request that calls a mutating tool:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "call-1",
+  "method": "tools/call",
+  "params": {
+    "name": "godot.project.run",
+    "arguments": {},
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": {"name": "demo", "version": "0.3.0"},
+      "io.modelcontextprotocol/clientCapabilities": {
+        "extensions": {
+          "com.slighter12/godot-mcp": {
+            "version": "1",
+            "editor_session_id": "editor-demo",
+            "mutating": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Without this capability, modern mutating calls return JSON-RPC `-32021` (`Missing required client capability`).
+
+For trusted local clients that cannot send the extension capability, the server can opt into a compatibility fallback:
 
 ```json
 {
@@ -141,9 +159,9 @@ Two MCP sessions can exist at the same time by design:
 
 Scope rules:
 
-- Caller-session scoped:
-  - lifecycle gate (`initialize` -> `notifications/initialized`)
-  - mutating capability negotiation (`initialize.params.capabilities.godot.mutating=true`)
+- Request-scoped:
+  - protocol metadata and client capabilities (`params._meta`)
+  - mutating capability negotiation (`_meta` Godot extension `mutating=true`)
 - Editor-owner sourced:
   - `godot.editor.state.get`
   - `godot.project.is_running`
@@ -157,12 +175,12 @@ Scope rules:
   - `godot.project.run` uses attach/recover behavior when editor is already playing: it refreshes handshake metadata and reuses the running game session path instead of failing immediately.
   - if `godot.project.run` times out waiting for first runtime snapshot, the game session mapping is kept for late `godot.bridge.runtime.register` recovery instead of being deleted immediately.
 - Runtime game session scoped:
-  - runtime tools still require explicit game `session_id` unless they are lifecycle/session discovery calls.
+  - runtime tools still require explicit game `session_id` unless they are session-discovery calls.
   - runtime snapshots, logs, inputs, screenshots, and on-demand property reads stay bound to that game session.
 
 The `runtime_bridge.allow_latest_session_fallback` config remains in the file format for compatibility, but public runtime tools no longer borrow the latest session implicitly.
 
-For AI sessions, mutating tools still require caller-side capability negotiation. If a client cannot send `capabilities.godot.mutating=true`, use `tool_controls.allow_mutating_without_capability=true` only for trusted clients.
+For AI sessions, mutating tools still require caller-side capability negotiation. If a client cannot send the Godot extension, use `tool_controls.allow_mutating_without_capability=true` only for trusted clients.
 
 ## Configuration
 
@@ -177,7 +195,7 @@ Default config shape:
 ```json
 {
   "name": "godot-mcp-go",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Go-based Model Context Protocol server for Godot",
   "server": {
     "host": "localhost",
@@ -193,7 +211,7 @@ Default config shape:
       "headers": {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": "2025-11-25"
+        "MCP-Protocol-Version": "2026-07-28"
       }
     }
   ],
@@ -372,6 +390,7 @@ All tools also include MCP `annotations` with `readOnlyHint`, `destructiveHint`,
 
 ```bash
 go test ./...
+go test ./transport/http -run Modern
 make test-http-smoke
 make test-http-runtime-log-smoke
 make test-http-ping
@@ -420,7 +439,7 @@ install from this same GitHub repository. See
 [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the single-repo
 publishing rules and future split guidance.
 
-Current repository version: `0.2.0` (recommended first Git tag: `v0.2.0`).
+Current repository version: `0.3.0` (recommended first Git tag: `v0.3.0`).
 
 Install examples:
 
@@ -432,8 +451,8 @@ bunx skills add https://github.com/slighter12/godot-mcp-go --skill godot-game-de
 Pinned install examples:
 
 ```bash
-npx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.2.0/skills/policy-godot
-bunx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.2.0/skills/godot-game-dev-workflow
+npx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.3.0/skills/policy-godot
+bunx skills add https://github.com/slighter12/godot-mcp-go/tree/v0.3.0/skills/godot-game-dev-workflow
 ```
 
 See [`docs/SKILLS_PUBLISHING.md`](docs/SKILLS_PUBLISHING.md) for the

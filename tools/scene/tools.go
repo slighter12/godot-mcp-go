@@ -234,7 +234,7 @@ func dispatchSceneRuntimeCommand(rawArgs json.RawMessage, commandName string, va
 		RawArgs:                  rawArgs,
 		CommandName:              commandName,
 		Timeout:                  sceneCommandTimeout,
-		SessionRequiredMessage:   "Scene commands require an initialized MCP HTTP session",
+		SessionRequiredMessage:   "Scene commands require an explicit editor session context",
 		BridgeUnavailableMessage: "Scene runtime bridge is unavailable",
 		ResolveRuntimeSessionID:  resolver,
 		InvalidJSONError: func(err error) error {

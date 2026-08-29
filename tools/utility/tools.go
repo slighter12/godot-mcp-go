@@ -28,7 +28,7 @@ func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
 
 	offerings := []map[string]any{{
 		"name":    "godot-mcp",
-		"version": "0.2.0",
+		"version": mcp.ServerVersion,
 		"capabilities": map[string]any{
 			"tools":     map[string]any{},
 			"resources": map[string]any{},
@@ -36,7 +36,7 @@ func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
 		},
 		"serverInfo": map[string]any{
 			"name":    "godot-mcp-go",
-			"version": "0.2.0",
+			"version": mcp.ServerVersion,
 		},
 	}}
 
@@ -51,12 +51,13 @@ func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
 	}
 	runtimeAvailable := "unavailable"
 	if gameSession, hasGame := runtimebridge.DefaultGameSessionRegistry().LatestRunning(); hasGame {
-		runtimeConnected := strings.TrimSpace(gameSession.RuntimeSessionID) != ""
+		runtimeConnected := hasGame
+		runtimeRegistered := strings.TrimSpace(gameSession.RuntimeSessionID) != ""
 		runtimeStatus["connected"] = runtimeConnected
-		runtimeStatus["registered"] = runtimeConnected
+		runtimeStatus["registered"] = runtimeRegistered
 		runtimeStatus["session_id"] = gameSession.SessionID
 		runtimeStatus["has_snapshot"] = gameSession.HasSnapshot
-		if runtimeConnected && gameSession.HasSnapshot {
+		if runtimeRegistered && gameSession.HasSnapshot {
 			runtimeAvailable = "available"
 		}
 	}
@@ -69,7 +70,7 @@ func (t *ListOfferingsTool) Execute(args json.RawMessage) ([]byte, error) {
 	status := map[string]any{
 		"server": map[string]any{
 			"connected": true,
-			"version":   "0.2.0",
+			"version":   mcp.ServerVersion,
 		},
 		"editor_plugin": map[string]any{
 			"connected":     editorFresh > 0,
@@ -135,7 +136,7 @@ func NewRuntimeDiagnoseTool() *RuntimeDiagnoseTool {
 func (t *RuntimeDiagnoseTool) Name() string { return "godot.runtime.diagnose" }
 
 func (t *RuntimeDiagnoseTool) Description() string {
-	return "Diagnoses runtime bootstrap pipeline — shows which step is stuck (game session, editor freshness, companion connection, registration, first snapshot)"
+	return "Diagnoses runtime bootstrap pipeline — shows which step is stuck (game session, editor freshness, registration, first snapshot)"
 }
 func (t *RuntimeDiagnoseTool) Annotations() *mcp.ToolAnnotations {
 	return &mcp.ToolAnnotations{
@@ -178,16 +179,16 @@ func (t *RuntimeDiagnoseTool) Execute(args json.RawMessage) ([]byte, error) {
 	editorHealth := runtimebridge.DefaultEditorStore().Health(now)
 	editorFresh := editorHealth.States["fresh"]
 
-	// MCP session counts
-	mcpCounts := runtimebridge.GetSessionCounts()
-
 	// Build pipeline checklist
-	checklist := buildPipelineChecklist(hasGame, gameSession, editorFresh, mcpCounts)
+	checklist := buildPipelineChecklist(hasGame, gameSession, editorFresh)
 
 	result := map[string]any{
 		"timestamp":    now.Format(time.RFC3339Nano),
 		"game_session": gameSessionInfo,
-		"mcp_sessions": mcpCounts,
+		"transport": map[string]any{
+			"protocol_version": mcp.ProtocolVersion,
+			"session_model":    "stateless",
+		},
 		"editor_store": map[string]any{
 			"sessions":    editorHealth.Sessions,
 			"fresh_count": editorFresh,
@@ -203,8 +204,8 @@ type pipelineStep struct {
 	Hint string `json:"hint,omitempty"`
 }
 
-func buildPipelineChecklist(hasGame bool, game runtimebridge.GameSession, editorFresh int, mcpCounts map[string]any) []pipelineStep {
-	steps := make([]pipelineStep, 0, 5)
+func buildPipelineChecklist(hasGame bool, game runtimebridge.GameSession, editorFresh int) []pipelineStep {
+	steps := make([]pipelineStep, 0, 4)
 
 	// Step 1: game session exists
 	gameOK := hasGame
@@ -222,38 +223,26 @@ func buildPipelineChecklist(hasGame bool, game runtimebridge.GameSession, editor
 	}
 	steps = append(steps, step2)
 
-	// Step 3: runtime companion connected (expect 3+ sessions: editor, AI, runtime)
-	fullyInitialized, _ := mcpCounts["fully_initialized"].(int)
-	runtimeConnected := fullyInitialized >= 3
-	step3 := pipelineStep{Step: "runtime_session_connected", OK: runtimeConnected}
-	if !runtimeConnected {
-		step3.Hint = "runtime companion MCP session not found — check: (1) Godot MCP plugin enabled in Project Settings > Plugins, (2) game is running (call godot.project.run first), (3) handshake file exists at user://godot_mcp/runtime/active_handshake.json, (4) Go server reachable at configured URL"
+	// Step 3: runtime registered. MCP transport state is stateless; runtime
+	// registration is the authoritative application-level signal.
+	registeredOK := hasGame && strings.TrimSpace(game.RuntimeSessionID) != ""
+	step3 := pipelineStep{Step: "runtime_session_registered", OK: registeredOK}
+	if !registeredOK {
+		step3.Hint = "runtime companion is not registered — check: (1) Godot MCP plugin enabled in Project Settings > Plugins, (2) game is running (call godot.project.run first), (3) handshake file exists at user://godot_mcp/runtime/active_handshake.json, (4) Go server reachable at configured URL"
 	}
 	steps = append(steps, step3)
 
-	// Step 4: runtime registered
-	registeredOK := hasGame && strings.TrimSpace(game.RuntimeSessionID) != ""
-	step4 := pipelineStep{Step: "runtime_session_registered", OK: registeredOK}
-	if !registeredOK {
-		if !runtimeConnected {
-			step4.Hint = "depends on runtime_session_connected"
+	// Step 4: first snapshot received
+	snapshotOK := hasGame && game.HasSnapshot
+	step4 := pipelineStep{Step: "first_snapshot_received", OK: snapshotOK}
+	if !snapshotOK {
+		if !registeredOK {
+			step4.Hint = "depends on runtime_session_registered"
 		} else {
-			step4.Hint = "runtime companion connected but register failed — check Go server logs for 'runtime.register rejected' with launch_token_mismatch or game_session_missing"
+			step4.Hint = "runtime registered but no snapshot yet — check Go server logs for 'runtime snapshot rejected'"
 		}
 	}
 	steps = append(steps, step4)
-
-	// Step 5: first snapshot received
-	snapshotOK := hasGame && game.HasSnapshot
-	step5 := pipelineStep{Step: "first_snapshot_received", OK: snapshotOK}
-	if !snapshotOK {
-		if !registeredOK {
-			step5.Hint = "depends on runtime_session_registered"
-		} else {
-			step5.Hint = "runtime registered but no snapshot yet — check Go server logs for 'runtime snapshot rejected'"
-		}
-	}
-	steps = append(steps, step5)
 
 	return steps
 }

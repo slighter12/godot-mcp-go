@@ -2,439 +2,413 @@ package http
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20251125"
+	"github.com/slighter12/godot-mcp-go/internal/domain/toolspec"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
-	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
 const maxJSONRPCBodyBytes = 1 << 20
 
+const subscriptionKeepAliveInterval = 15 * time.Second
+
 const (
-	headerSessionID       = "MCP-Session-Id"
 	headerProtocolVersion = "MCP-Protocol-Version"
+	headerMethod          = "Mcp-Method"
+	headerName            = "Mcp-Name"
 )
 
 func RegisterRoutes(e *echo.Echo, s *Server) {
 	e.GET("/", s.handleHTTPInfo)
 	e.POST("/mcp", s.handleStreamableHTTPPost)
-	e.GET("/mcp", s.handleStreamableHTTPGet)
-	e.DELETE("/mcp", s.handleStreamableHTTPDelete)
+	e.GET("/mcp", s.handleStreamableHTTPRemoved)
+	e.DELETE("/mcp", s.handleStreamableHTTPRemoved)
 	e.OPTIONS("/mcp", s.handleOptions)
 }
 
 func (s *Server) handleHTTPInfo(c echo.Context) error {
-	logger.Debug("HTTP info requested", "remote_addr", c.RealIP())
-	info := map[string]any{
-		"version": "0.2.0",
+	return c.JSON(http.StatusOK, map[string]any{
+		"version": mcp.ServerVersion,
 		"type":    "godot-mcp",
+		"protocol": map[string]any{
+			"version": mcpv20260728.ProtocolVersion,
+		},
 		"capabilities": map[string]any{
 			"stdio":           true,
 			"streamable_http": true,
 		},
 		"streamable_http_endpoint": "/mcp",
-	}
-	return c.JSON(http.StatusOK, info)
+	})
 }
 
 func (s *Server) handleOptions(c echo.Context) error {
 	return c.NoContent(http.StatusOK)
 }
 
-func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
-	logger.Info("Streamable HTTP POST request", "remote_addr", c.RealIP())
+func (s *Server) handleStreamableHTTPRemoved(c echo.Context) error {
+	return c.JSON(http.StatusMethodNotAllowed, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
+		"method": c.Request().Method,
+	}))
+}
 
+func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
 	defer limitedBody.Close()
-
 	body, err := io.ReadAll(limitedBody)
 	if err != nil {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			logger.Warn("Request body too large", "limit_bytes", maxJSONRPCBodyBytes, "remote_addr", c.RealIP())
 			return c.JSON(http.StatusRequestEntityTooLarge, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Request body too large", nil))
 		}
-		logger.Error("Failed to read request body", "error", err)
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 	}
 
 	requests, prebuiltResponses, acceptedOneWay, err := shared.ParseJSONRPCFrame(body)
 	if err != nil {
-		logger.Error("Failed to parse JSON-RPC request", "error", err)
 		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
 	}
-	if len(requests) == 0 && len(prebuiltResponses) == 0 && !acceptedOneWay {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-	}
-
-	sessionID := c.Request().Header.Get(headerSessionID)
-	hasInitialize := false
-	hasNonInitialize := false
-	for _, req := range requests {
-		if req.Method == "initialize" {
-			hasInitialize = true
-		} else {
-			hasNonInitialize = true
-		}
-	}
-
-	if hasInitialize && hasNonInitialize {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
-	}
-	if hasInitialize {
-		if strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion)) != "" {
-			if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
-				return c.JSON(http.StatusBadRequest, protocolErr)
-			}
-		}
-	} else {
-		if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
-			return c.JSON(http.StatusBadRequest, protocolErr)
-		}
-	}
-
-	if len(requests) > 0 {
-		if hasInitialize {
-			if sessionID == "" {
-				sessionID, err = generateSessionID()
-				if err != nil {
-					logger.Error("Failed to generate session ID", "error", err)
-					return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInternalError), "Internal error", nil))
-				}
-				logger.Debug("Generated new MCP session id")
-			} else if !s.sessionManager.TouchSession(sessionID) {
-				return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-			}
-		}
-
-		if !hasInitialize || hasNonInitialize {
-			if sessionID == "" {
-				return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
-			}
-			if !s.sessionManager.TouchSession(sessionID) {
-				return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-			}
-		}
-	}
-	if acceptedOneWay {
-		if sessionID == "" {
-			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
-		}
-	}
-	if sessionID != "" && (len(requests) == 0 || acceptedOneWay) {
-		if !s.sessionManager.TouchSession(sessionID) {
-			return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-		}
-	}
-
-	responses := make([]any, 0, len(requests)+len(prebuiltResponses))
-	responses = append(responses, prebuiltResponses...)
-	initializeSucceeded := false
-	notificationFailed := false
-
-	for _, request := range requests {
-		logger.Debug("Streamable HTTP request received", "method", request.Method, "id", request.ID)
-		response, handleErr := s.handleMessage(request, sessionID)
-		if handleErr != nil {
-			logger.Error("Error handling message", "error", handleErr, "method", request.Method)
-			if request.ID != nil {
-				responses = append(responses, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil))
-			} else {
-				// A notification handler failed.  Record so we can return a
-				// non-202 status — the client must know the notification was
-				// rejected rather than silently accepted.
-				notificationFailed = true
-			}
-			continue
-		}
-		if request.ID == nil || response == nil {
-			continue
-		}
-		if request.Method == "initialize" {
-			if rpcResp, ok := response.(*jsonrpc.Response); ok && rpcResp.Error == nil {
-				initializeSucceeded = true
-			}
-		}
-		responses = append(responses, response)
-	}
-
-	shouldAttachSessionHeader := sessionID != "" && s.sessionManager.HasSession(sessionID)
-	if hasInitialize {
-		shouldAttachSessionHeader = shouldAttachSessionHeader && initializeSucceeded
-	}
-	if shouldAttachSessionHeader {
-		c.Response().Header().Set(headerSessionID, sessionID)
-	}
-
-	if len(requests) == 0 && len(prebuiltResponses) > 0 {
+	if len(prebuiltResponses) > 0 {
 		return c.JSON(http.StatusBadRequest, prebuiltResponses[0])
 	}
+	if len(requests) != 1 {
+		if acceptedOneWay {
+			return c.NoContent(http.StatusAccepted)
+		}
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
+	}
 
-	if len(responses) == 0 {
-		if notificationFailed {
+	request := requests[0]
+	meta, protocolResponse := validateModernHTTPRequest(c, request)
+	if protocolResponse != nil {
+		return c.JSON(http.StatusBadRequest, protocolResponse)
+	}
+
+	if request.Method == "subscriptions/listen" {
+		return s.handleSubscription(c, request, meta)
+	}
+	if capabilityResponse := s.missingMutatingCapability(request, meta); capabilityResponse != nil {
+		return c.JSON(http.StatusBadRequest, capabilityResponse)
+	}
+	if request.ID != nil && request.Method == "tools/call" && meta.ProgressToken != nil {
+		return s.handleProgressToolCall(c, request, meta)
+	}
+	if request.ID == nil {
+		if response, handleErr := s.dispatchModernMessage(request, meta, ""); handleErr != nil {
 			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Notification rejected", nil))
+		} else if response != nil {
+			if responseObj, ok := response.(*jsonrpc.Response); ok && responseObj.Error != nil {
+				return c.JSON(http.StatusBadRequest, responseObj)
+			}
 		}
 		return c.NoContent(http.StatusAccepted)
 	}
-	return c.JSON(http.StatusOK, responses[0])
+
+	response, handleErr := s.dispatchModernMessage(request, meta, "")
+	if handleErr != nil {
+		logger.Error("Error handling modern MCP message", "method", request.Method, "error", handleErr)
+		response = jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil)
+	}
+	if response == nil {
+		return c.NoContent(http.StatusAccepted)
+	}
+	if rpcResponse, ok := response.(*jsonrpc.Response); ok && rpcResponse.Error != nil {
+		return c.JSON(modernResponseStatus(rpcResponse), rpcResponse)
+	}
+	return c.JSON(http.StatusOK, response)
 }
 
-func (s *Server) handleStreamableHTTPGet(c echo.Context) error {
-	logger.Info("Streamable HTTP GET request", "remote_addr", c.RealIP())
-	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
-		return c.JSON(http.StatusBadRequest, protocolErr)
+func (s *Server) missingMutatingCapability(request jsonrpc.Request, meta mcpv20260728.RequestMeta) *jsonrpc.Response {
+	if s == nil || request.Method != "tools/call" || mcpv20260728.MutatingCapability(meta) {
+		return nil
+	}
+	if s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability {
+		return nil
+	}
+	var payload struct {
+		Name string `json:"name"`
+		Tool string `json:"tool"`
+	}
+	if err := json.Unmarshal(request.Params, &payload); err != nil {
+		return nil
+	}
+	toolName := strings.TrimSpace(payload.Name)
+	if toolName == "" {
+		toolName = strings.TrimSpace(payload.Tool)
+	}
+	tool, found := s.toolManager.GetTool(toolName)
+	if !found || tool == nil || !toolspec.IsMutatingTool(tool.Name()) {
+		return nil
+	}
+	return jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrMissingRequiredClientCapability), "Missing required client capability", map[string]any{
+		"requiredCapabilities": []string{"extensions.com.slighter12/godot-mcp.mutating"},
+		"tool":                 tool.Name(),
+	})
+}
+
+func validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv20260728.RequestMeta, *jsonrpc.Response) {
+	meta, err := mcpv20260728.ParseRequestMeta(request.Params)
+	if err != nil {
+		switch {
+		case errors.Is(err, mcpv20260728.ErrInvalidProtocolVersion):
+			return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrUnsupportedProtocolVersion), "Unsupported protocol version", mcpv20260728.UnsupportedVersionData(meta.ProtocolVersion))
+		case errors.Is(err, mcpv20260728.ErrMissingProtocolVersion), errors.Is(err, mcpv20260728.ErrMissingClientCapabilities), errors.Is(err, mcpv20260728.ErrInvalidRequestMeta):
+			data := mcpv20260728.AddSupportedVersionsForInitialize(request.Method, map[string]any{"reason": err.Error()})
+			return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid request metadata", data)
+		default:
+			return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid request metadata", nil)
+		}
 	}
 
-	sessionID := c.Request().Header.Get(headerSessionID)
-	if sessionID == "" {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
-	}
-	if !s.sessionManager.HasSession(sessionID) {
-		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
+	headerVersion, versionHeaderOK := singleHeaderValue(c.Request().Header, headerProtocolVersion)
+	headerVersion = strings.TrimSpace(headerVersion)
+	if !versionHeaderOK || headerVersion == "" || headerVersion != meta.ProtocolVersion {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Protocol version header does not match request metadata", mcpv20260728.HeaderMismatchData(headerProtocolVersion, headerVersion, meta.ProtocolVersion))
 	}
 
-	if !acceptsEventStream(c.Request().Header.Get(echo.HeaderAccept)) {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Accept header must include text/event-stream", nil))
+	methodHeader, methodHeaderOK := singleHeaderValue(c.Request().Header, headerMethod)
+	methodHeader = strings.TrimSpace(methodHeader)
+	if !methodHeaderOK {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Method header does not match request", mcpv20260728.HeaderMismatchData(headerMethod, methodHeader, request.Method))
+	}
+	if err := mcpv20260728.ValidateMethodHeader(request.Method, methodHeader); err != nil {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Method header does not match request", mcpv20260728.HeaderMismatchData(headerMethod, methodHeader, request.Method))
+	}
+
+	name := requestName(request)
+	nameHeader, nameHeaderOK := optionalSingleHeaderValue(c.Request().Header, headerName)
+	nameHeader = strings.TrimSpace(nameHeader)
+	if !nameHeaderOK {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Name header does not match request", mcpv20260728.HeaderMismatchData(headerName, nameHeader, name))
+	}
+	if err := mcpv20260728.ValidateNameHeader(request.Method, name, nameHeader); err != nil {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Name header does not match request", mcpv20260728.HeaderMismatchData(headerName, nameHeader, name))
+	}
+
+	if !acceptsJSONAndEventStream(strings.Join(c.Request().Header.Values(echo.HeaderAccept), ",")) {
+		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidRequest), "Accept header must include application/json and text/event-stream", nil)
+	}
+	return meta, nil
+}
+
+func singleHeaderValue(headers http.Header, name string) (string, bool) {
+	values := headers.Values(name)
+	if len(values) != 1 {
+		return strings.Join(values, ","), false
+	}
+	return values[0], true
+}
+
+func optionalSingleHeaderValue(headers http.Header, name string) (string, bool) {
+	values := headers.Values(name)
+	if len(values) == 0 {
+		return "", true
+	}
+	if len(values) != 1 {
+		return strings.Join(values, ","), false
+	}
+	return values[0], true
+}
+
+func requestName(request jsonrpc.Request) string {
+	var params map[string]any
+	if err := json.Unmarshal(request.Params, &params); err != nil || params == nil {
+		return ""
+	}
+	switch request.Method {
+	case "tools/call", "prompts/get":
+		name, _ := params["name"].(string)
+		return name
+	case "resources/read":
+		uri, _ := params["uri"].(string)
+		return uri
+	default:
+		return ""
+	}
+}
+
+func acceptsJSONAndEventStream(acceptHeader string) bool {
+	hasJSON := false
+	hasSSE := false
+	for _, part := range strings.Split(acceptHeader, ",") {
+		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
+		switch strings.ToLower(mime) {
+		case "application/json":
+			hasJSON = true
+		case "text/event-stream":
+			hasSSE = true
+		}
+	}
+	return hasJSON && hasSSE
+}
+
+func (s *Server) dispatchModernMessage(msg jsonrpc.Request, meta mcpv20260728.RequestMeta, progressRouteKey string) (any, error) {
+	if msg.Method == "initialize" || msg.Method == "initialized" || msg.Method == "notifications/initialized" || msg.Method == "ping" {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", mcpv20260728.AddSupportedVersionsForInitialize(msg.Method, map[string]any{"method": msg.Method})), nil
+	}
+	if msg.Method == "notifications/cancelled" {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
+			"method": msg.Method,
+		}), nil
+	}
+	if msg.Method == "tools/call" {
+		return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.modernToolCallContext(meta, requestIDKey(msg.ID), progressRouteKey), s.toolCallOptions()), nil
+	}
+	return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
+}
+
+func (s *Server) modernToolCallContext(meta mcpv20260728.RequestMeta, requestID string, progressRouteKey string) shared.ToolCallContext {
+	editorSessionID := ""
+	if settings := mcpv20260728.ExtensionSettings(meta.ClientCapabilities, mcpv20260728.GodotExtensionID); settings != nil {
+		editorSessionID, _ = settings["editor_session_id"].(string)
+	}
+	if strings.TrimSpace(editorSessionID) == "" {
+		if stored, ok, _ := runtimebridge.DefaultEditorStore().LatestFresh(time.Now().UTC()); ok {
+			editorSessionID = strings.TrimSpace(stored.SessionID)
+		}
+	}
+	return shared.ToolCallContext{
+		RequestID:               requestID,
+		ProgressRouteKey:        strings.TrimSpace(progressRouteKey),
+		SessionID:               strings.TrimSpace(editorSessionID),
+		EditorSessionID:         strings.TrimSpace(editorSessionID),
+		RuntimeSessionID:        strings.TrimSpace(editorSessionID),
+		RuntimeCommandSessionID: strings.TrimSpace(editorSessionID),
+		SessionInitialized:      true,
+		MutatingAllowed:         mcpv20260728.MutatingCapability(meta) || (s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability),
+		Modern:                  true,
+	}
+}
+
+func (s *Server) handleProgressToolCall(c echo.Context, request jsonrpc.Request, meta mcpv20260728.RequestMeta) error {
+	flusher, ok := c.Response().Writer.(http.Flusher)
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "SSE stream is not available", nil))
+	}
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+	c.Response().WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	progressRouteKey := s.nextStreamRouteKey("progress")
+	transport := NewStreamableHTTPTransport(c.Response().Writer, flusher)
+	s.registerProgressStream(progressRouteKey, transport)
+	defer s.unregisterProgressStream(progressRouteKey, transport)
+	defer transport.Close()
+
+	type dispatchResult struct {
+		response any
+		err      error
+	}
+	resultCh := make(chan dispatchResult, 1)
+	go func() {
+		response, handleErr := s.dispatchModernMessage(request, meta, progressRouteKey)
+		resultCh <- dispatchResult{response: response, err: handleErr}
+	}()
+
+	var result dispatchResult
+	select {
+	case result = <-resultCh:
+	case <-c.Request().Context().Done():
+		s.markCanceledProgressRequest(progressRouteKey)
+		return nil
+	}
+	response, handleErr := result.response, result.err
+	if handleErr != nil {
+		logger.Error("Error handling modern MCP progress request", "method", request.Method, "error", handleErr)
+		response = jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil)
+	}
+	if response != nil {
+		if err := transport.SendSSEWithTimeout("message", response, progressWriteTimeout); err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+func requestIDKey(id any) string {
+	if id == nil {
+		return ""
+	}
+	return fmt.Sprint(id)
+}
+
+func (s *Server) handleSubscription(c echo.Context, request jsonrpc.Request, meta mcpv20260728.RequestMeta) error {
+	var params map[string]any
+	if err := json.Unmarshal(request.Params, &params); err != nil || params == nil {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid subscriptions/listen payload", nil))
+	}
+	promptsEnabled := s.promptCatalog != nil && s.promptCatalog.Enabled()
+	editorSessionID, commandEnabled, acceptedNotifications, err := commandSubscriptionRequest(meta, params, promptsEnabled)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil))
+	}
+	if request.ID == nil {
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "subscriptions/listen requires a request id", nil))
 	}
 
 	flusher, ok := c.Response().Writer.(http.Flusher)
 	if !ok {
-		return c.JSON(http.StatusMethodNotAllowed, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "SSE stream is not available", nil))
+		return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "SSE stream is not available", nil))
 	}
-
+	subscriptionID := request.ID
+	subscriptionRouteKey := s.nextStreamRouteKey("subscription")
+	streamCtx, cancel := context.WithCancel(c.Request().Context())
+	defer cancel()
+	transport := NewStreamableHTTPTransport(c.Response().Writer, flusher, cancel)
+	if s.subscriptionManager == nil {
+		_ = transport.Close()
+		return c.JSON(http.StatusInternalServerError, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Subscription manager is not configured", nil))
+	}
+	if err := s.subscriptionManager.Open(subscriptionRouteKey, subscriptionID, strings.TrimSpace(editorSessionID), transport, cancel, commandEnabled, acceptedNotifications); err != nil {
+		_ = transport.Close()
+		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil))
+	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
-	c.Response().Header().Set("Connection", "keep-alive")
-	c.Response().Header().Set(headerSessionID, sessionID)
+	c.Response().Header().Set("X-Accel-Buffering", "no")
 	c.Response().WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	streamCtx, stopStream := context.WithCancel(c.Request().Context())
-	defer stopStream()
-
-	transport := NewStreamableHTTPTransport(c.Response().Writer, flusher, stopStream)
-	if err := transport.SendComment("stream opened"); err != nil {
-		logger.Warn("Failed to write initial SSE comment", "session_id", sessionID, "error", err)
+	defer s.subscriptionManager.Remove(subscriptionRouteKey, transport)
+	if err := transport.SendSSE("message", acknowledgedNotification(subscriptionID, acceptedNotifications)); err != nil {
 		return nil
 	}
 
-	// Publish transport only after SSE headers + initial frame are sent.
-	// This prevents concurrent notification writes from racing with stream setup.
-	if !s.sessionManager.SetTransport(sessionID, transport) {
-		transport.Close()
-		logger.Warn("SSE session disappeared before stream binding", "session_id", sessionID)
-		return nil
-	}
-	defer s.sessionManager.ClearTransportIfMatch(sessionID, transport)
-
-	<-streamCtx.Done()
-	return nil
-}
-
-func (s *Server) handleStreamableHTTPDelete(c echo.Context) error {
-	logger.Info("Streamable HTTP DELETE request", "remote_addr", c.RealIP())
-	if protocolErr := validateHTTPProtocolHeader(c); protocolErr != nil {
-		return c.JSON(http.StatusBadRequest, protocolErr)
-	}
-	sessionID := c.Request().Header.Get(headerSessionID)
-	if sessionID == "" {
-		return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil))
-	}
-	if !s.sessionManager.HasSession(sessionID) {
-		return c.JSON(http.StatusNotFound, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Unknown MCP session", nil))
-	}
-	s.sessionManager.RemoveSession(sessionID)
-	return c.NoContent(http.StatusNoContent)
-}
-
-func (s *Server) handleMessage(msg jsonrpc.Request, sessionID string) (any, error) {
-	switch msg.Method {
-	case "initialize":
-		logger.Debug("Handling initialize message", "request_id", msg.ID)
-		return s.handleInit(msg, sessionID)
-	case "initialized", "notifications/initialized":
-		if msg.ID != nil {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil), nil
-		}
-		if strings.TrimSpace(sessionID) == "" {
-			logger.Warn("Initialized notification rejected: missing session ID")
-			return nil, fmt.Errorf("notifications/initialized rejected: missing session ID")
-		}
-		logger.Info("Handling initialized notification", "session_id", sessionID, "initialized_before", s.sessionManager.IsInitialized(sessionID))
-		if !s.sessionManager.MarkInitialized(sessionID) {
-			logger.Warn("Initialized notification rejected: mark initialized failed (session missing or initialize not accepted)", "session_id", sessionID,
-				"session_exists", s.sessionManager.HasSession(sessionID),
-				"initialize_accepted", s.sessionManager.IsInitializeAccepted(sessionID))
-			return nil, fmt.Errorf("notifications/initialized rejected: session %s not ready", sessionID)
-		}
-		logger.Info("Session marked initialized", "session_id", sessionID)
-		return nil, nil
-	default:
-		logger.Debug("Handling standard/unknown message", "method", msg.Method)
-		if strings.TrimSpace(sessionID) == "" {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Session-Id header", nil), nil
-		}
-		if !s.sessionManager.IsFullyInitialized(sessionID) {
-			logger.Warn("Rejecting request because session is not initialized",
-				"session_id", sessionID,
-				"method", msg.Method,
-				"initialize_accepted", s.sessionManager.IsInitializeAccepted(sessionID),
-				"initialized", s.sessionManager.IsInitialized(sessionID),
-			)
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidRequest), "Session is not initialized", nil), nil
-		}
-		if msg.Method == "tools/call" {
-			var peek struct {
-				Name string `json:"name"`
+	keepAlive := time.NewTicker(subscriptionKeepAliveInterval)
+	defer keepAlive.Stop()
+	for {
+		select {
+		case <-streamCtx.Done():
+			return nil
+		case <-keepAlive.C:
+			if err := transport.SendComment(""); err != nil {
+				return nil
 			}
-			_ = json.Unmarshal(msg.Params, &peek)
-			log.Printf("godot-mcp tools/call received: session_id=%q tool=%q initialized=%t",
-				sessionID, peek.Name, s.sessionManager.IsFullyInitialized(sessionID))
-			return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.toolCallContext(sessionID), s.toolCallOptions()), nil
 		}
-		return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
 	}
 }
 
-func (s *Server) handleInit(msg jsonrpc.Request, sessionID string) (*jsonrpc.Response, error) {
-	logger.Debug("Handling init message", "request_id", msg.ID)
-	negotiatedVersion, err := mcpv20251125.ValidateHTTPInitializeProtocolVersion(msg.Params)
-	if err != nil {
-		if errors.Is(err, mcpv20251125.ErrMissingProtocolVersion) {
-			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), mcpv20251125.ErrMissingProtocolVersion.Error(), nil), nil
-		}
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil), nil
+func modernResponseStatus(response *jsonrpc.Response) int {
+	if response == nil || response.Error == nil {
+		return http.StatusOK
 	}
-
-	tools, err := s.registry.GetServerTools("default")
-	if err != nil {
-		logger.Error("Failed to get server tools", "error", err, "server_id", "default")
-		return nil, err
-	}
-
-	if sessionID != "" {
-		s.sessionManager.CreateSession(sessionID)
-		s.sessionManager.MarkInitializeAccepted(sessionID)
-		clientName, clientVersion := extractClientInfo(msg.Params)
-		logger.Info("Initialize accepted for session", "session_id", sessionID, "protocol_version", negotiatedVersion, "client_name", clientName, "client_version", clientVersion)
-	}
-
-	mutatingAllowed := negotiatedMutatingCapability(msg.Params)
-	if !mutatingAllowed && s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability {
-		mutatingAllowed = true
-	}
-	if sessionID != "" {
-		s.sessionManager.SetProtocolVersion(sessionID, negotiatedVersion)
-		s.sessionManager.SetMutatingAllowed(sessionID, mutatingAllowed)
-	}
-	result := map[string]any{
-		"type":            string(mcp.TypeInit),
-		"version":         "0.2.0",
-		"server_id":       "default",
-		"tools":           tools,
-		"protocolVersion": negotiatedVersion,
-		"capabilities":    shared.ServerCapabilities(s.promptCatalog != nil && s.promptCatalog.Enabled(), true),
-		"serverInfo": map[string]any{
-			"name":    "godot-mcp-go",
-			"version": "0.2.0",
-		},
-		"godot": map[string]any{
-			"mutating": mutatingAllowed,
-		},
-	}
-	if sessionID != "" {
-		result["sessionId"] = sessionID
-	}
-
-	return jsonrpc.NewResponse(msg.ID, result), nil
-}
-
-func (s *Server) handleGodotResource(path string) (any, error) {
-	switch path {
-	case "godot://script/current":
-		return map[string]any{"type": "script", "path": "current"}, nil
-	case "godot://scene/current":
-		return map[string]any{"type": "scene", "path": "current"}, nil
-	case "godot://project/info":
-		return map[string]any{"name": "godot-mcp", "version": "0.2.0", "type": "godot"}, nil
-	case "godot://policy/godot-checks":
-		return map[string]any{"policy": "policy-godot", "checks": promptcatalog.GodotPolicyChecks()}, nil
-	case "godot://runtime/metrics":
-		return runtimebridge.HealthSnapshot(time.Now().UTC()), nil
+	switch response.Error.Code {
+	case int(jsonrpc.ErrMethodNotFound):
+		return http.StatusNotFound
+	case int(jsonrpc.ErrHeaderMismatch), int(jsonrpc.ErrMissingRequiredClientCapability), int(jsonrpc.ErrUnsupportedProtocolVersion):
+		return http.StatusBadRequest
 	default:
-		return nil, fmt.Errorf("unknown resource path: %s", path)
+		return http.StatusOK
 	}
-}
-
-func generateSessionID() (string, error) {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("failed to read cryptographic random bytes: %w", err)
-	}
-	return "session_" + hex.EncodeToString(buf), nil
-}
-
-func acceptsEventStream(acceptHeader string) bool {
-	for part := range strings.SplitSeq(acceptHeader, ",") {
-		mime := strings.TrimSpace(strings.SplitN(part, ";", 2)[0])
-		if strings.EqualFold(mime, "text/event-stream") {
-			return true
-		}
-	}
-	return false
-}
-
-func extractClientInfo(paramsRaw json.RawMessage) (string, string) {
-	var params struct {
-		ClientInfo struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		} `json:"clientInfo"`
-	}
-	if err := json.Unmarshal(paramsRaw, &params); err != nil {
-		return "", ""
-	}
-	return strings.TrimSpace(params.ClientInfo.Name), strings.TrimSpace(params.ClientInfo.Version)
-}
-
-func negotiatedMutatingCapability(paramsRaw json.RawMessage) bool {
-	var params struct {
-		Capabilities map[string]any `json:"capabilities"`
-	}
-	if err := json.Unmarshal(paramsRaw, &params); err != nil {
-		return false
-	}
-
-	if godotCaps, ok := params.Capabilities["godot"].(map[string]any); ok {
-		if mutating, ok := godotCaps["mutating"].(bool); ok {
-			return mutating
-		}
-	}
-
-	return false
-}
-
-func validateHTTPProtocolHeader(c echo.Context) *jsonrpc.Response {
-	requestedProtocolVersion := strings.TrimSpace(c.Request().Header.Get(headerProtocolVersion))
-	if requestedProtocolVersion == "" {
-		return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Missing MCP-Protocol-Version header", nil)
-	}
-	if !mcpv20251125.IsSupportedProtocolHeader(requestedProtocolVersion) {
-		return jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Invalid MCP-Protocol-Version header", nil)
-	}
-	return nil
 }

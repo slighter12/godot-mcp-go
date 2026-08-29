@@ -62,17 +62,17 @@ Use this checklist after each iteration:
 
 ## MCP Quick Unblock Appendix
 
-### Session lifecycle blocker
+### Request envelope blocker
 
 Symptoms:
 
-- `session_not_initialized` or regular methods rejected.
+- A request is rejected for missing metadata, an unsupported protocol version, or a missing editor owner.
 
 Unblock:
 
-1. Ensure `initialize` uses protocol version `2025-11-25`.
-2. Send `notifications/initialized` after successful initialize.
-3. Retry the blocked gameplay step.
+1. Include `_meta.io.modelcontextprotocol/protocolVersion="2026-07-28"` and `clientCapabilities` on the request.
+2. Include HTTP `MCP-Protocol-Version`, `Mcp-Method`, and `Accept: application/json, text/event-stream` when using Streamable HTTP.
+3. Include the intended `editor_session_id` in the Godot extension settings, then retry the blocked gameplay step.
 
 ### Transport/runtime blocker
 
@@ -106,12 +106,11 @@ Unblock:
 
 Symptoms:
 
-- `mutating_capability_required`
+- JSON-RPC `-32021` or a missing mutating capability result
 - Mutating tools are rejected even though read tools work
 
 Unblock:
 
-1. Return to `initialize`.
-2. Ensure `initialize.params.capabilities.godot.mutating=true`.
-3. Re-send `notifications/initialized` if the transport/session was recreated.
-4. Retry the blocked mutating step.
+1. Add `_meta.io.modelcontextprotocol/clientCapabilities.extensions.com.slighter12/godot-mcp.mutating=true` to the mutating request.
+2. Keep the intended `editor_session_id` in that extension settings object.
+3. Retry the blocked mutating step.

@@ -20,11 +20,15 @@ import (
 const toolExecutionErrorMessage = "Tool execution failed"
 
 type ToolCallContext struct {
+	RequestID               string
+	ProgressRouteKey        string
 	SessionID               string
+	EditorSessionID         string
 	RuntimeSessionID        string
 	RuntimeCommandSessionID string
 	SessionInitialized      bool
 	MutatingAllowed         bool
+	Modern                  bool
 }
 
 type ToolCallOptions struct {
@@ -87,11 +91,11 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 
 	if strings.HasPrefix(toolName, "godot://") {
 		if !toolspec.IsToolAllowed(toolName, input.Options.PermissionMode, input.Options.AllowedTools) {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResult(toolName, tooltypes.NewSemanticError(
+			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(toolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
 				"Tool call is blocked by permission policy",
 				map[string]any{"reason": "permission_denied", "permission_mode": input.Options.PermissionMode},
-			)))
+			), input.Context.Modern))
 		}
 		if input.ReadResource == nil {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Resource handler is not configured", nil)
@@ -100,7 +104,7 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 		if err != nil {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(input.Message.ID, BuildToolSuccessResult(toolName, result))
+		return jsonrpc.NewResponse(input.Message.ID, buildToolSuccessResultForProtocol(toolName, result, input.Context.Modern))
 	}
 
 	canonicalToolName := toolName
@@ -117,22 +121,28 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 
 	if found && tool != nil {
 		if !isInternalBridgeTool && !toolspec.IsToolAllowed(canonicalToolName, input.Options.PermissionMode, input.Options.AllowedTools) {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResult(canonicalToolName, tooltypes.NewSemanticError(
+			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
 				"Tool call is blocked by permission policy",
 				map[string]any{"reason": "permission_denied", "permission_mode": input.Options.PermissionMode},
-			)))
+			), input.Context.Modern))
 		}
 		if toolspec.IsMutatingTool(canonicalToolName) && !input.Context.MutatingAllowed {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResult(canonicalToolName, tooltypes.NewSemanticError(
+			if input.Context.Modern {
+				return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrMissingRequiredClientCapability), "Missing required client capability", map[string]any{
+					"requiredCapabilities": []string{"extensions.com.slighter12/godot-mcp.mutating"},
+					"tool":                 canonicalToolName,
+				})
+			}
+			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
-				"Mutating tools require initialize.params.capabilities.godot.mutating=true",
+				"Mutating tools require modern Godot mutating capability",
 				map[string]any{"reason": "mutating_capability_required"},
-			)))
+			), input.Context.Modern))
 		}
 		if input.Options.SchemaValidationEnabled {
 			if err := validateToolArguments(tool.InputSchema(), arguments, input.Options.RejectUnknownArguments); err != nil {
-				return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResult(canonicalToolName, err))
+				return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, err, input.Context.Modern))
 			}
 		}
 	}
@@ -141,19 +151,72 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 	result, err := input.ToolManager.CallTool(canonicalToolName, arguments)
 	if err != nil {
 		if semanticErr, ok := tooltypes.AsSemanticError(err); ok {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResult(canonicalToolName, semanticErr))
+			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, semanticErr, input.Context.Modern))
 		}
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResult(canonicalToolName))
+		return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResultForProtocol(canonicalToolName, input.Context.Modern))
 	}
 
-	return jsonrpc.NewResponse(input.Message.ID, BuildToolSuccessResult(canonicalToolName, result))
+	return jsonrpc.NewResponse(input.Message.ID, buildToolSuccessResultForProtocol(canonicalToolName, result, input.Context.Modern))
+}
+
+func buildToolSuccessResultForProtocol(toolName string, result any, modern bool) map[string]any {
+	if !modern {
+		return BuildToolSuccessResult(toolName, result)
+	}
+	return map[string]any{
+		"resultType":        "complete",
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
+		"content":           ToolContentFromResult(result),
+		"structuredContent": result,
+		"isError":           false,
+	}
+}
+
+func buildToolExecutionErrorResultForProtocol(toolName string, modern bool) map[string]any {
+	if !modern {
+		return buildToolExecutionErrorResult(toolName)
+	}
+	return map[string]any{
+		"resultType": "complete",
+		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
+		"content":    []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
+		"isError":    true,
+	}
+}
+
+func buildToolSemanticErrorResultForProtocol(toolName string, semanticErr *tooltypes.SemanticError, modern bool) map[string]any {
+	if !modern {
+		return buildToolSemanticErrorResult(toolName, semanticErr)
+	}
+	message := "Tool is temporarily unavailable"
+	if semanticErr != nil && strings.TrimSpace(semanticErr.Message) != "" {
+		message = strings.TrimSpace(semanticErr.Message)
+	}
+	errorPayload := map[string]any{}
+	if semanticErr != nil {
+		if strings.TrimSpace(semanticErr.Kind) != "" {
+			errorPayload["kind"] = strings.TrimSpace(semanticErr.Kind)
+		}
+		if semanticErr.Data != nil {
+			maps.Copy(errorPayload, semanticErr.Data)
+		}
+	}
+	return map[string]any{
+		"resultType":        "complete",
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
+		"content":           []map[string]any{{"type": "text", "text": message}},
+		"structuredContent": errorPayload,
+		"isError":           true,
+	}
 }
 
 func BuildToolSuccessResult(toolName string, result any) map[string]any {
 	return map[string]any{
+		"resultType":        "complete",
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
 		"type":              string(mcp.TypeResult),
 		"tool":              toolName,
 		"result":            result,
@@ -173,10 +236,12 @@ func ToolContentFromResult(result any) []map[string]any {
 
 func buildToolExecutionErrorResult(toolName string) map[string]any {
 	return map[string]any{
-		"type":    string(mcp.TypeResult),
-		"tool":    toolName,
-		"content": []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
-		"isError": true,
+		"resultType": "complete",
+		"_meta":      map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
+		"content":    []map[string]any{{"type": "text", "text": toolExecutionErrorMessage}},
+		"isError":    true,
+		"type":       string(mcp.TypeResult),
+		"tool":       toolName,
 		"error": map[string]any{
 			"kind": tooltypes.SemanticKindExecutionFailed,
 		},
@@ -198,11 +263,14 @@ func buildToolSemanticErrorResult(toolName string, semanticErr *tooltypes.Semant
 		}
 	}
 	return map[string]any{
-		"type":    string(mcp.TypeResult),
-		"tool":    toolName,
-		"content": []map[string]any{{"type": "text", "text": message}},
-		"isError": true,
-		"error":   errorPayload,
+		"resultType":        "complete",
+		"_meta":             map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}},
+		"content":           []map[string]any{{"type": "text", "text": message}},
+		"isError":           true,
+		"type":              string(mcp.TypeResult),
+		"tool":              toolName,
+		"error":             errorPayload,
+		"structuredContent": errorPayload,
 	}
 }
 
@@ -210,7 +278,10 @@ func enrichToolCallArguments(arguments map[string]any, callContext ToolCallConte
 	enriched := make(map[string]any, len(arguments)+1)
 	maps.Copy(enriched, arguments)
 	context := map[string]any{
+		"request_id":                  strings.TrimSpace(callContext.RequestID),
+		"progress_route_key":          strings.TrimSpace(callContext.ProgressRouteKey),
 		"session_id":                  strings.TrimSpace(callContext.SessionID),
+		"editor_session_id":           strings.TrimSpace(callContext.EditorSessionID),
 		"runtime_session_id":          strings.TrimSpace(callContext.RuntimeSessionID),
 		"runtime_command_session_id":  strings.TrimSpace(callContext.RuntimeCommandSessionID),
 		"session_initialized":         callContext.SessionInitialized,

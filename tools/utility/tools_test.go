@@ -12,7 +12,6 @@ func TestRuntimeDiagnoseTool_ReturnsChecklist(t *testing.T) {
 	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
 	runtimebridge.ResetDefaultGameSessionRegistryForTests()
 	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
-	runtimebridge.SetSessionInfoProvider(nil)
 
 	// Set up game session + editor but no runtime companion
 	now := time.Now().UTC()
@@ -36,8 +35,8 @@ func TestRuntimeDiagnoseTool_ReturnsChecklist(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected pipeline_checklist array, got %T", result["pipeline_checklist"])
 	}
-	if len(checklist) != 5 {
-		t.Fatalf("expected 5 checklist steps, got %d", len(checklist))
+	if len(checklist) != 4 {
+		t.Fatalf("expected 4 checklist steps, got %d", len(checklist))
 	}
 
 	// Step 1: game_session_exists should be true
@@ -52,22 +51,16 @@ func TestRuntimeDiagnoseTool_ReturnsChecklist(t *testing.T) {
 		t.Fatalf("expected editor_session_fresh=true, got %v", step2)
 	}
 
-	// Step 3: runtime_session_connected should be false (no session info provider)
+	// Step 3: runtime_session_registered should be false
 	step3, _ := checklist[2].(map[string]any)
-	if step3["step"] != "runtime_session_connected" || step3["ok"] != false {
-		t.Fatalf("expected runtime_session_connected=false, got %v", step3)
+	if step3["step"] != "runtime_session_registered" || step3["ok"] != false {
+		t.Fatalf("expected runtime_session_registered=false, got %v", step3)
 	}
 
-	// Step 4: runtime_session_registered should be false
+	// Step 4: first snapshot received should be false
 	step4, _ := checklist[3].(map[string]any)
-	if step4["step"] != "runtime_session_registered" || step4["ok"] != false {
-		t.Fatalf("expected runtime_session_registered=false, got %v", step4)
-	}
-
-	// Step 5: first_snapshot_received should be false
-	step5, _ := checklist[4].(map[string]any)
-	if step5["step"] != "first_snapshot_received" || step5["ok"] != false {
-		t.Fatalf("expected first_snapshot_received=false, got %v", step5)
+	if step4["step"] != "first_snapshot_received" || step4["ok"] != false {
+		t.Fatalf("expected first_snapshot_received=false, got %v", step4)
 	}
 }
 
@@ -96,16 +89,6 @@ func TestRuntimeDiagnoseTool_AllGreen(t *testing.T) {
 	}, now)
 	runtimebridge.DefaultGameSessionRegistry().MarkSnapshotReceived("game-1", now)
 
-	// Mock session info provider showing 3 sessions
-	runtimebridge.SetSessionInfoProvider(&mockSessionInfoProvider{
-		counts: map[string]any{
-			"total":             3,
-			"fully_initialized": 3,
-			"with_transport":    3,
-		},
-	})
-	defer runtimebridge.SetSessionInfoProvider(nil)
-
 	tool := NewRuntimeDiagnoseTool()
 	resultRaw, err := tool.Execute(json.RawMessage(`{}`))
 	if err != nil {
@@ -132,25 +115,12 @@ func TestRuntimeDiagnoseTool_AllGreen(t *testing.T) {
 	}
 }
 
-func TestRuntimeHealthTool_IncludesMCPSessions(t *testing.T) {
+func TestRuntimeHealthTool_ReportsStatelessTransport(t *testing.T) {
 	runtimebridge.ResetDefaultEditorStoreForTests(10 * time.Second)
 	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
 	runtimebridge.ResetDefaultGameSessionRegistryForTests()
 	runtimebridge.ResetDefaultRuntimeLogStoreForTests(50)
 	runtimebridge.ResetDefaultCommandBrokerForTests(500 * time.Millisecond)
-
-	runtimebridge.SetSessionInfoProvider(&mockSessionInfoProvider{
-		counts: map[string]any{
-			"total":             2,
-			"fully_initialized": 2,
-			"with_transport":    1,
-		},
-		summaries: []map[string]any{
-			{"session_id": "s1", "initialized": true},
-			{"session_id": "s2", "initialized": true},
-		},
-	})
-	defer runtimebridge.SetSessionInfoProvider(nil)
 
 	tool := NewRuntimeHealthTool()
 	resultRaw, err := tool.Execute(json.RawMessage(`{}`))
@@ -163,33 +133,14 @@ func TestRuntimeHealthTool_IncludesMCPSessions(t *testing.T) {
 		t.Fatalf("unmarshal result: %v", err)
 	}
 
-	mcpSessions, ok := result["mcp_sessions"].(map[string]any)
+	transport, ok := result["transport"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected mcp_sessions map, got %T", result["mcp_sessions"])
+		t.Fatalf("expected transport map, got %T", result["transport"])
 	}
-	if mcpSessions["total"] != float64(2) {
-		t.Fatalf("expected total=2, got %v", mcpSessions["total"])
+	if transport["protocol_version"] != "2026-07-28" {
+		t.Fatalf("expected modern protocol version, got %v", transport["protocol_version"])
 	}
-
-	details, ok := result["mcp_session_details"].([]any)
-	if !ok {
-		t.Fatalf("expected mcp_session_details array, got %T", result["mcp_session_details"])
+	if transport["session_model"] != "stateless" {
+		t.Fatalf("expected stateless transport model, got %v", transport["session_model"])
 	}
-	if len(details) != 2 {
-		t.Fatalf("expected 2 session details, got %d", len(details))
-	}
-}
-
-// mockSessionInfoProvider implements runtimebridge.SessionInfoProvider for tests.
-type mockSessionInfoProvider struct {
-	counts    map[string]any
-	summaries []map[string]any
-}
-
-func (m *mockSessionInfoProvider) SessionSummaries() []map[string]any {
-	return m.summaries
-}
-
-func (m *mockSessionInfoProvider) SessionCounts() map[string]any {
-	return m.counts
 }

@@ -1,907 +1,257 @@
 package http
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/slighter12/godot-mcp-go/config"
-	"github.com/slighter12/godot-mcp-go/logger"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 )
 
-var initHTTPTestLogger sync.Once
+func TestModernHTTPPromptsFlow(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:        "scene-review",
+		Description: "Review a scene",
+		Template:    "Review {{scene_path}}",
+	})
 
-func TestInitializeCapabilitiesReflectPromptCatalog(t *testing.T) {
-	tests := []struct {
-		name    string
-		enabled bool
-	}{
-		{name: "enabled", enabled: true},
-		{name: "disabled", enabled: false},
+	list, _, status := postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "prompts-list",
+		"method":  "prompts/list",
+		"params":  map[string]any{},
+	}, "editor-prompts", mcpv20260728.ProtocolVersion)
+	if status != http.StatusOK {
+		t.Fatalf("prompts/list status=%d", status)
+	}
+	listResult := mustMap(t, list["result"])
+	if listResult["resultType"] != "complete" || listResult["cacheScope"] != "public" {
+		t.Fatalf("unexpected prompts/list result: %#v", listResult)
+	}
+	if _, ok := listResult["ttlMs"].(float64); !ok {
+		t.Fatalf("expected numeric ttlMs, got %T", listResult["ttlMs"])
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			server := newTestHTTPServer(t, tc.enabled)
+	get, _, status := postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "prompts-get",
+		"method":  "prompts/get",
+		"params": map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
+		},
+	}, "editor-prompts", mcpv20260728.ProtocolVersion)
+	if status != http.StatusOK {
+		t.Fatalf("prompts/get status=%d", status)
+	}
+	getResult := mustMap(t, get["result"])
+	if getResult["resultType"] != "complete" || getResult["cacheScope"] != "private" {
+		t.Fatalf("unexpected prompts/get result: %#v", getResult)
+	}
+	messages := getResult["messages"].([]any)
+	content := mustMap(t, mustMap(t, messages[0])["content"])
+	if !strings.Contains(content["text"].(string), "res://Main.tscn") {
+		t.Fatalf("expected rendered scene path, got %v", content["text"])
+	}
+}
 
-			body := map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"method":  "initialize",
-				"params": map[string]any{
-					"protocolVersion": "2025-11-25",
-				},
-			}
-			respBody, _, status := postMCP(t, server, body, "", "")
-			if status != http.StatusOK {
-				t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-			}
+func TestModernHTTPPromptValidation(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
+		Name:     "scene-review",
+		Template: "Review {{scene_path}}",
+	})
 
-			result := mustMap(t, respBody["result"])
-			capabilities := mustMap(t, result["capabilities"])
-			promptsCapabilityRaw, hasPrompts := capabilities["prompts"]
-			if tc.enabled && !hasPrompts {
-				t.Fatal("expected prompts capability when prompt catalog is enabled")
+	response, _, status := postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "invalid-arguments",
+		"method":  "prompts/get",
+		"params": map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{"scene_path": 42},
+		},
+	}, "editor-prompts", mcpv20260728.ProtocolVersion)
+	if status != http.StatusOK {
+		t.Fatalf("prompts/get invalid arguments status=%d", status)
+	}
+	errorObject := assertRPCError(t, response, jsonrpc.ErrInvalidParams)
+	data := mustMap(t, errorObject["data"])
+	if data["field"] != "arguments" || data["problem"] != "invalid_type" {
+		t.Fatalf("unexpected validation data: %#v", data)
+	}
+
+	server.config.PromptCatalog.Rendering.Mode = "strict"
+	response, _, status = postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "missing-arguments",
+		"method":  "prompts/get",
+		"params": map[string]any{
+			"name":      "scene-review",
+			"arguments": map[string]any{},
+		},
+	}, "editor-prompts", mcpv20260728.ProtocolVersion)
+	if status != http.StatusOK {
+		t.Fatalf("strict prompts/get status=%d", status)
+	}
+	errorObject = assertRPCError(t, response, jsonrpc.ErrInvalidParams)
+	data = mustMap(t, errorObject["data"])
+	if data["problem"] != "missing_required_arguments" {
+		t.Fatalf("unexpected strict validation data: %#v", data)
+	}
+}
+
+func TestModernHTTPPromptsDisabledUsesNotFound(t *testing.T) {
+	server := newTestHTTPServer(t, false)
+	response, _, status := postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "disabled-prompts",
+		"method":  "prompts/list",
+		"params":  map[string]any{},
+	}, "editor-prompts", mcpv20260728.ProtocolVersion)
+	if status != http.StatusNotFound {
+		t.Fatalf("expected disabled prompts status %d, got %d", http.StatusNotFound, status)
+	}
+	errorObject := assertRPCError(t, response, jsonrpc.ErrMethodNotFound)
+	data := mustMap(t, errorObject["data"])
+	if data["kind"] != "not_supported" {
+		t.Fatalf("unexpected disabled prompt data: %#v", data)
+	}
+}
+
+func TestModernHTTPRemovedLifecycleMethodUsesNotFoundAndDiagnostics(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	response, _, status := postModernMCP(t, server, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "initialize-removed",
+		"method":  "initialize",
+		"params":  map[string]any{},
+	}, "", mcpv20260728.ProtocolVersion)
+	if status != http.StatusNotFound {
+		t.Fatalf("expected initialize status %d, got %d", http.StatusNotFound, status)
+	}
+	errorObject := assertRPCError(t, response, jsonrpc.ErrMethodNotFound)
+	data := mustMap(t, errorObject["data"])
+	if supported, ok := data["supported"].([]any); !ok || len(supported) != 1 || supported[0] != mcpv20260728.ProtocolVersion {
+		t.Fatalf("expected supported version diagnostic, got %#v", data["supported"])
+	}
+}
+
+func TestModernHTTPGetAndDeleteReturn405(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.setupEcho()
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			req := httptest.NewRequest(method, "/mcp", nil)
+			recorder := httptest.NewRecorder()
+			server.echo.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("expected 405, got %d", recorder.Code)
 			}
-			if !tc.enabled && hasPrompts {
-				t.Fatal("did not expect prompts capability when prompt catalog is disabled")
+			var response map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode 405 response: %v", err)
 			}
-			if tc.enabled {
-				promptsCapability := mustMap(t, promptsCapabilityRaw)
-				if promptsCapability["listChanged"] != true {
-					t.Fatalf("expected prompts.listChanged=true, got %v", promptsCapability["listChanged"])
-				}
-			}
+			assertRPCError(t, response, jsonrpc.ErrMethodNotFound)
 		})
 	}
 }
 
-func TestInitializeInvalidParamsDoesNotReturnSessionHeader(t *testing.T) {
+func TestModernHTTPPromptListChangedSubscription(t *testing.T) {
 	server := newTestHTTPServer(t, true)
-
-	body := map[string]any{
+	params := modernParams(map[string]any{
+		"notifications": map[string]any{"promptsListChanged": true},
+	}, modernClientOptions{})
+	cancel, recorder, done := startSubscriptionStream(t, server, map[string]any{
 		"jsonrpc": "2.0",
-		"id":      "init-invalid",
-		"method":  "initialize",
-		"params": map[string]any{
-			"capabilities": map[string]any{},
-		},
+		"id":      17,
+		"method":  "subscriptions/listen",
+		"params":  params,
+	})
+	defer cancel()
+	waitForBodyContains(t, recorder, "notifications/subscriptions/acknowledged")
+	if sent := server.BroadcastPromptListChanged(); sent != 1 {
+		t.Fatalf("expected one prompt notification, sent=%d", sent)
 	}
-
-	respBody, sessionID, status := postMCP(t, server, body, "", "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
+	waitForBodyContains(t, recorder, "notifications/prompts/list_changed")
+	if !strings.Contains(recorder.BodyString(), `"io.modelcontextprotocol/subscriptionId":17`) {
+		t.Fatalf("expected numeric subscription id, body=%q", recorder.BodyString())
 	}
-	if sessionID != "" {
-		t.Fatalf("expected empty session id for invalid initialize, got %q", sessionID)
-	}
-
-	errObj := mustMap(t, respBody["error"])
-	code, ok := errObj["code"].(float64)
-	if !ok || int(code) != int(jsonrpc.ErrInvalidParams) {
-		t.Fatalf("expected invalid params code %d, got %v", int(jsonrpc.ErrInvalidParams), errObj["code"])
-	}
-
-	server.sessionManager.mu.RLock()
-	sessionCount := len(server.sessionManager.sessions)
-	server.sessionManager.mu.RUnlock()
-	if sessionCount != 0 {
-		t.Fatalf("expected no session to be created for invalid initialize, got %d", sessionCount)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("subscription handler: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscription handler did not stop")
 	}
 }
 
-func TestStreamableHTTPRegularMethodsRequireInitializedNotification(t *testing.T) {
+func TestModernHTTPPostRejectsMismatchedProtocolHeader(t *testing.T) {
 	server := newTestHTTPServer(t, true)
-
-	initBody := map[string]any{
+	response, _, status := postRawMCP(t, server, map[string]any{
 		"jsonrpc": "2.0",
-		"id":      "init-requires-initialized",
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	_, sessionID, status := postMCP(t, server, initBody, "", "2025-11-25")
-	if status != http.StatusOK || sessionID == "" {
-		t.Fatalf("initialize failed, status=%d session=%q", status, sessionID)
-	}
-
-	listBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "list-before-initialized",
+		"id":      "header-mismatch",
 		"method":  "tools/list",
-		"params":  map[string]any{},
-	}
-	listResp, _, status := postMCP(t, server, listBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	errObj := mustMap(t, listResp["error"])
-	code, ok := errObj["code"].(float64)
-	if !ok || int(code) != int(jsonrpc.ErrInvalidRequest) {
-		t.Fatalf("expected invalid request code %d, got %v", int(jsonrpc.ErrInvalidRequest), errObj["code"])
-	}
-	if errObj["message"] != "Session is not initialized" {
-		t.Fatalf("expected session not initialized message, got %v", errObj["message"])
-	}
-
-	notifyInitialized(t, server, sessionID)
-
-	listResp, _, status = postMCP(t, server, listBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d after initialized, got %d", http.StatusOK, status)
-	}
-	if listResp["error"] != nil {
-		t.Fatalf("expected tools/list success after initialized, got error %+v", listResp["error"])
-	}
-}
-
-func TestInitializedNotificationBeforeInitializeIsRejected(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-before-init"
-	server.sessionManager.CreateSession(sessionID)
-
-	respAny, err := server.handleMessage(jsonrpc.Request{
-		JSONRPC: jsonrpc.Version,
-		Method:  "notifications/initialized",
-	}, sessionID)
-	// The handler now returns (nil, error) for notification rejections so that
-	// handleStreamableHTTPPost can surface a non-202 status to the client.
-	if err == nil {
-		t.Fatalf("expected handleMessage to return error for pre-init notification, got response %#v", respAny)
-	}
-	if respAny != nil {
-		t.Fatalf("expected nil response for notification rejection, got %#v", respAny)
-	}
-}
-
-func TestStreamableHTTPPromptsFlow(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
-		Name:        "scene-review",
-		Description: "desc",
-		Template:    "Review {{scene_path}}",
+		"params":  modernParams(map[string]any{}, modernClientOptions{}),
+	}, map[string]string{
+		headerProtocolVersion: "2025-11-25",
+		headerMethod:          "tools/list",
 	})
-
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	initResp, sessionID, status := postMCP(t, server, initBody, "", "")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	if sessionID == "" {
-		t.Fatal("expected session id in initialize response header")
-	}
-	if initResp["error"] != nil {
-		t.Fatalf("initialize returned error: %+v", initResp["error"])
-	}
-	notifyInitialized(t, server, sessionID)
-
-	listBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "prompts/list",
-		"params":  map[string]any{},
-	}
-	listResp, _, status := postMCP(t, server, listBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	listResult := mustMap(t, listResp["result"])
-	promptsRaw, ok := listResult["prompts"].([]any)
-	if !ok {
-		t.Fatalf("expected prompts array, got %T", listResult["prompts"])
-	}
-	if len(promptsRaw) != 1 {
-		t.Fatalf("expected 1 prompt, got %d", len(promptsRaw))
-	}
-	prompt := mustMap(t, promptsRaw[0])
-	if prompt["name"] != "scene-review" {
-		t.Fatalf("expected prompt name scene-review, got %v", prompt["name"])
-	}
-
-	getBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "prompts/get",
-		"params": map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
-		},
-	}
-	getResp, _, status := postMCP(t, server, getBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	getResult := mustMap(t, getResp["result"])
-	messagesRaw, ok := getResult["messages"].([]any)
-	if !ok || len(messagesRaw) != 1 {
-		t.Fatalf("expected one message, got %T %v", getResult["messages"], getResult["messages"])
-	}
-	message := mustMap(t, messagesRaw[0])
-	content := mustMap(t, message["content"])
-	if content["text"] != "Review <user_input name=\"scene_path\" format=\"json\">\n\"res://Main.tscn\"\n</user_input>" {
-		t.Fatalf("expected rendered prompt text, got %v", content["text"])
-	}
-}
-
-func TestStreamableHTTPPromptsGetRejectsNonStringArguments(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
-		Name:        "scene-review",
-		Description: "desc",
-		Template:    "Review {{scene_path}}",
-	})
-
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	_, sessionID, status := postMCP(t, server, initBody, "", "")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	if sessionID == "" {
-		t.Fatal("expected session id in initialize response header")
-	}
-	notifyInitialized(t, server, sessionID)
-
-	getBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "prompts/get",
-		"params": map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": float64(42)},
-		},
-	}
-	getResp, _, status := postMCP(t, server, getBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	errObj := mustMap(t, getResp["error"])
-	code, ok := errObj["code"].(float64)
-	if !ok || int(code) != int(jsonrpc.ErrInvalidParams) {
-		t.Fatalf("expected invalid params code %d, got %v", int(jsonrpc.ErrInvalidParams), errObj["code"])
-	}
-	data := mustMap(t, errObj["data"])
-	if data["kind"] != "invalid_params" {
-		t.Fatalf("expected kind invalid_params, got %v", data["kind"])
-	}
-	if data["field"] != "arguments" {
-		t.Fatalf("expected field arguments, got %v", data["field"])
-	}
-}
-
-func TestStreamableHTTPPromptsGetStrictModeRejectsMissingArguments(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	server.config.PromptCatalog.Rendering.Mode = "strict"
-	server.promptCatalog.RegisterPrompt(promptcatalog.Prompt{
-		Name:        "scene-review",
-		Description: "desc",
-		Template:    "Review {{scene_path}} and {{line}}",
-	})
-
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	_, sessionID, status := postMCP(t, server, initBody, "", "")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	if sessionID == "" {
-		t.Fatal("expected session id in initialize response header")
-	}
-	notifyInitialized(t, server, sessionID)
-
-	getBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "prompts/get",
-		"params": map[string]any{
-			"name":      "scene-review",
-			"arguments": map[string]any{"scene_path": "res://Main.tscn"},
-		},
-	}
-	getResp, _, status := postMCP(t, server, getBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	errObj := mustMap(t, getResp["error"])
-	code, ok := errObj["code"].(float64)
-	if !ok || int(code) != int(jsonrpc.ErrInvalidParams) {
-		t.Fatalf("expected invalid params code %d, got %v", int(jsonrpc.ErrInvalidParams), errObj["code"])
-	}
-	data := mustMap(t, errObj["data"])
-	if data["problem"] != "missing_required_arguments" {
-		t.Fatalf("expected missing_required_arguments, got %v", data["problem"])
-	}
-}
-
-func TestStreamableHTTPPromptsNotSupportedWhenCatalogDisabled(t *testing.T) {
-	server := newTestHTTPServer(t, false)
-
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	initResp, sessionID, status := postMCP(t, server, initBody, "", "")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	if initResp["error"] != nil {
-		t.Fatalf("initialize returned error: %+v", initResp["error"])
-	}
-	if sessionID == "" {
-		t.Fatal("expected session id in initialize response header")
-	}
-	notifyInitialized(t, server, sessionID)
-
-	listBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "prompts/list",
-		"params":  map[string]any{},
-	}
-	listResp, _, status := postMCP(t, server, listBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	assertNotSupportedError(t, listResp)
-
-	getBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "prompts/get",
-		"params": map[string]any{
-			"name": "scene-review",
-		},
-	}
-	getResp, _, status := postMCP(t, server, getBody, sessionID, "2025-11-25")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	assertNotSupportedError(t, getResp)
-}
-
-func TestStreamableHTTPGetSSEHeadersAndValidation(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-test"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	req.Header.Set(headerProtocolVersion, "2025-11-25")
-	req.Header.Set(echo.HeaderAccept, "text/event-stream")
-	rec := httptest.NewRecorder()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req = req.WithContext(ctx)
-	echoCtx := echo.New().NewContext(req, rec)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- server.handleStreamableHTTPGet(echoCtx)
-	}()
-
-	waitForTransport(t, server, sessionID)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
-	}
-	if got := rec.Header().Get(echo.HeaderContentType); got != "text/event-stream" {
-		t.Fatalf("expected Content-Type text/event-stream, got %q", got)
-	}
-
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("handleStreamableHTTPGet: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE handler shutdown")
-	}
-}
-
-func TestStreamableHTTPGetSSERejectsMissingAcceptHeader(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-test"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	req.Header.Set(headerProtocolVersion, "2025-11-25")
-	rec := httptest.NewRecorder()
-	echoCtx := echo.New().NewContext(req, rec)
-
-	if err := server.handleStreamableHTTPGet(echoCtx); err != nil {
-		t.Fatalf("handleStreamableHTTPGet: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-}
-
-func TestStreamableHTTPGetSSERejectsMissingProtocolHeaderAfterNegotiation(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-test"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	req.Header.Set(echo.HeaderAccept, "text/event-stream")
-	rec := httptest.NewRecorder()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req = req.WithContext(ctx)
-	echoCtx := echo.New().NewContext(req, rec)
-
-	if err := server.handleStreamableHTTPGet(echoCtx); err != nil {
-		t.Fatalf("handleStreamableHTTPGet: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Missing MCP-Protocol-Version header") {
-		t.Fatalf("expected missing protocol version error, got %q", rec.Body.String())
-	}
-}
-
-func TestStreamableHTTPSessionReplacementClosesPreviousSSEStream(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-replace"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	firstReq := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	firstReq.Header.Set(headerSessionID, sessionID)
-	firstReq.Header.Set(headerProtocolVersion, "2025-11-25")
-	firstReq.Header.Set(echo.HeaderAccept, "text/event-stream")
-	firstRec := httptest.NewRecorder()
-	firstCtx := t.Context()
-	firstReq = firstReq.WithContext(firstCtx)
-	firstEchoCtx := echo.New().NewContext(firstReq, firstRec)
-
-	firstDone := make(chan error, 1)
-	go func() {
-		firstDone <- server.handleStreamableHTTPGet(firstEchoCtx)
-	}()
-	waitForTransport(t, server, sessionID)
-
-	secondReq := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	secondReq.Header.Set(headerSessionID, sessionID)
-	secondReq.Header.Set(headerProtocolVersion, "2025-11-25")
-	secondReq.Header.Set(echo.HeaderAccept, "text/event-stream")
-	secondRec := httptest.NewRecorder()
-	secondCtx, secondCancel := context.WithCancel(context.Background())
-	defer secondCancel()
-	secondReq = secondReq.WithContext(secondCtx)
-	secondEchoCtx := echo.New().NewContext(secondReq, secondRec)
-
-	secondDone := make(chan error, 1)
-	go func() {
-		secondDone <- server.handleStreamableHTTPGet(secondEchoCtx)
-	}()
-	waitForTransport(t, server, sessionID)
-
-	select {
-	case err := <-firstDone:
-		if err != nil {
-			t.Fatalf("first stream handler error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for first SSE stream shutdown after replacement")
-	}
-
-	secondCancel()
-	select {
-	case err := <-secondDone:
-		if err != nil {
-			t.Fatalf("second stream handler error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for second SSE stream shutdown")
-	}
-}
-
-func TestStreamableHTTPGetSSERejectsMissingProtocolHeaderBeforeNegotiation(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-test"
-	server.sessionManager.CreateSession(sessionID)
-
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	req.Header.Set(echo.HeaderAccept, "text/event-stream")
-	rec := httptest.NewRecorder()
-	echoCtx := echo.New().NewContext(req, rec)
-
-	if err := server.handleStreamableHTTPGet(echoCtx); err != nil {
-		t.Fatalf("handleStreamableHTTPGet: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Missing MCP-Protocol-Version header") {
-		t.Fatalf("expected missing protocol version error, got %q", rec.Body.String())
-	}
-}
-
-func TestStreamableHTTPDeleteRejectsMissingProtocolHeaderAfterNegotiation(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-delete"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	req := httptest.NewRequest(http.MethodDelete, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	rec := httptest.NewRecorder()
-	echoCtx := echo.New().NewContext(req, rec)
-
-	if err := server.handleStreamableHTTPDelete(echoCtx); err != nil {
-		t.Fatalf("handleStreamableHTTPDelete: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Missing MCP-Protocol-Version header") {
-		t.Fatalf("expected missing protocol version error, got %q", rec.Body.String())
-	}
-}
-
-func TestStreamableHTTPDeleteClosesActiveSSEStream(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-	sessionID := "session-delete-active-stream"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	streamReq := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	streamReq.Header.Set(headerSessionID, sessionID)
-	streamReq.Header.Set(headerProtocolVersion, "2025-11-25")
-	streamReq.Header.Set(echo.HeaderAccept, "text/event-stream")
-	streamRec := httptest.NewRecorder()
-	streamCtx := t.Context()
-	streamReq = streamReq.WithContext(streamCtx)
-	streamEchoCtx := echo.New().NewContext(streamReq, streamRec)
-
-	streamDone := make(chan error, 1)
-	go func() {
-		streamDone <- server.handleStreamableHTTPGet(streamEchoCtx)
-	}()
-	waitForTransport(t, server, sessionID)
-
-	deleteReq := httptest.NewRequest(http.MethodDelete, "/mcp", nil)
-	deleteReq.Header.Set(headerSessionID, sessionID)
-	deleteReq.Header.Set(headerProtocolVersion, "2025-11-25")
-	deleteRec := httptest.NewRecorder()
-	deleteEchoCtx := echo.New().NewContext(deleteReq, deleteRec)
-	if err := server.handleStreamableHTTPDelete(deleteEchoCtx); err != nil {
-		t.Fatalf("handleStreamableHTTPDelete: %v", err)
-	}
-	if deleteRec.Code != http.StatusNoContent {
-		t.Fatalf("expected status %d, got %d", http.StatusNoContent, deleteRec.Code)
-	}
-
-	select {
-	case err := <-streamDone:
-		if err != nil {
-			t.Fatalf("stream handler error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE stream shutdown after session deletion")
-	}
-}
-
-func TestStreamableHTTPPostRejectsMissingProtocolHeaderAfterNegotiation(t *testing.T) {
-	server := newTestHTTPServer(t, true)
-
-	initBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-11-25",
-		},
-	}
-	_, sessionID, status := postMCP(t, server, initBody, "", "")
-	if status != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, status)
-	}
-	if sessionID == "" {
-		t.Fatal("expected session id in initialize response header")
-	}
-
-	pingBody := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "ping",
-		"params":  map[string]any{},
-	}
-	pingResp, _, status := postMCP(t, server, pingBody, sessionID, "")
 	if status != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, status)
 	}
-	errObj := mustMap(t, pingResp["error"])
-	if errObj["message"] != "Missing MCP-Protocol-Version header" {
-		t.Fatalf("expected missing header message, got %v", errObj["message"])
-	}
+	assertRPCError(t, response, jsonrpc.ErrHeaderMismatch)
 }
 
-func TestStreamableHTTPPostRejectsMissingProtocolHeaderBeforeNegotiation(t *testing.T) {
+func TestModernHTTPPostRejectsDuplicateProtocolHeaders(t *testing.T) {
 	server := newTestHTTPServer(t, true)
-	sessionID := "session-post"
-	server.sessionManager.CreateSession(sessionID)
-
-	pingBody := map[string]any{
+	response, status := postRawMCPWithHeaderValues(t, server, map[string]any{
 		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "ping",
-		"params":  map[string]any{},
-	}
-	pingResp, _, status := postMCP(t, server, pingBody, sessionID, "")
+		"id":      "duplicate-header",
+		"method":  "tools/list",
+		"params":  modernParams(map[string]any{}, modernClientOptions{}),
+	}, map[string][]string{
+		headerProtocolVersion: {mcpv20260728.ProtocolVersion, mcpv20260728.ProtocolVersion},
+		headerMethod:          {"tools/list"},
+	})
 	if status != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, status)
 	}
-	errObj := mustMap(t, pingResp["error"])
-	if errObj["message"] != "Missing MCP-Protocol-Version header" {
-		t.Fatalf("expected missing header message, got %v", errObj["message"])
-	}
+	assertRPCError(t, response, jsonrpc.ErrHeaderMismatch)
 }
 
-func TestReloadPromptCatalogToolBroadcastsPromptListChanged(t *testing.T) {
+func TestModernHTTPRejectsHTTPClientCancellationNotification(t *testing.T) {
 	server := newTestHTTPServer(t, true)
-	root := t.TempDir()
-	skill := filepath.Join(root, "scene-review", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(skill), 0755); err != nil {
-		t.Fatalf("mkdir skill dir: %v", err)
-	}
-	content := "---\nname: scene-review\ntitle: Scene Review\ndescription: Prompt description\n---\nReview {{scene_path}}\n"
-	if err := os.WriteFile(skill, []byte(content), 0644); err != nil {
-		t.Fatalf("write skill: %v", err)
-	}
-	server.config.PromptCatalog.Paths = []string{root}
-
-	sessionID := "session-reload"
-	server.sessionManager.CreateSession(sessionID)
-	server.sessionManager.MarkInitializeAccepted(sessionID)
-	server.sessionManager.MarkInitialized(sessionID)
-	server.sessionManager.SetProtocolVersion(sessionID, "2025-11-25")
-
-	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req.Header.Set(headerSessionID, sessionID)
-	req.Header.Set(headerProtocolVersion, "2025-11-25")
-	req.Header.Set(echo.HeaderAccept, "text/event-stream")
-	rec := httptest.NewRecorder()
-	streamCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req = req.WithContext(streamCtx)
-	echoCtx := echo.New().NewContext(req, rec)
-
-	done := make(chan error, 1)
-	go func() {
-		done <- server.handleStreamableHTTPGet(echoCtx)
-	}()
-	waitForTransport(t, server, sessionID)
-
-	respAny, err := server.handleMessage(jsonrpc.Request{
-		JSONRPC: jsonrpc.Version,
-		ID:      10,
-		Method:  "tools/call",
-		Params:  mustRawMap(t, map[string]any{"name": "godot.prompts.reload", "arguments": map[string]any{}}),
-	}, sessionID)
-	if err != nil {
-		t.Fatalf("handleMessage tools/call: %v", err)
-	}
-	resp, ok := respAny.(*jsonrpc.Response)
-	if !ok || resp.Error != nil {
-		t.Fatalf("expected tool response, got %#v", respAny)
-	}
-	result := mustMap(t, resp.Result)
-	toolPayload := mustMap(t, result["result"])
-	changed, ok := toolPayload["changed"].(bool)
-	if !ok || !changed {
-		t.Fatalf("expected changed=true, got %v", toolPayload["changed"])
-	}
-
-	waitForBodyContains(t, rec, "\"method\":\"notifications/prompts/list_changed\"")
-	if got := strings.Count(rec.Body.String(), "\"method\":\"notifications/prompts/list_changed\""); got != 1 {
-		t.Fatalf("expected one list_changed notification, got %d body=%q", got, rec.Body.String())
-	}
-
-	secondRespAny, err := server.handleMessage(jsonrpc.Request{
-		JSONRPC: jsonrpc.Version,
-		ID:      11,
-		Method:  "tools/call",
-		Params:  mustRawMap(t, map[string]any{"name": "godot.prompts.reload", "arguments": map[string]any{}}),
-	}, sessionID)
-	if err != nil {
-		t.Fatalf("second handleMessage tools/call: %v", err)
-	}
-	secondResp, ok := secondRespAny.(*jsonrpc.Response)
-	if !ok || secondResp.Error != nil {
-		t.Fatalf("expected tool response, got %#v", secondRespAny)
-	}
-	secondResult := mustMap(t, secondResp.Result)
-	secondPayload := mustMap(t, secondResult["result"])
-	if changed, _ := secondPayload["changed"].(bool); changed {
-		t.Fatalf("expected changed=false on second reload, got %v", secondPayload["changed"])
-	}
-	time.Sleep(100 * time.Millisecond)
-	if got := strings.Count(rec.Body.String(), "\"method\":\"notifications/prompts/list_changed\""); got != 1 {
-		t.Fatalf("expected no extra list_changed notification, got %d body=%q", got, rec.Body.String())
-	}
-
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("handleStreamableHTTPGet: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSE handler shutdown")
-	}
-}
-
-func newTestHTTPServer(t *testing.T, promptCatalogEnabled bool) *Server {
-	t.Helper()
-	initHTTPTestLogger.Do(func() {
-		if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
-			t.Fatalf("init logger: %v", err)
-		}
-	})
-
-	cfg := config.NewConfig()
-	cfg.PromptCatalog.Enabled = promptCatalogEnabled
-
-	server := NewServer(cfg)
-	server.promptCatalog = promptcatalog.NewRegistry(promptCatalogEnabled)
-	server.toolManager.RegisterDefaultTools()
-	if err := server.registerRuntimeTools(); err != nil {
-		t.Fatalf("register runtime tools: %v", err)
-	}
-	if err := server.registry.RegisterServer("default", server.toolManager.GetTools()); err != nil {
-		t.Fatalf("register default server: %v", err)
-	}
-	return server
-}
-
-func postMCP(t *testing.T, server *Server, body map[string]any, sessionID string, protocolVersion string) (map[string]any, string, int) {
-	t.Helper()
-
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
-	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-	if sessionID != "" {
-		req.Header.Set(headerSessionID, sessionID)
-	}
-	if protocolVersion == "" {
-		if method, _ := body["method"].(string); method == "initialize" {
-			protocolVersion = "2025-11-25"
-		}
-	}
-	if protocolVersion != "" {
-		req.Header.Set(headerProtocolVersion, protocolVersion)
-	}
-
-	rec := httptest.NewRecorder()
-	ctx := echo.New().NewContext(req, rec)
-	if err := server.handleStreamableHTTPPost(ctx); err != nil {
-		t.Fatalf("handleStreamableHTTPPost: %v", err)
-	}
-
-	var parsed map[string]any
-	if rec.Body.Len() > 0 {
-		if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
-			t.Fatalf("unmarshal response: %v", err)
-		}
-	}
-	return parsed, rec.Header().Get(headerSessionID), rec.Code
-}
-
-func notifyInitialized(t *testing.T, server *Server, sessionID string) {
-	t.Helper()
-	_, _, status := postMCP(t, server, map[string]any{
+	response, _, status := postRawMCP(t, server, map[string]any{
 		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-		"params":  map[string]any{},
-	}, sessionID, "2025-11-25")
-	if status != http.StatusAccepted {
-		t.Fatalf("expected status %d for notifications/initialized, got %d", http.StatusAccepted, status)
+		"method":  "notifications/cancelled",
+		"params":  modernParams(map[string]any{"requestId": "request-1"}, modernClientOptions{}),
+	}, map[string]string{
+		headerProtocolVersion: mcpv20260728.ProtocolVersion,
+		headerMethod:          "notifications/cancelled",
+	})
+	if status != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, status)
 	}
+	assertRPCError(t, response, jsonrpc.ErrMethodNotFound)
 }
 
-func mustMap(t *testing.T, value any) map[string]any {
-	t.Helper()
-	out, ok := value.(map[string]any)
-	if !ok {
-		t.Fatalf("expected map[string]any, got %T", value)
-	}
-	return out
-}
-
-func mustRawMap(t *testing.T, value map[string]any) json.RawMessage {
-	t.Helper()
-	raw, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal raw map: %v", err)
-	}
-	return raw
-}
-
-func waitForTransport(t *testing.T, server *Server, sessionID string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, ok := server.sessionManager.GetTransport(sessionID); ok {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for session transport: %s", sessionID)
-}
-
-func waitForBodyContains(t *testing.T, rec *httptest.ResponseRecorder, needle string) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(rec.Body.String(), needle) {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for body content %q, got body=%q", needle, rec.Body.String())
-}
-
-func assertNotSupportedError(t *testing.T, response map[string]any) {
-	t.Helper()
-	errObj := mustMap(t, response["error"])
-
-	code, ok := errObj["code"].(float64)
-	if !ok {
-		t.Fatalf("expected error code number, got %T", errObj["code"])
-	}
-	if int(code) != int(jsonrpc.ErrMethodNotFound) {
-		t.Fatalf("expected method not found code %d, got %d", int(jsonrpc.ErrMethodNotFound), int(code))
-	}
-
-	data := mustMap(t, errObj["data"])
-	if data["kind"] != "not_supported" {
-		t.Fatalf("expected kind not_supported, got %v", data["kind"])
+func TestModernHTTPOriginValidation(t *testing.T) {
+	server := newTestHTTPServer(t, true)
+	server.setupEcho()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+	req.Header.Set(echo.HeaderOrigin, "https://evil.example")
+	recorder := httptest.NewRecorder()
+	server.echo.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected forbidden origin status, got %d", recorder.Code)
 	}
 }

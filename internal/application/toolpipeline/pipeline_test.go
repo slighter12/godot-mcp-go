@@ -154,6 +154,20 @@ func TestExecute_MutatingToolRequiresMutatingCapability(t *testing.T) {
 	}
 }
 
+func TestEnrichToolCallArgumentsPreservesClientIDAndProgressRouteKey(t *testing.T) {
+	arguments := enrichToolCallArguments(map[string]any{}, ToolCallContext{
+		RequestID:        "1",
+		ProgressRouteKey: "progress-1",
+	}, ToolCallOptions{}, nil, false)
+	context := mustMap(t, arguments["_mcp"])
+	if context["request_id"] != "1" {
+		t.Fatalf("expected client request id to remain available, got %v", context["request_id"])
+	}
+	if context["progress_route_key"] != "progress-1" {
+		t.Fatalf("expected internal progress route key, got %v", context["progress_route_key"])
+	}
+}
+
 func mustMarshalParams(t *testing.T, payload map[string]any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(payload)

@@ -4,7 +4,10 @@ import "strings"
 
 // MCPContext carries injected transport/session metadata for internal bridge tools.
 type MCPContext struct {
+	RequestID               string
+	ProgressRouteKey        string
 	SessionID               string
+	EditorSessionID         string
 	RuntimeSessionID        string
 	RuntimeCommandSessionID string
 	SessionInitialized      bool
@@ -21,8 +24,20 @@ func ExtractMCPContext(arguments map[string]any) MCPContext {
 	if rawContext == nil {
 		return ctx
 	}
+	if requestID, ok := rawContext["request_id"].(string); ok {
+		ctx.RequestID = strings.TrimSpace(requestID)
+	}
+	if progressRouteKey, ok := rawContext["progress_route_key"].(string); ok {
+		ctx.ProgressRouteKey = strings.TrimSpace(progressRouteKey)
+	}
 	if sessionID, ok := rawContext["session_id"].(string); ok {
 		ctx.SessionID = strings.TrimSpace(sessionID)
+	}
+	if editorSessionID, ok := rawContext["editor_session_id"].(string); ok {
+		ctx.EditorSessionID = strings.TrimSpace(editorSessionID)
+		if ctx.SessionID == "" {
+			ctx.SessionID = ctx.EditorSessionID
+		}
 	}
 	if runtimeSessionID, ok := rawContext["runtime_session_id"].(string); ok {
 		ctx.RuntimeSessionID = strings.TrimSpace(runtimeSessionID)

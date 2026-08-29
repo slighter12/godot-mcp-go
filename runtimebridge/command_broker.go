@@ -177,9 +177,11 @@ func (b *CommandBroker) DispatchAndWait(sessionID string, commandName string, ar
 		"jsonrpc": "2.0",
 		"method":  "notifications/godot/command",
 		"params": map[string]any{
-			"command_id": commandID,
-			"name":       commandName,
-			"arguments":  arguments,
+			"schema_version":    "1",
+			"command_id":        commandID,
+			"name":              commandName,
+			"arguments":         arguments,
+			"editor_session_id": sessionID,
 		},
 	}
 	startedAt := time.Now().UTC()

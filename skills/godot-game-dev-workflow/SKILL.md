@@ -33,9 +33,9 @@ Do not use this skill for:
 - File-backed reads (`godot.scene.list`, `godot.scene.read`, `godot.script.list`, `godot.script.read`, `godot.script.analyze`, `godot.project.settings.get`, `godot.project.resources.list`) do not require the runtime bridge.
 - File-backed reads operate on the Godot project resolved by `GODOT_PROJECT_ROOT` or, when unset, the server working directory and nearest `project.godot`. If the server is running outside the target project tree, set `GODOT_PROJECT_ROOT` first.
 - Treat `godot.offerings.list` as a coarse global health signal only. It can tell you whether some editor/runtime path is alive, but not whether the current task's target session is the one that is available.
-- Editor-backed reads (`godot.editor.state.get`) require an initialized MCP HTTP session plus a fresh editor snapshot.
+- Editor-backed reads (`godot.editor.state.get`) require the MCP 2026-07-28 request envelope plus a fresh editor snapshot.
 - Runtime-backed reads (`godot.runtime.scene_tree.get`, `godot.runtime.node_properties.get`) require an active game `session_id`. Resolve it cautiously: pass an explicit `editor_session_id` to `godot.runtime.session.get_active`, then fail closed unless the returned `editor_session_id` still matches the intended editor owner. Use `godot.runtime.await_snapshot` only after that task-scoped session check passes.
-- Mutating tools require an initialized MCP HTTP session, `initialize.params.capabilities.godot.mutating=true`, and a healthy runtime bridge. Check `godot.runtime.health.get` before mutating.
+- Mutating tools require the MCP 2026-07-28 request envelope, `_meta` Godot extension `com.slighter12/godot-mcp.mutating=true`, and a healthy runtime bridge. Check `godot.runtime.health.get` before mutating.
 - `godot.script.modify` replaces the entire script content. Always read the current script with `godot.script.read` first, apply changes to the full text, then send the complete new content.
 - Never finish a task with an unclear verification story. Every slice needs one gameplay scenario and one readback check.
 - When exact Godot API behavior matters, route to `references/OFFICIAL_DOCS_MAP.md` and prefer the official GDScript examples.
@@ -63,14 +63,14 @@ Structure responses in this format:
 
 - Start with `godot.offerings.list` only as a coarse signal that some live lane may be available.
 - Use file-backed reads first when they are enough to identify ownership.
-- Use `godot.editor.state.get` only when live editor state is required; it is editor-backed and needs an initialized MCP HTTP session plus a fresh editor snapshot.
+- Use `godot.editor.state.get` only when live editor state is required; it is editor-backed and needs the modern request envelope plus a fresh editor snapshot.
 - When editor ownership matters, pass `editor_session_id` explicitly to editor-owner tools instead of trusting global freshness alone.
-- Use `godot.project.is_running` with the intended `editor_session_id` as a lifecycle pre-check before `godot.project.run`, `godot.project.stop`, or attach/recover decisions when the current runtime state is uncertain.
+- Use `godot.project.is_running` with the intended `editor_session_id` as a state pre-check before `godot.project.run`, `godot.project.stop`, or attach/recover decisions when the current runtime state is uncertain.
 - For runtime-backed reads or runtime verification, call `godot.runtime.session.get_active` with an explicit `editor_session_id`.
 - Fail closed if the returned `editor_session_id` does not match the intended editor owner; do not continue with runtime reads or runtime inputs on that `session_id`.
 - If runtime freshness matters after the session check passes, call `godot.runtime.await_snapshot` before `godot.runtime.scene_tree.get` or `godot.runtime.node_properties.get`.
 - Pass the verified `session_id` explicitly to every runtime-backed tool.
-- If the slice requires mutating tools, ensure `initialize.params.capabilities.godot.mutating=true` is already negotiated, then check `godot.runtime.health.get`.
+- If the slice requires mutating tools, include `_meta` Godot extension `com.slighter12/godot-mcp.mutating=true` on the call, then check `godot.runtime.health.get`.
 - Find the scene, node, script, signal, input action, collision setup, or resource that currently owns the behavior.
 - Inspect only the paths that can actually change the target outcome.
 

@@ -7,16 +7,16 @@ SERVER_PORT="${SERVER_PORT:-9080}"
 INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERVER_PORT}/mcp}"
 INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
 
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"
+
 log_file="$(mktemp /tmp/godot-mcp-go-inspector-negative.XXXXXX.log)"
 runtime_config="$(mktemp /tmp/godot-mcp-go-inspector-negative.config.XXXXXX.json)"
 inspector_output="$(mktemp /tmp/godot-mcp-go-inspector-negative.output.XXXXXX.log)"
+inspector_config="$(mktemp /tmp/godot-mcp-go-inspector-negative.cli.XXXXXX.json)"
 
 cleanup() {
-  if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" 2>/dev/null || true
-  fi
-  rm -f "$log_file" "$runtime_config" "$inspector_output"
+  stop_test_server
+  rm -f "$log_file" "$runtime_config" "$inspector_output" "$inspector_config"
 }
 trap cleanup EXIT
 
@@ -28,8 +28,7 @@ sed -E \
   "$runtime_config" > "${runtime_config}.tmp"
 mv "${runtime_config}.tmp" "$runtime_config"
 
-MCP_CONFIG_PATH="$runtime_config" "$GO_BIN" run main.go >"$log_file" 2>&1 &
-server_pid=$!
+start_test_server "$log_file" "$runtime_config"
 
 ready=0
 for _ in $(seq 1 120); do
@@ -38,7 +37,7 @@ for _ in $(seq 1 120); do
     cat "$log_file"
     exit 1
   fi
-  if curl -sSf "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+  if curl -sS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -51,16 +50,31 @@ if [ "$ready" -ne 1 ]; then
   exit 1
 fi
 
-if docker run --rm --add-host host.docker.internal:host-gateway --entrypoint node "$INSPECTOR_IMAGE" /app/cli/build/index.js "$INSPECTOR_SERVER_URL" --transport http --method tools/list >"$inspector_output" 2>&1; then
+printf '%s\n' \
+  '{' \
+  '  "mcpServers": {' \
+  '    "godot-mcp": {' \
+  '      "type": "streamable-http",' \
+  "      \"url\": \"$INSPECTOR_SERVER_URL\"," \
+  '      "protocolEra": "legacy"' \
+  '    }' \
+  '  }' \
+  '}' >"$inspector_config"
+chmod 0644 "$inspector_config"
+
+if docker run --rm --no-healthcheck --add-host host.docker.internal:host-gateway \
+  -v "$inspector_config:/tmp/godot-mcp-inspector.json:ro" "$INSPECTOR_IMAGE" \
+  --cli --config /tmp/godot-mcp-inspector.json --server godot-mcp \
+  --method tools/list >"$inspector_output" 2>&1; then
   echo "expected inspector call to fail when MCP-Protocol-Version header is missing"
   cat "$inspector_output"
   exit 1
 fi
 
-if ! grep -q "Missing MCP-Protocol-Version header" "$inspector_output"; then
-  echo "expected missing MCP-Protocol-Version error, got:"
+if ! grep -Eq "Protocol version header does not match|Invalid request metadata|Mcp-Method header does not match" "$inspector_output"; then
+  echo "expected protocol-header validation error, got:"
   cat "$inspector_output"
   exit 1
 fi
 
-echo "Inspector negative header check passed"
+echo "Inspector negative protocol-header check passed"

@@ -13,6 +13,7 @@ import (
 	"text/template"
 
 	"github.com/slighter12/godot-mcp-go/internal/application/toolpipeline"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
@@ -40,11 +41,15 @@ type PromptGovernanceRoot struct {
 }
 
 type ToolCallContext struct {
+	RequestID               string
+	ProgressRouteKey        string
 	SessionID               string
+	EditorSessionID         string
 	RuntimeSessionID        string
 	RuntimeCommandSessionID string
 	SessionInitialized      bool
 	MutatingAllowed         bool
+	Modern                  bool
 }
 
 const (
@@ -119,7 +124,11 @@ func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Resp
 	end := min(start+pageSize, len(sortedTools))
 
 	result := map[string]any{
-		"tools": sortedTools[start:end],
+		"resultType": "complete",
+		"tools":      sortedTools[start:end],
+		"ttlMs":      int64(0),
+		"cacheScope": "public",
+		"_meta":      resultMeta(),
 	}
 	if end < len(sortedTools) {
 		result["nextCursor"] = strconv.Itoa(end)
@@ -136,7 +145,11 @@ func BuildResourcesListResponse(msg jsonrpc.Request) *jsonrpc.Response {
 	end := min(start+pageSize, len(resources))
 
 	result := map[string]any{
-		"resources": resources[start:end],
+		"resultType": "complete",
+		"resources":  resources[start:end],
+		"ttlMs":      int64(0),
+		"cacheScope": "public",
+		"_meta":      resultMeta(),
 	}
 	if end < len(resources) {
 		result["nextCursor"] = strconv.Itoa(end)
@@ -165,6 +178,10 @@ func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 	}
 
 	return jsonrpc.NewResponse(msg.ID, map[string]any{
+		"resultType": "complete",
+		"_meta":      resultMeta(),
+		"ttlMs":      int64(0),
+		"cacheScope": "private",
 		"contents": []map[string]any{
 			{
 				"uri":      params.URI,
@@ -183,7 +200,7 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 	}
 
 	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
-		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
+		return semanticError(msg.ID, jsonrpc.ErrInternalError, "Resource temporarily unavailable", "not_available", data)
 	}
 
 	prompts := catalog.ListPrompts()
@@ -219,7 +236,11 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 	}
 
 	result := map[string]any{
-		"prompts": list,
+		"resultType": "complete",
+		"prompts":    list,
+		"ttlMs":      int64(0),
+		"cacheScope": "public",
+		"_meta":      resultMeta(),
 	}
 	if end < len(prompts) {
 		result["nextCursor"] = strconv.Itoa(end)
@@ -239,7 +260,7 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 	}
 
 	if data, unavailable := promptCatalogUnavailableData(catalog); unavailable {
-		return semanticError(msg.ID, jsonrpc.ErrServerError, "Resource temporarily unavailable", "not_available", data)
+		return semanticError(msg.ID, jsonrpc.ErrInternalError, "Resource temporarily unavailable", "not_available", data)
 	}
 
 	var params promptsGetParams
@@ -299,6 +320,10 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 		})
 	}
 	return jsonrpc.NewResponse(msg.ID, map[string]any{
+		"resultType":  "complete",
+		"_meta":       resultMeta(),
+		"ttlMs":       int64(0),
+		"cacheScope":  "private",
 		"name":        prompt.Name,
 		"description": prompt.Description,
 		"messages": []map[string]any{
@@ -341,12 +366,26 @@ func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
 	return jsonrpc.NewResponse(msg.ID, map[string]any{})
 }
 
+func BuildDiscoverResponse(msg jsonrpc.Request, promptCatalogEnabled bool) *jsonrpc.Response {
+	return jsonrpc.NewResponse(msg.ID, map[string]any{
+		"resultType":        "complete",
+		"_meta":             resultMeta(),
+		"supportedVersions": []string{mcpv20260728.ProtocolVersion},
+		"capabilities":      ServerCapabilities(promptCatalogEnabled, true),
+		"instructions":      "Godot MCP server. Use explicit editor_session_id for editor state and runtime bridge operations.",
+		"ttlMs":             0,
+		"cacheScope":        "public",
+	})
+}
+
 func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions) any {
 	return DispatchStandardMethodWithOptions(msg, toolManager, catalog, readResource, promptRenderOptions, DefaultToolCallOptions())
 }
 
 func DispatchStandardMethodWithOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions, toolCallOptions ToolCallOptions) any {
 	switch msg.Method {
+	case "server/discover":
+		return BuildDiscoverResponse(msg, catalog != nil && catalog.Enabled())
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
 	case "resources/list":
@@ -359,8 +398,6 @@ func DispatchStandardMethodWithOptions(msg jsonrpc.Request, toolManager *tools.M
 		return BuildPromptsGetResponseWithOptions(msg, catalog, promptRenderOptions)
 	case "tools/call":
 		return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{}, toolCallOptions)
-	case "ping":
-		return BuildPingResponse(msg)
 	default:
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
@@ -744,11 +781,15 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 		ToolManager:  toolManager,
 		ReadResource: readResource,
 		Context: toolpipeline.ToolCallContext{
+			RequestID:               callContext.RequestID,
+			ProgressRouteKey:        callContext.ProgressRouteKey,
 			SessionID:               callContext.SessionID,
+			EditorSessionID:         callContext.EditorSessionID,
 			RuntimeSessionID:        callContext.RuntimeSessionID,
 			RuntimeCommandSessionID: callContext.RuntimeCommandSessionID,
 			SessionInitialized:      callContext.SessionInitialized,
 			MutatingAllowed:         callContext.MutatingAllowed,
+			Modern:                  callContext.Modern,
 		},
 		Options: toolpipeline.ToolCallOptions{
 			SchemaValidationEnabled:   options.SchemaValidationEnabled,
@@ -762,6 +803,8 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 
 func BuildToolSuccessResult(toolName string, result any) map[string]any {
 	return map[string]any{
+		"resultType":        "complete",
+		"_meta":             resultMeta(),
 		"type":              string(mcp.TypeResult),
 		"tool":              toolName,
 		"result":            result,
@@ -781,8 +824,15 @@ func ToolContentFromResult(result any) []map[string]any {
 
 func ServerCapabilities(promptCatalogEnabled bool, promptListChanged bool) map[string]any {
 	capabilities := map[string]any{
-		"tools":     map[string]any{},
-		"resources": map[string]any{},
+		"tools":     map[string]any{"listChanged": false},
+		"resources": map[string]any{"listChanged": false, "subscribe": false},
+		"extensions": map[string]any{
+			mcpv20260728.GodotExtensionID: map[string]any{"version": "1"},
+			mcpv20260728.CommandStreamExtensionID: map[string]any{
+				"version": "1",
+				"events":  []string{"command"},
+			},
+		},
 	}
 	if promptCatalogEnabled {
 		capabilities["prompts"] = map[string]any{
@@ -790,6 +840,15 @@ func ServerCapabilities(promptCatalogEnabled bool, promptListChanged bool) map[s
 		}
 	}
 	return capabilities
+}
+
+func resultMeta() map[string]any {
+	return map[string]any{
+		"io.modelcontextprotocol/serverInfo": map[string]any{
+			"name":    "godot-mcp-go",
+			"version": mcp.ServerVersion,
+		},
+	}
 }
 
 func ParseCursor(paramsRaw json.RawMessage, total int) (int, error) {
@@ -881,6 +940,11 @@ func ParseJSONRPCFrame(frame []byte) ([]jsonrpc.Request, []any, bool, error) {
 		if err := json.Unmarshal(rawMsg, &msg); err != nil {
 			prebuiltResponses = append(prebuiltResponses, jsonrpc.NewErrorResponse(requestID, int(jsonrpc.ErrInvalidRequest), "Invalid request", nil))
 			continue
+		}
+		if hasID {
+			// json.Unmarshal converts numbers stored in an interface to float64.
+			// Reuse the validated representation so large integer IDs remain exact.
+			msg.ID = requestID
 		}
 
 		if msg.Method == "" {

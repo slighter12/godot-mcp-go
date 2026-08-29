@@ -15,11 +15,13 @@ type RuntimeCommandProgressNotifier func(RuntimeCommandProgressEvent)
 type RuntimeCommandSessionResolver func(map[string]any, MCPContext, string) (string, *SemanticError)
 
 type RuntimeCommandProgressEvent struct {
-	SessionID     string
-	CommandName   string
-	Progress      float64
-	Message       string
-	ProgressToken any
+	RequestID        string
+	ProgressRouteKey string
+	SessionID        string
+	CommandName      string
+	Progress         float64
+	Message          string
+	ProgressToken    any
 }
 
 type RuntimeCommandDispatchOptions struct {
@@ -35,13 +37,35 @@ type RuntimeCommandDispatchOptions struct {
 
 var (
 	runtimeCommandProgressNotifierMu sync.RWMutex
-	runtimeCommandProgressNotifier   RuntimeCommandProgressNotifier
+	runtimeCommandProgressNotifier   progressNotifierRegistration
+	runtimeCommandProgressToken      uint64
 )
 
 func SetRuntimeCommandProgressNotifier(notifier RuntimeCommandProgressNotifier) {
 	runtimeCommandProgressNotifierMu.Lock()
 	defer runtimeCommandProgressNotifierMu.Unlock()
-	runtimeCommandProgressNotifier = notifier
+	runtimeCommandProgressNotifier = progressNotifierRegistration{notifier: notifier}
+}
+
+// RegisterRuntimeCommandProgressNotifier installs an owner-scoped notifier.
+// Releasing an older registration never clears a newer active notifier.
+func RegisterRuntimeCommandProgressNotifier(notifier RuntimeCommandProgressNotifier) func() {
+	runtimeCommandProgressNotifierMu.Lock()
+	runtimeCommandProgressToken++
+	token := runtimeCommandProgressToken
+	runtimeCommandProgressNotifier = progressNotifierRegistration{token: token, notifier: notifier}
+	runtimeCommandProgressNotifierMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			runtimeCommandProgressNotifierMu.Lock()
+			defer runtimeCommandProgressNotifierMu.Unlock()
+			if runtimeCommandProgressNotifier.token == token {
+				runtimeCommandProgressNotifier = progressNotifierRegistration{}
+			}
+		})
+	}
 }
 
 func DispatchRuntimeCommand(options RuntimeCommandDispatchOptions) ([]byte, error) {
@@ -57,7 +81,7 @@ func DispatchRuntimeCommand(options RuntimeCommandDispatchOptions) ([]byte, erro
 	if strings.TrimSpace(ctx.SessionID) == "" || !ctx.SessionInitialized {
 		return nil, NewNotAvailableError(options.SessionRequiredMessage, map[string]any{
 			"feature": "runtime_bridge",
-			"reason":  "session_not_initialized",
+			"reason":  "editor_session_missing",
 			"tool":    options.CommandName,
 		})
 	}
@@ -132,17 +156,24 @@ func emitRuntimeCommandProgress(ctx MCPContext, commandName string, progress flo
 	}
 
 	runtimeCommandProgressNotifierMu.RLock()
-	notifier := runtimeCommandProgressNotifier
+	notifier := runtimeCommandProgressNotifier.notifier
 	runtimeCommandProgressNotifierMu.RUnlock()
 	if notifier == nil {
 		return
 	}
 
 	notifier(RuntimeCommandProgressEvent{
-		SessionID:     ctx.SessionID,
-		CommandName:   commandName,
-		Progress:      progress,
-		Message:       message,
-		ProgressToken: ctx.ProgressToken,
+		RequestID:        ctx.RequestID,
+		ProgressRouteKey: ctx.ProgressRouteKey,
+		SessionID:        ctx.SessionID,
+		CommandName:      commandName,
+		Progress:         progress,
+		Message:          message,
+		ProgressToken:    ctx.ProgressToken,
 	})
+}
+
+type progressNotifierRegistration struct {
+	token    uint64
+	notifier RuntimeCommandProgressNotifier
 }

@@ -5,8 +5,8 @@ This document defines the expected request/response checkpoints for the 14-step 
 Scope:
 
 - Streamable HTTP transport only
-- Initialized MCP session
-- Mutating capability negotiated unless compatibility fallback is explicitly enabled
+- MCP 2026-07-28 request metadata on every call
+- Per-request mutating capability negotiated unless compatibility fallback is explicitly enabled
 - Runtime companion installed and active
 
 Conventions:
@@ -19,11 +19,10 @@ Conventions:
 
 Before step 1:
 
-1. The MCP client has completed `initialize`
-2. The MCP client has sent `notifications/initialized`
-3. The session has mutating capability enabled for `godot.project.run`, `godot.project.stop`, and runtime input tools
-4. The Godot editor plugin is connected
-5. The runtime companion addon is available to the running game
+1. The client can send the standard 2026-07-28 `_meta` envelope.
+2. The client advertises `com.slighter12/godot-mcp.mutating=true` for mutating calls, or the trusted compatibility fallback is enabled.
+3. The Godot editor plugin is connected and its `editor_session_id` is known.
+4. The runtime companion addon is available to the running game.
 
 ## Dynamic Field Rules
 
