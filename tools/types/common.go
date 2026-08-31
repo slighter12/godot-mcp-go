@@ -1,6 +1,7 @@
 package types
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -21,6 +22,28 @@ type Tool interface {
 type AnnotatedTool interface {
 	Tool
 	Annotations() *mcp.ToolAnnotations
+}
+
+// OutputSchemaTool extends Tool with an opaque JSON Schema 2020-12 output schema.
+// The schema is transported unchanged; the server does not dereference it.
+type OutputSchemaTool interface {
+	Tool
+	OutputSchema() map[string]any
+}
+
+// ContentResultTool extends Tool with a protocol-aware result path that
+// preserves standard MCP content blocks and structured content.
+type ContentResultTool interface {
+	Tool
+	ExecuteContent(args json.RawMessage) (mcp.CompleteResult, error)
+}
+
+// MultiRoundTripTool opts a tool into the MCP 2026-07-28 input-required flow.
+// The ordinary Execute method remains the compatibility path when MRTR is not
+// configured by the hosting server.
+type MultiRoundTripTool interface {
+	Tool
+	ExecuteRoundTrip(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error)
 }
 
 // BoolPtr returns a pointer to a bool value.

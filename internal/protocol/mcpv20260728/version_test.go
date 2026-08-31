@@ -64,6 +64,30 @@ func TestDecodeHeaderValueTreatsSuffixOnlyValueAsLiteral(t *testing.T) {
 	}
 }
 
+func TestDecodeParameterHeaderValueTreatsIncompleteSentinelAsLiteral(t *testing.T) {
+	value := "=?base64?SGVsbG8="
+	decoded, err := decodeParameterHeaderValue(value)
+	if err != nil {
+		t.Fatalf("expected incomplete sentinel to remain literal: %v", err)
+	}
+	if decoded != value {
+		t.Fatalf("expected %q, got %q", value, decoded)
+	}
+}
+
+func TestHTTPTokenValidationUsesRFC9110TCharSet(t *testing.T) {
+	for _, value := range []string{"Value", "X_Custom.1", "!#$%&'*+-.^_`|~"} {
+		if !IsHTTPToken(value) {
+			t.Fatalf("expected %q to be a valid HTTP token", value)
+		}
+	}
+	for _, value := range []string{"", "has space", "bad:value", "非ASCII"} {
+		if IsHTTPToken(value) {
+			t.Fatalf("expected %q to be rejected as an HTTP token", value)
+		}
+	}
+}
+
 func TestAddSupportedVersionsForInitializeCopiesData(t *testing.T) {
 	original := map[string]any{"reason": "missing metadata"}
 	result := AddSupportedVersionsForInitialize("initialize", original)

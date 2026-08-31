@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/slighter12/godot-mcp-go/config"
 	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/promptcatalog"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
@@ -51,15 +53,47 @@ type Server struct {
 	releaseNotificationSender func()
 	releaseProgressNotifier   func()
 	stdioServer               *stdio.StdioServer
+	dispatchHook              DispatchHook
+	progressDispatchHook      ProgressDispatchHook
+	dispatchProviders         shared.DispatchProviders
+	requestStateCodec         *mcpv20260728.RequestStateCodec
+}
+
+// ServerOptions configures optional production MCP capabilities. The zero
+// value preserves the default catalog and capability surface.
+type ServerOptions struct {
+	DispatchProviders shared.DispatchProviders
+	// Deprecated: use RequestStateKeyRing for rotation support.
+	RequestStateKey     []byte
+	RequestStateKeyRing *mcpv20260728.RequestStateKeyRing
 }
 
 func NewServer(cfg *config.Config) *Server {
-	server := &Server{
-		toolManager:         tools.NewManager(),
-		subscriptionManager: NewSubscriptionManager(),
-		config:              cfg,
-		echo:                echo.New(),
-		progressStreams:     make(map[string]*progressStreamRecord),
+	server, _ := NewServerWithOptions(cfg, ServerOptions{})
+	return server
+}
+
+// NewServerWithOptions creates a production server with explicitly supplied
+// optional capability providers.
+func NewServerWithOptions(cfg *config.Config, options ServerOptions) (*Server, error) {
+	server := newServerBase(cfg)
+	server.dispatchProviders = options.DispatchProviders
+	if len(options.RequestStateKey) != 0 && options.RequestStateKeyRing != nil {
+		return nil, errors.New("RequestStateKey and RequestStateKeyRing cannot be configured together")
+	}
+	if len(options.RequestStateKey) != 0 {
+		codec, err := mcpv20260728.NewRequestStateCodec(options.RequestStateKey)
+		if err != nil {
+			return nil, err
+		}
+		server.requestStateCodec = codec
+	}
+	if options.RequestStateKeyRing != nil {
+		codec, err := mcpv20260728.NewRequestStateCodecWithKeyRing(*options.RequestStateKeyRing)
+		if err != nil {
+			return nil, err
+		}
+		server.requestStateCodec = codec
 	}
 	runtimebridge.DefaultEditorStore().ConfigureFreshness(
 		time.Duration(cfg.RuntimeBridge.StaleAfterSeconds)*time.Second,
@@ -71,7 +105,39 @@ func NewServer(cfg *config.Config) *Server {
 	)
 	server.releaseNotificationSender = runtimebridge.RegisterNotificationSender(server.SendJSONRPCNotificationToEditor)
 	server.releaseProgressNotifier = tooltypes.RegisterRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
+	return server, nil
+}
+
+func newServerBase(cfg *config.Config) *Server {
+	return &Server{
+		toolManager:         tools.NewManager(),
+		subscriptionManager: NewSubscriptionManager(),
+		config:              cfg,
+		echo:                echo.New(),
+		progressStreams:     make(map[string]*progressStreamRecord),
+	}
+}
+
+// NewConformanceServer creates an isolated HTTP server with an explicitly
+// supplied catalog and dispatch hook. It never registers production tools.
+func NewConformanceServer(cfg *config.Config, manager *tools.Manager, catalog *promptcatalog.Registry, hook DispatchHook, providers shared.DispatchProviders, requestStateCodec *mcpv20260728.RequestStateCodec) *Server {
+	server := newServerBase(cfg)
+	server.toolManager = manager
+	server.promptCatalog = catalog
+	server.dispatchHook = hook
+	server.dispatchProviders = providers
+	server.requestStateCodec = requestStateCodec
 	return server
+}
+
+// StartConformance starts the isolated fixture without production catalog,
+// runtime bridge, prompt discovery, or stdio setup.
+func (s *Server) StartConformance() error {
+	if err := s.validateMRTRConfiguration(); err != nil {
+		return err
+	}
+	s.setupEcho()
+	return s.startStreamableHTTPServer()
 }
 
 // nextStreamRouteKey returns a server-owned key for an HTTP stream. Client
@@ -102,12 +168,39 @@ func (s *Server) Start() error {
 		logger.Error("Failed to register runtime tools", "error", err)
 		return err
 	}
+	if err := s.validateMRTRConfiguration(); err != nil {
+		return err
+	}
 	s.setupEcho()
 	if useStdio {
 		return s.startStdioServer()
 	} else {
 		return s.startStreamableHTTPServer()
 	}
+}
+
+func (s *Server) validateMRTRConfiguration() error {
+	if s == nil || s.requestStateCodec != nil {
+		return nil
+	}
+	if s.toolManager != nil {
+		for _, tool := range s.toolManager.ListTools() {
+			if _, ok := tool.(tooltypes.MultiRoundTripTool); ok {
+				return errors.New("MRTR handlers require requestState key configuration")
+			}
+		}
+	}
+	if s.promptCatalog != nil {
+		for _, prompt := range s.promptCatalog.ListPrompts() {
+			if prompt.RoundTripHandler != nil {
+				return errors.New("MRTR handlers require requestState key configuration")
+			}
+		}
+	}
+	if _, ok := s.dispatchProviders.Resources.(shared.MultiRoundTripResourceCatalog); ok {
+		return errors.New("MRTR handlers require requestState key configuration")
+	}
+	return nil
 }
 
 func (s *Server) registerStdioBaseTools() error {
@@ -124,21 +217,57 @@ func (s *Server) setupEcho() {
 	s.echo.Use(middleware.Logger())
 	s.echo.Use(middleware.Recover())
 	s.echo.Use(s.originValidationMiddleware())
+	s.echo.Use(validateCORSRequestHeadersMiddleware())
 	s.echo.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOriginFunc: func(origin string) (bool, error) {
 			return s.isAllowedOrigin(origin), nil
 		},
 		AllowMethods: []string{http.MethodPost, http.MethodOptions},
-		AllowHeaders: []string{
-			echo.HeaderOrigin,
-			echo.HeaderContentType,
-			echo.HeaderAccept,
-			"MCP-Protocol-Version",
-			"Mcp-Method",
-			"Mcp-Name",
-		},
+		// Echo reflects Access-Control-Request-Headers when this list is empty.
+		// A preceding middleware validates the reflected names.
+		AllowHeaders: nil,
 	}))
 	RegisterRoutes(s.echo, s)
+}
+
+func validateCORSRequestHeadersMiddleware() echo.MiddlewareFunc {
+	allowed := map[string]struct{}{
+		strings.ToLower(echo.HeaderContentType): {},
+		strings.ToLower(echo.HeaderAccept):      {},
+		"mcp-protocol-version":                  {},
+		"mcp-method":                            {},
+		"mcp-name":                              {},
+	}
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if c.Request().Method != http.MethodOptions {
+				return next(c)
+			}
+			raw := c.Request().Header.Get(echo.HeaderAccessControlRequestHeaders)
+			if len(raw) > 8*1024 {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden request header"})
+			}
+			names := strings.Split(raw, ",")
+			if len(names) > 64 {
+				return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden request header"})
+			}
+			for _, name := range names {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				canonical := strings.ToLower(name)
+				if _, ok := allowed[canonical]; ok {
+					continue
+				}
+				const prefix = "mcp-param-"
+				if !strings.HasPrefix(canonical, prefix) || !mcpv20260728.IsHTTPToken(name[len(prefix):]) {
+					return c.JSON(http.StatusForbidden, map[string]string{"error": "forbidden request header"})
+				}
+			}
+			return next(c)
+		}
+	}
 }
 
 func (s *Server) startStdioServer() error {
@@ -148,6 +277,8 @@ func (s *Server) startStdioServer() error {
 	server.AttachPromptCatalog(s.promptCatalog)
 	server.AttachPromptRenderOptions(s.promptRenderOptions())
 	server.AttachToolCallOptions(s.toolCallOptions())
+	server.AttachDispatchProviders(s.dispatchProviders)
+	server.AttachRequestStateCodec(s.requestStateCodec)
 	releaseNotificationSender := runtimebridge.RegisterNotificationSender(server.SendJSONRPCNotificationToEditor)
 	defer releaseNotificationSender()
 	releaseProgressNotifier := tooltypes.RegisterRuntimeCommandProgressNotifier(server.SendRuntimeCommandProgressNotification)
@@ -251,6 +382,21 @@ func (s *Server) GetPromptCatalog() *promptcatalog.Registry {
 
 func (s *Server) GetConfig() *config.Config {
 	return s.config
+}
+
+// AttachDispatchHook installs an opt-in request surface. Production startup
+// does not call this method.
+func (s *Server) AttachDispatchHook(hook DispatchHook) {
+	if s != nil {
+		s.dispatchHook = hook
+	}
+}
+
+// AttachProgressDispatchHook installs the opt-in fixture progress surface.
+func (s *Server) AttachProgressDispatchHook(hook ProgressDispatchHook) {
+	if s != nil {
+		s.progressDispatchHook = hook
+	}
 }
 
 func (s *Server) promptRenderOptions() shared.PromptRenderOptions {

@@ -66,22 +66,30 @@ func IsSupportedProtocolVersion(version string) bool {
 // HTTP header values such as Mcp-Name. Outer HTTP optional whitespace is
 // ignored; whitespace inside the decoded value is preserved.
 func DecodeHeaderValue(headerValue string) (string, error) {
-	value := strings.TrimSpace(headerValue)
+	value, _, err := decodeBase64Sentinel(headerValue, true)
+	return value, err
+}
+
+func decodeBase64Sentinel(headerValue string, trimOuterWhitespace bool) (string, bool, error) {
+	value := headerValue
+	if trimOuterWhitespace {
+		value = strings.TrimSpace(value)
+	}
 	hasPrefix := strings.HasPrefix(value, base64HeaderPrefix)
 	hasSuffix := strings.HasSuffix(value, base64HeaderSuffix)
 	if !hasPrefix {
-		return value, nil
+		return value, false, nil
 	}
 	if !hasSuffix {
-		return "", fmt.Errorf("%w: malformed Base64 sentinel", ErrInvalidHeaderEncoding)
+		return "", true, fmt.Errorf("%w: malformed Base64 sentinel", ErrInvalidHeaderEncoding)
 	}
 
 	encoded := strings.TrimSuffix(strings.TrimPrefix(value, base64HeaderPrefix), base64HeaderSuffix)
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidHeaderEncoding, err)
+		return "", true, fmt.Errorf("%w: %v", ErrInvalidHeaderEncoding, err)
 	}
-	return string(decoded), nil
+	return string(decoded), true, nil
 }
 
 func ParseRequestMeta(paramsRaw json.RawMessage) (RequestMeta, error) {

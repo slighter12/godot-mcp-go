@@ -1,6 +1,9 @@
 package mcp
 
 import (
+	"bytes"
+	"encoding/json"
+
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
 )
 
@@ -38,6 +41,77 @@ type InputSchema struct {
 	Properties map[string]any `json:"properties"`
 	Required   []string       `json:"required"`
 	Title      string         `json:"title,omitempty"`
+	// Extras preserves the remaining JSON Schema 2020-12 vocabulary verbatim.
+	Extras map[string]any `json:"-"`
+}
+
+// MarshalJSON preserves the full JSON Schema 2020-12 vocabulary while keeping
+// the existing strongly-typed fields used by production tools.
+func (s InputSchema) MarshalJSON() ([]byte, error) {
+	result := make(map[string]any, len(s.Extras)+4)
+	for key, value := range s.Extras {
+		result[key] = value
+	}
+	result["type"] = s.Type
+	properties := s.Properties
+	if properties == nil {
+		properties = map[string]any{}
+	}
+	required := s.Required
+	if required == nil {
+		required = []string{}
+	}
+	result["properties"] = properties
+	result["required"] = required
+	if s.Title != "" {
+		result["title"] = s.Title
+	}
+	return json.Marshal(result)
+}
+
+// UnmarshalJSON restores strongly typed fields and retains every other JSON
+// Schema 2020-12 keyword in Extras for lossless round trips.
+func (s *InputSchema) UnmarshalJSON(data []byte) error {
+	*s = InputSchema{}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if value, ok := raw["type"]; ok {
+		if err := json.Unmarshal(value, &s.Type); err != nil {
+			return err
+		}
+		delete(raw, "type")
+	}
+	if value, ok := raw["properties"]; ok {
+		if err := json.Unmarshal(value, &s.Properties); err != nil {
+			return err
+		}
+		delete(raw, "properties")
+	}
+	if value, ok := raw["required"]; ok {
+		if err := json.Unmarshal(value, &s.Required); err != nil {
+			return err
+		}
+		delete(raw, "required")
+	}
+	if value, ok := raw["title"]; ok {
+		if err := json.Unmarshal(value, &s.Title); err != nil {
+			return err
+		}
+		delete(raw, "title")
+	}
+	s.Extras = make(map[string]any, len(raw))
+	for key, value := range raw {
+		var decoded any
+		decoder := json.NewDecoder(bytes.NewReader(value))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			return err
+		}
+		s.Extras[key] = decoded
+	}
+	return nil
 }
 
 // ToolCallMessage represents a tool call request

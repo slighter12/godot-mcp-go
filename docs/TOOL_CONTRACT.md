@@ -110,7 +110,21 @@ For both transports, every request carries `params._meta` with:
 
 Streamable HTTP additionally requires `MCP-Protocol-Version`, `Mcp-Method`, and `Accept: application/json, text/event-stream`. `Mcp-Name` must match the tool name, resource URI, or prompt name for named operations. The removed `initialize`, `initialized`, `notifications/initialized`, `MCP-Session-Id`, HTTP `GET /mcp`, and HTTP `DELETE /mcp` forms are not part of the public transport.
 
+Tool input properties may opt into HTTP binding with `x-mcp-header`. Nested properties are supported when every schema step is a `properties` key; annotations under arrays, composition, conditionals, or references are rejected as not statically reachable. Header suffixes are unique across the full schema. The corresponding `Mcp-Param-{Name}` value must match the nested JSON body value after strict Base64-sentinel decoding. Missing, malformed, duplicate, or mismatched recognized headers return HTTP `400` with JSON-RPC `-32020`. Unknown `Mcp-Param-*` headers are ignored.
+
 Modern successful tool results contain `resultType`, `content`, `structuredContent` when a structured value exists, `isError`, and namespaced `_meta`. Legacy `type`, `tool`, and `result` fields are not emitted by public modern routes. List/discover results also include `ttlMs` and `cacheScope`.
+
+`content` accepts standard text, image, audio, embedded resource, resource link, and mixed block arrays. Optional `outputSchema` values are preserved as opaque JSON Schema 2020-12 documents without dereferencing or keyword stripping.
+
+The shared dispatcher implements `resources/templates/list` and provider-gated `completion/complete`. Production embeddings install completion/resource providers through `NewServerWithOptions`; HTTP and stdio use the same providers and discovery advertises completion only when installed. The default executable exposes an empty resource-template list and installs no completion provider. The opt-in fixture supplies candidates through this production-capable path.
+
+The shared MRTR coordinator supports opt-in `tools/call`, programmatic `prompts/get`, and `resources/read` handlers. It owns re-entry and a confidential AES-256-GCM `v2` request state bound to method, operation identity, salient parameters, the current response contract, an optional authenticated `PrincipalID`, round, and five-minute expiry. Production requires an explicit active key through `ServerOptions.RequestStateKeyRing`; decrypt-only keys support rotation, while only tests and the fixture may use a random process-local key. The built-in unauthenticated transports leave `PrincipalID` empty and treat state as a bearer capability; self-asserted `clientInfo` is not an identity. The default Godot catalog has no MRTR handler.
+
+Every input-required round carries state. The coordinator validates the released response union and the method-specific request contract before entering a handler, filters unknown well-formed IDs, rejects malformed or mismatched values with `-32602`, and encrypts partial valid responses while re-requesting only missing IDs. AES-GCM does not prevent replay of a still-valid token; mutating handlers must carry a stable idempotency identifier in their private continuation and deduplicate it in durable application state.
+
+`inputResponses` are bounded to 256 KiB, 128 entries, depth 32, and 4096 decoded nodes. Form elicitation intentionally supports exactly the released restricted top-level primitive/enum schema; unsupported or nested schema forms are rejected before state is minted. URL elicitation requires an absolute URL and does not accept form content.
+
+Standard result content is normalized and validated centrally. Each decoded text/binary/resource payload and ordinary raw tool output is limited to 8 MiB; the complete normalized result, including duplicated text and structured content, is limited to 16 MiB. Invalid discriminators, Base64, MIME types, resource URIs, or simultaneous embedded `text` and `blob` produce a generic JSON-RPC internal error.
 
 ## Mutating Capability Gate
 
@@ -157,8 +171,10 @@ Scope rules:
 - `streamable_http`
   - Supports all read and mutating tools.
   - Mutating tools require the per-request mutating capability + active runtime bridge.
+  - Validates standard and schema-bound parameter headers, propagates request/SSE cancellation, and uses request-scoped SSE for progress. `Tool.Execute` is not cooperatively cancellable, so cancellation suppresses late results but does not stop or roll back work that already started.
 - `stdio`
   - Uses the same modern request envelope and result shapes.
+  - Limits each newline-delimited JSON-RPC frame to 1 MiB; an oversized frame receives one `-32600` response and closes the transport.
   - Runtime command paths depend on the configured stdio tool set and active bridge state.
 
 ## Error Semantics

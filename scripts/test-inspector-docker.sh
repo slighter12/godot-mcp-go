@@ -5,7 +5,7 @@ GO_BIN="${GO:-go}"
 SERVER_HOST="${SERVER_HOST:-localhost}"
 SERVER_PORT="${SERVER_PORT:-9080}"
 INSPECTOR_SERVER_URL="${INSPECTOR_SERVER_URL:-http://host.docker.internal:${SERVER_PORT}/mcp}"
-INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:latest}"
+INSPECTOR_IMAGE="${INSPECTOR_IMAGE:-ghcr.io/modelcontextprotocol/inspector:1.0.1}"
 PROTOCOL_VERSION="${PROTOCOL_VERSION:-2026-07-28}"
 
 . "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/http-test-server.sh"

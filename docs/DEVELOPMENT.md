@@ -15,8 +15,9 @@ This document is the canonical implementation status for the repository.
 
 - Project setup and module layout
 - MCP 2026-07-28 request metadata and strict version validation
+- MCP 2026-07-28 resource templates, cache metadata, bounded complete results, production-configurable completion, and shared confidential MRTR requestState
 - Dual transport support (`stdio`, `streamable_http`)
-- Stateless HTTP routing with method/name/version headers, request-scoped progress SSE, and `subscriptions/listen`
+- Stateless HTTP routing with method/name/version and `x-mcp-header` parameter validation, request-scoped progress SSE, cancellation, and `subscriptions/listen`
 - Tool manager and canonical `godot.*` name binding
 - Layered server boundary:
   - `internal/protocol` for MCP frame/version validation
@@ -48,7 +49,8 @@ This document is the canonical implementation status for the repository.
   - `runtime_snapshot_collector.gd`
   - `runtime_command_dispatcher.gd`
   - `tool_catalog.gd`
-- CI and manual verification scripts (Go tests, modern HTTP smoke/runtime-log smoke, unsupported ping, removed DELETE, explicit editor routing, Inspector docker)
+- Isolated `cmd/conformance-fixture` catalog for the pinned official MCP server runner; fixture names are never registered in production
+- CI and manual verification scripts (Go tests, HTTP gates, Inspector Docker, frozen conformance requirements, addon static check)
 
 ### Release State
 
@@ -57,18 +59,32 @@ This document is the canonical implementation status for the repository.
 
 ## Verification Gate
 
+Run the canonical aggregate gate:
+
+```bash
+make test-release
+```
+
+For a fast local check that does not require Docker or Bun, run `make test-quick`.
+
+It runs, in order:
+
 1. `go test ./...`
-2. `go test ./transport/http -run Modern`
-3. `make test-http-smoke`
-4. `make test-http-runtime-log-smoke`
-5. `make test-http-ping`
-6. `make test-http-delete`
-7. `make test-http-session-isolation`
-8. `make test-http-protocol-header`
-9. `make test-http-allow-list-runtime-bridge`
-10. `make test-lifecycle-initialized-id`
-11. `make test-inspector-docker`
-12. `make test-inspector-header-negative`
+2. `make test-http-smoke`
+3. `make test-http-runtime-log-smoke`
+4. `make test-http-ping`
+5. `make test-http-delete`
+6. `make test-http-session-isolation`
+7. `make test-http-protocol-header`
+8. `make test-http-allow-list-runtime-bridge`
+9. `make test-lifecycle-initialized-id`
+10. `make test-inspector-docker`
+11. `make test-inspector-header-negative`
+12. `make test-conformance-cleanup`
+13. `make test-conformance-2026-07-28`
+14. `make test-addon-static`
+
+The conformance target starts the loopback-only fixture and invokes exactly `@modelcontextprotocol/conformance@0.2.0-alpha.11` with `--requirements 2026-07-28`. Its exit status scores only frozen core scenarios; extension and pending scenarios remain visible in the report. Default temporary reports are removed after success and copied to the printed `Conformance failure output retained` path after failure; set `CONFORMANCE_OUTPUT_DIR` to always retain them. Before changing the pinned package version, manually diff its frozen requirement and fixture scenario lists and record acceptance of additions in the change review.
 
 ## Acceptance Failure Criteria
 
@@ -77,6 +93,8 @@ This document is the canonical implementation status for the repository.
 - Any permission regression where non-internal tools bypass `permission_mode`
 - Any runtime bridge regression where `godot.bridge.editor.sync`, `godot.bridge.editor.ping`, or `godot.bridge.command.ack` is blocked by `read_only` / `allow_list`
 - Any protocol version acceptance outside `2026-07-28`
+- Any scored failure in the frozen `2026-07-28` official server requirements
+- Any `test_*` or `json_schema_2020_12_tool` fixture entry exposed by the production catalog
 
 ## Update Rules
 
