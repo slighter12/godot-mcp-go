@@ -1,7 +1,9 @@
 package toolpipeline
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"maps"
 	"sort"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/slighter12/godot-mcp-go/internal/domain/toolspec"
 	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -20,6 +23,7 @@ import (
 const toolExecutionErrorMessage = "Tool execution failed"
 
 type ToolCallContext struct {
+	Context                 context.Context
 	RequestID               string
 	ProgressRouteKey        string
 	SessionID               string
@@ -29,6 +33,10 @@ type ToolCallContext struct {
 	SessionInitialized      bool
 	MutatingAllowed         bool
 	Modern                  bool
+	ClientInfo              map[string]any
+	ClientCapabilities      map[string]any
+	RequestStateCodec       *mcpv20260728.RequestStateCodec
+	PrincipalID             string
 }
 
 type ToolCallOptions struct {
@@ -48,24 +56,16 @@ type ExecuteInput struct {
 }
 
 func Execute(input ExecuteInput) *jsonrpc.Response {
-	var toolCall struct {
-		Name      string         `json:"name"`
-		Tool      string         `json:"tool"`
-		Arguments map[string]any `json:"arguments"`
-		Meta      map[string]any `json:"_meta"`
-	}
-	if err := json.Unmarshal(input.Message.Params, &toolCall); err != nil {
+	toolCall, err := mcpv20260728.DecodeToolCallParams(input.Message.Params, input.Context.Modern)
+	if err != nil {
 		return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
 	}
 
-	toolName := strings.TrimSpace(toolCall.Name)
-	if toolName == "" {
-		toolName = strings.TrimSpace(toolCall.Tool)
-	}
+	toolName := toolCall.Name
 	if toolName == "" {
 		return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Tool name is required", nil)
 	}
-	if !strings.HasPrefix(toolName, "godot://") && !toolspec.ValidateToolName(toolName) {
+	if !strings.HasPrefix(toolName, "godot://") && !input.ToolManager.ValidToolName(toolName) {
 		return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool name", nil)
 	}
 
@@ -91,11 +91,11 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 
 	if strings.HasPrefix(toolName, "godot://") {
 		if !toolspec.IsToolAllowed(toolName, input.Options.PermissionMode, input.Options.AllowedTools) {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(toolName, tooltypes.NewSemanticError(
+			return buildToolSemanticErrorResponse(input.Message.ID, toolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
 				"Tool call is blocked by permission policy",
 				map[string]any{"reason": "permission_denied", "permission_mode": input.Options.PermissionMode},
-			), input.Context.Modern))
+			), input.Context.Modern)
 		}
 		if input.ReadResource == nil {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Resource handler is not configured", nil)
@@ -104,7 +104,7 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 		if err != nil {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 		}
-		return jsonrpc.NewResponse(input.Message.ID, buildToolSuccessResultForProtocol(toolName, result, input.Context.Modern))
+		return buildToolSuccessResponse(input.Message.ID, toolName, result, input.Context.Modern)
 	}
 
 	canonicalToolName := toolName
@@ -114,18 +114,18 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 	}
 	log.Printf("godot-mcp tools/call dispatch: tool=%q canonical=%q session_id=%q known=%t",
 		toolName, canonicalToolName, strings.TrimSpace(input.Context.SessionID), found)
-	if !toolspec.ValidateToolName(canonicalToolName) {
+	if !input.ToolManager.ValidToolName(canonicalToolName) {
 		return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool name", nil)
 	}
 	isInternalBridgeTool := toolspec.IsInternalBridgeTool(canonicalToolName)
 
 	if found && tool != nil {
 		if !isInternalBridgeTool && !toolspec.IsToolAllowed(canonicalToolName, input.Options.PermissionMode, input.Options.AllowedTools) {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, tooltypes.NewSemanticError(
+			return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
 				"Tool call is blocked by permission policy",
 				map[string]any{"reason": "permission_denied", "permission_mode": input.Options.PermissionMode},
-			), input.Context.Modern))
+			), input.Context.Modern)
 		}
 		if toolspec.IsMutatingTool(canonicalToolName) && !input.Context.MutatingAllowed {
 			if input.Context.Modern {
@@ -134,24 +134,77 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 					"tool":                 canonicalToolName,
 				})
 			}
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, tooltypes.NewSemanticError(
+			return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, tooltypes.NewSemanticError(
 				tooltypes.SemanticKindNotSupported,
 				"Mutating tools require modern Godot mutating capability",
 				map[string]any{"reason": "mutating_capability_required"},
-			), input.Context.Modern))
+			), input.Context.Modern)
 		}
 		if input.Options.SchemaValidationEnabled {
 			if err := validateToolArguments(tool.InputSchema(), arguments, input.Options.RejectUnknownArguments); err != nil {
-				return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, err, input.Context.Modern))
+				return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, err, input.Context.Modern)
 			}
 		}
 	}
 
 	arguments = enrichToolCallArguments(arguments, input.Context, input.Options, progressToken, hasProgressToken)
+	if input.Context.Modern && found && tool != nil {
+		if roundTripTool, ok := tool.(tooltypes.MultiRoundTripTool); ok {
+			binding := mcpv20260728.RequestStateBinding{Method: input.Message.Method, Identity: canonicalToolName, Parameters: toolCall.Arguments, PrincipalID: input.Context.PrincipalID}
+			resultValue, executeErr := mcpv20260728.ProcessRoundTrip(input.Context.Context, input.Context.RequestStateCodec, binding, mcp.RoundTripRequest{
+				Method: input.Message.Method, Name: canonicalToolName, Arguments: arguments, InputResponses: toolCall.InputResponses, InputResponsesPresent: toolCall.InputResponsesPresent,
+				ClientInfo: input.Context.ClientInfo, ClientCapabilities: input.Context.ClientCapabilities, PrincipalID: input.Context.PrincipalID,
+			}, toolCall.RequestState, map[string]any{"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion}}, roundTripTool.ExecuteRoundTrip)
+			if executeErr != nil {
+				if errors.Is(executeErr, mcpv20260728.ErrInvalidRequestState) {
+					return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid requestState", nil)
+				}
+				if errors.Is(executeErr, mcpv20260728.ErrInvalidRoundTripInput) {
+					return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), "Invalid inputResponses", nil)
+				}
+				if errors.Is(executeErr, mcpv20260728.ErrInvalidRoundTripOutcome) || errors.Is(executeErr, mcpv20260728.ErrRequestStateEncoding) {
+					return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInternalError), "Invalid multi round-trip result", nil)
+				}
+				if semanticErr, ok := tooltypes.AsSemanticError(executeErr); ok {
+					return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, semanticErr, true)
+				}
+				return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResultForProtocol(canonicalToolName, true))
+			}
+			if inputRequired, ok := resultValue.(mcp.InputRequiredResult); ok {
+				return jsonrpc.NewResponse(input.Message.ID, inputRequired)
+			}
+			normalized, normalizeErr := normalizeToolCompleteResult(resultValue)
+			if normalizeErr != nil {
+				return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInternalError), "Invalid tool result", nil)
+			}
+			return jsonrpc.NewResponse(input.Message.ID, normalized)
+		}
+		if contentTool, ok := tool.(tooltypes.ContentResultTool); ok {
+			rawArguments, marshalErr := json.Marshal(arguments)
+			if marshalErr != nil {
+				return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResultForProtocol(canonicalToolName, true))
+			}
+			result, executeErr := contentTool.ExecuteContent(rawArguments)
+			if executeErr != nil {
+				if semanticErr, ok := tooltypes.AsSemanticError(executeErr); ok {
+					return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, semanticErr, true)
+				}
+				return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResultForProtocol(canonicalToolName, true))
+			}
+			normalized, normalizeErr := normalizeToolCompleteResult(result)
+			if normalizeErr != nil {
+				return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInternalError), "Invalid tool result", nil)
+			}
+			return jsonrpc.NewResponse(input.Message.ID, normalized)
+		}
+	}
 	result, err := input.ToolManager.CallTool(canonicalToolName, arguments)
 	if err != nil {
+		if input.Context.Modern && errors.Is(err, tools.ErrToolResultTooLarge) {
+			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInternalError), "Invalid tool result", nil)
+		}
 		if semanticErr, ok := tooltypes.AsSemanticError(err); ok {
-			return jsonrpc.NewResponse(input.Message.ID, buildToolSemanticErrorResultForProtocol(canonicalToolName, semanticErr, input.Context.Modern))
+			return buildToolSemanticErrorResponse(input.Message.ID, canonicalToolName, semanticErr, input.Context.Modern)
 		}
 		if tools.IsToolNotFound(err) {
 			return jsonrpc.NewErrorResponse(input.Message.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
@@ -159,7 +212,29 @@ func Execute(input ExecuteInput) *jsonrpc.Response {
 		return jsonrpc.NewResponse(input.Message.ID, buildToolExecutionErrorResultForProtocol(canonicalToolName, input.Context.Modern))
 	}
 
-	return jsonrpc.NewResponse(input.Message.ID, buildToolSuccessResultForProtocol(canonicalToolName, result, input.Context.Modern))
+	return buildToolSuccessResponse(input.Message.ID, canonicalToolName, result, input.Context.Modern)
+}
+
+func normalizeToolCompleteResult(result any) (map[string]any, error) {
+	normalized, err := mcpv20260728.NormalizeMethodCompleteResult("tools/call", result, map[string]any{
+		"io.modelcontextprotocol/serverInfo": map[string]any{"name": "godot-mcp-go", "version": mcp.ServerVersion},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func buildToolSuccessResponse(id any, toolName string, result any, modern bool) *jsonrpc.Response {
+	built := buildToolSuccessResultForProtocol(toolName, result, modern)
+	if !modern {
+		return jsonrpc.NewResponse(id, built)
+	}
+	normalized, err := normalizeToolCompleteResult(built)
+	if err != nil {
+		return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInternalError), "Invalid tool result", nil)
+	}
+	return jsonrpc.NewResponse(id, normalized)
 }
 
 func buildToolSuccessResultForProtocol(toolName string, result any, modern bool) map[string]any {
@@ -211,6 +286,18 @@ func buildToolSemanticErrorResultForProtocol(toolName string, semanticErr *toolt
 		"structuredContent": errorPayload,
 		"isError":           true,
 	}
+}
+
+func buildToolSemanticErrorResponse(id any, toolName string, semanticErr *tooltypes.SemanticError, modern bool) *jsonrpc.Response {
+	result := buildToolSemanticErrorResultForProtocol(toolName, semanticErr, modern)
+	if !modern {
+		return jsonrpc.NewResponse(id, result)
+	}
+	normalized, err := normalizeToolCompleteResult(result)
+	if err != nil {
+		return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInternalError), "Invalid tool result", nil)
+	}
+	return jsonrpc.NewResponse(id, normalized)
 }
 
 func BuildToolSuccessResult(toolName string, result any) map[string]any {

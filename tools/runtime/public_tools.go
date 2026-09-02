@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
@@ -262,7 +263,17 @@ func (t *RuntimeSceneTreeGetTool) Execute(args json.RawMessage) ([]byte, error) 
 	out["root"] = tree
 	out["root_scene_path"] = stored.Snapshot.RootScenePath
 	out["root_node_name"] = stored.Snapshot.RootNodeName
-	return json.Marshal(out)
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) > mcpv20260728.MaxDecodedContentBlockBytes {
+		return nil, tooltypes.NewSemanticError(tooltypes.SemanticKindExecutionFailed, "Runtime scene tree exceeds protocol result limit", map[string]any{
+			"code":      "result_too_large",
+			"max_bytes": mcpv20260728.MaxDecodedContentBlockBytes,
+		})
+	}
+	return encoded, nil
 }
 
 type RuntimeNodePropertiesGetTool struct{}

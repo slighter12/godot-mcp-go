@@ -57,6 +57,12 @@ Current line introduces the following compatibility changes:
 7. Project tools now return real paginated payloads:
    - `godot.project.settings.get`
    - `godot.project.resources.list`
+8. MCP 2026-07-28 additions:
+   - `resources/templates/list`; `completion/complete` only when an explicit provider is configured
+   - standard text/image/audio/resource/mixed content blocks and opaque JSON Schema 2020-12 preservation
+   - `Mcp-Param-*` validation for tool properties annotated with `x-mcp-header`
+   - production-configurable MRTR `input_required` results with confidential, integrity-protected `requestState`
+   - no existing `godot.*` tool name or payload contract changes
 
 ## Transport Notes
 
@@ -84,7 +90,67 @@ Current line introduces the following compatibility changes:
   - call `godot.runtime.await_snapshot` when the next runtime read depends on fresh live state
   - pass only that verified `session_id` to runtime tools
 - `stdio` and Streamable HTTP share the same request metadata and result envelopes; stdio has no lifecycle handshake.
+- Both transports limit JSON-RPC request frames to 1 MiB. An oversized stdio frame produces one `-32600 Request body too large` response and terminates that transport.
 - Progress notifications (`notifications/progress`) are best-effort and require `_meta.progressToken` in `tools/call`. HTTP keeps progress on that request's SSE response.
+- HTTP cancellation closes the request-scoped progress stream, cancels the request context, and suppresses late results. The current `Tool.Execute` contract is not cooperatively cancellable, so work that already started may finish; cancellation is not a rollback mechanism.
+
+MRTR handlers use the shared production coordinator. A production embedding
+should configure `ServerOptions.RequestStateKeyRing` with one active key and
+zero or more decrypt-only keys. Every entry has a unique, non-secret key ID and
+at least 32 bytes of key material; resolve the material from the deployment's
+secret store before constructing the server. The active key mints AES-256-GCM
+`v2` state and decrypt-only keys only open existing state. The deprecated
+`RequestStateKey` field maps to a single active key for source compatibility,
+but cannot provide uninterrupted rotation. Configuring both fields fails.
+
+The core does not read production secrets or generate production fallback
+keys. When running the conformance fixture across processes, set the same
+secret on every replica:
+
+```bash
+MCP_REQUEST_STATE_KEY='<strict Base64 for at least 32 random bytes>' go run ./cmd/conformance-fixture
+```
+
+Do not log keys, state tokens, continuation data, or authenticated principal
+identifiers. A single-process fixture can omit its key and use the default
+random process key. The production catalog does not register the conformance
+MRTR tools.
+
+The built-in HTTP and stdio transports do not authenticate clients, so their
+state tokens are bearer capabilities. A hosting/auth adapter can set the
+shared dispatch `PrincipalID` only after credential validation; never derive it
+from MCP `clientInfo`, arbitrary headers, request parameters, complete claims,
+access tokens, or PII. A token minted with a principal never falls back to
+bearer mode when that principal is absent or different on retry.
+
+### Request-state key rotation
+
+Use this three-phase rotation for every replica:
+
+1. Deploy the future key as decrypt-only while the old key remains active.
+2. After every replica can decrypt both IDs, make the future key active and
+   retain the old key as decrypt-only.
+3. Remove the old key only after an overlap of at least `5 minutes TTL + 30
+   seconds clock skew + the deployment's maximum request duration`.
+
+All replicas must share the same ring before traffic is switched. Removing a
+decrypt-only key immediately invalidates state minted by it. The server accepts
+only `v2`; legacy HMAC and unknown token versions return `-32602` without a
+downgrade attempt. Upgrading from the HMAC implementation, or rolling back the
+whole deployment to it, can interrupt retries created within one five-minute
+TTL window. A rollback must be coordinated across all replicas; do not expect
+the old implementation to read `v2` state.
+
+AES-GCM provides confidentiality and integrity but does not prevent replay of
+a valid token. An MRTR handler that performs side effects must put a stable
+idempotency identifier in its private continuation and enforce it in durable
+application state. True single-use state requires a server-side replay store,
+which this stateless implementation does not provide.
+
+MRTR response payloads are limited to 256 KiB, 128 top-level entries, depth
+32, and 4096 decoded nodes. Form elicitation handlers must emit the released
+restricted top-level primitive/enum schema; nested or unsupported JSON Schema
+forms fail before state is minted. URL elicitation requires an absolute URL.
 
 ## Tool Controls
 

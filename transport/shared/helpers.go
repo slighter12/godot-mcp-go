@@ -2,6 +2,7 @@ package shared
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +26,29 @@ const maxRenderedPromptBytes = 128 * 1024
 const toolExecutionErrorMessage = "Tool execution failed"
 
 type promptsGetParams struct {
-	Name      string            `json:"name"`
-	Arguments map[string]string `json:"arguments,omitempty"`
+	Name              string            `json:"name"`
+	Arguments         map[string]string `json:"arguments,omitempty"`
+	InputResponsesRaw json.RawMessage   `json:"inputResponses,omitempty"`
+	RequestState      string            `json:"requestState,omitempty"`
+}
+
+type completionCompleteParams struct {
+	Ref struct {
+		Type string `json:"type"`
+		Name string `json:"name,omitempty"`
+		URI  string `json:"uri,omitempty"`
+	} `json:"ref"`
+	Argument struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"argument"`
+	Context struct {
+		Arguments map[string]string `json:"arguments,omitempty"`
+	} `json:"context,omitempty"`
+}
+
+func decodeInputResponses(raw json.RawMessage) (map[string]any, bool, error) {
+	return mcpv20260728.DecodeInputResponses(raw)
 }
 
 type PromptRenderOptions struct {
@@ -41,6 +63,7 @@ type PromptGovernanceRoot struct {
 }
 
 type ToolCallContext struct {
+	Context                 context.Context
 	RequestID               string
 	ProgressRouteKey        string
 	SessionID               string
@@ -50,6 +73,10 @@ type ToolCallContext struct {
 	SessionInitialized      bool
 	MutatingAllowed         bool
 	Modern                  bool
+	ClientInfo              map[string]any
+	ClientCapabilities      map[string]any
+	RequestStateCodec       *mcpv20260728.RequestStateCodec
+	PrincipalID             string
 }
 
 const (
@@ -117,49 +144,78 @@ func BuildToolsListResponse(msg jsonrpc.Request, tools []mcp.Tool) *jsonrpc.Resp
 		return sortedTools[i].Name < sortedTools[j].Name
 	})
 
-	start, err := ParseCursor(msg.Params, len(sortedTools))
+	page, nextCursor, err := paginate(msg.Params, sortedTools)
 	if err != nil {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 	}
-	end := min(start+pageSize, len(sortedTools))
-
-	result := map[string]any{
-		"resultType": "complete",
-		"tools":      sortedTools[start:end],
-		"ttlMs":      int64(0),
-		"cacheScope": "public",
-		"_meta":      resultMeta(),
-	}
-	if end < len(sortedTools) {
-		result["nextCursor"] = strconv.Itoa(end)
-	}
-	return jsonrpc.NewResponse(msg.ID, result)
+	return jsonrpc.NewResponse(msg.ID, paginatedResult("tools", page, nextCursor))
 }
 
 func BuildResourcesListResponse(msg jsonrpc.Request) *jsonrpc.Response {
+	return buildResourcesListResponse(msg, nil)
+}
+
+func buildResourcesListResponse(msg jsonrpc.Request, catalog ResourceCatalog) *jsonrpc.Response {
 	resources := defaultResources()
-	start, err := ParseCursor(msg.Params, len(resources))
+	if catalog != nil {
+		resources = catalog.ListResources()
+	}
+	page, nextCursor, err := paginate(msg.Params, resources)
 	if err != nil {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 	}
-	end := min(start+pageSize, len(resources))
+	return jsonrpc.NewResponse(msg.ID, paginatedResult("resources", page, nextCursor))
+}
 
-	result := map[string]any{
-		"resultType": "complete",
-		"resources":  resources[start:end],
-		"ttlMs":      int64(0),
-		"cacheScope": "public",
-		"_meta":      resultMeta(),
+func buildResourceTemplatesListResponse(msg jsonrpc.Request, catalog ResourceCatalog) *jsonrpc.Response {
+	templates := []map[string]any{}
+	if catalog != nil {
+		templates = catalog.ListResourceTemplates()
 	}
-	if end < len(resources) {
-		result["nextCursor"] = strconv.Itoa(end)
+	page, nextCursor, err := paginate(msg.Params, templates)
+	if err != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
 	}
-	return jsonrpc.NewResponse(msg.ID, result)
+	return jsonrpc.NewResponse(msg.ID, paginatedResult("resourceTemplates", page, nextCursor))
+}
+
+func buildCompletionCompleteResponse(msg jsonrpc.Request, provider CompletionProvider) *jsonrpc.Response {
+	if provider == nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{"method": msg.Method})
+	}
+	var params completionCompleteParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid completion payload", nil)
+	}
+	request := CompletionRequest{
+		RefType: strings.TrimSpace(params.Ref.Type), Name: strings.TrimSpace(params.Ref.Name), URI: strings.TrimSpace(params.Ref.URI),
+		ArgumentName: strings.TrimSpace(params.Argument.Name), ArgumentValue: params.Argument.Value, ContextArguments: params.Context.Arguments,
+	}
+	validReference := request.RefType == "ref/prompt" && request.Name != "" && request.URI == ""
+	validReference = validReference || request.RefType == "ref/resource" && request.URI != "" && request.Name == ""
+	if !validReference || request.ArgumentName == "" {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid completion reference", nil)
+	}
+	values, total, hasMore, err := provider.Complete(request)
+	if err != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Unknown completion reference", nil)
+	}
+	if len(values) > 100 {
+		values = values[:100]
+		hasMore = true
+	}
+	return jsonrpc.NewResponse(msg.ID, map[string]any{"resultType": "complete", "_meta": resultMeta(), "completion": map[string]any{"values": values, "total": total, "hasMore": hasMore}})
 }
 
 func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (any, error)) *jsonrpc.Response {
+	return buildResourcesReadResponse(msg, readResource, nil, DispatchContext{})
+}
+
+func buildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (any, error), catalog ResourceCatalog, dispatchContext DispatchContext) *jsonrpc.Response {
 	var params struct {
-		URI string `json:"uri"`
+		URI               string          `json:"uri"`
+		InputResponsesRaw json.RawMessage `json:"inputResponses,omitempty"`
+		RequestState      string          `json:"requestState,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid resources/read payload", nil)
@@ -167,10 +223,28 @@ func BuildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 	if params.URI == "" {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource URI is required", nil)
 	}
+	inputResponses, inputResponsesPresent, inputErr := decodeInputResponses(params.InputResponsesRaw)
+	if inputErr != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid inputResponses", nil)
+	}
 
+	if catalog != nil {
+		if handler, ok := catalog.(MultiRoundTripResourceCatalog); ok {
+			value, err := mcpv20260728.ProcessRoundTrip(dispatchContext.Context, dispatchContext.RequestStateCodec,
+				mcpv20260728.RequestStateBinding{Method: msg.Method, Identity: params.URI, Parameters: map[string]any{"uri": params.URI}, PrincipalID: dispatchContext.PrincipalID},
+				mcp.RoundTripRequest{Method: msg.Method, URI: params.URI, InputResponses: inputResponses, InputResponsesPresent: inputResponsesPresent, ClientInfo: dispatchContext.RequestMeta.ClientInfo, ClientCapabilities: dispatchContext.RequestMeta.ClientCapabilities, PrincipalID: dispatchContext.PrincipalID},
+				params.RequestState, resultMeta(), handler.ReadResourceRoundTrip)
+			return roundTripDispatchResponse(msg.ID, msg.Method, value, err)
+		}
+		contents, err := catalog.ReadResource(params.URI)
+		if err != nil {
+			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource not found", map[string]any{"uri": params.URI})
+		}
+		return jsonrpc.NewResponse(msg.ID, map[string]any{"resultType": "complete", "_meta": resultMeta(), "ttlMs": int64(0), "cacheScope": "private", "contents": contents})
+	}
 	result, err := readResource(params.URI)
 	if err != nil {
-		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), err.Error(), nil)
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Resource not found", map[string]any{"uri": params.URI})
 	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
@@ -204,17 +278,15 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 	}
 
 	prompts := catalog.ListPrompts()
-	start, err := ParseCursor(msg.Params, len(prompts))
+	page, nextCursor, err := paginate(msg.Params, prompts)
 	if err != nil {
 		return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Invalid cursor value", "invalid_params", map[string]any{
 			"field":   "cursor",
 			"problem": "invalid_cursor",
 		})
 	}
-	end := min(start+pageSize, len(prompts))
-
-	list := make([]map[string]any, 0, end-start)
-	for _, prompt := range prompts[start:end] {
+	list := make([]map[string]any, 0, len(page))
+	for _, prompt := range page {
 		item := map[string]any{
 			"name":        prompt.Name,
 			"description": prompt.Description,
@@ -235,24 +307,45 @@ func BuildPromptsListResponse(msg jsonrpc.Request, catalog *promptcatalog.Regist
 		list = append(list, item)
 	}
 
+	return jsonrpc.NewResponse(msg.ID, paginatedResult("prompts", list, nextCursor))
+}
+
+func paginate[T any](params json.RawMessage, items []T) ([]T, string, error) {
+	start, err := ParseCursor(params, len(items))
+	if err != nil {
+		return nil, "", err
+	}
+	end := min(start+pageSize, len(items))
+	nextCursor := ""
+	if end < len(items) {
+		nextCursor = strconv.Itoa(end)
+	}
+	return items[start:end], nextCursor, nil
+}
+
+func paginatedResult(field string, page any, nextCursor string) map[string]any {
 	result := map[string]any{
 		"resultType": "complete",
-		"prompts":    list,
+		field:        page,
 		"ttlMs":      int64(0),
 		"cacheScope": "public",
 		"_meta":      resultMeta(),
 	}
-	if end < len(prompts) {
-		result["nextCursor"] = strconv.Itoa(end)
+	if nextCursor != "" {
+		result["nextCursor"] = nextCursor
 	}
-	return jsonrpc.NewResponse(msg.ID, result)
+	return result
 }
 
 func BuildPromptsGetResponse(msg jsonrpc.Request, catalog *promptcatalog.Registry) *jsonrpc.Response {
-	return BuildPromptsGetResponseWithOptions(msg, catalog, DefaultPromptRenderOptions())
+	return buildPromptsGetResponseWithContext(msg, catalog, DefaultPromptRenderOptions(), DispatchContext{})
 }
 
 func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcatalog.Registry, options PromptRenderOptions) *jsonrpc.Response {
+	return buildPromptsGetResponseWithContext(msg, catalog, options, DispatchContext{})
+}
+
+func buildPromptsGetResponseWithContext(msg jsonrpc.Request, catalog *promptcatalog.Registry, options PromptRenderOptions, dispatchContext DispatchContext) *jsonrpc.Response {
 	if catalog == nil || !catalog.Enabled() {
 		return semanticError(msg.ID, jsonrpc.ErrMethodNotFound, "Feature not supported", "not_supported", map[string]any{
 			"feature": "prompt_catalog",
@@ -266,6 +359,10 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 	var params promptsGetParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return buildPromptsGetPayloadError(msg.ID, err)
+	}
+	inputResponses, inputResponsesPresent, inputErr := decodeInputResponses(params.InputResponsesRaw)
+	if inputErr != nil {
+		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrInvalidParams), "Invalid inputResponses", nil)
 	}
 	params.Name = strings.TrimSpace(params.Name)
 	if params.Name == "" {
@@ -288,6 +385,40 @@ func BuildPromptsGetResponseWithOptions(msg jsonrpc.Request, catalog *promptcata
 	rawArgs := normalizePromptArgumentsRaw(params.Arguments)
 	if strictErr := validateStrictPromptArguments(msg.ID, prompt.Template, prompt.Arguments, rawArgs, normalizedOptions); strictErr != nil {
 		return strictErr
+	}
+	if prompt.RoundTripHandler != nil {
+		arguments := make(map[string]any, len(rawArgs))
+		for key, value := range rawArgs {
+			arguments[key] = value
+		}
+		value, err := mcpv20260728.ProcessRoundTrip(dispatchContext.Context, dispatchContext.RequestStateCodec,
+			mcpv20260728.RequestStateBinding{Method: msg.Method, Identity: prompt.Name, Parameters: arguments, PrincipalID: dispatchContext.PrincipalID},
+			mcp.RoundTripRequest{Method: msg.Method, Name: prompt.Name, Arguments: arguments, InputResponses: inputResponses, InputResponsesPresent: inputResponsesPresent, ClientInfo: dispatchContext.RequestMeta.ClientInfo, ClientCapabilities: dispatchContext.RequestMeta.ClientCapabilities, PrincipalID: dispatchContext.PrincipalID},
+			params.RequestState, resultMeta(), prompt.RoundTripHandler)
+		return roundTripDispatchResponse(msg.ID, msg.Method, value, err)
+	}
+	if prompt.RenderMessages != nil {
+		messages, err := prompt.RenderMessages(rawArgs)
+		if err != nil {
+			return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt rendering failed", "invalid_params", map[string]any{
+				"field": "arguments", "problem": "render_error",
+			})
+		}
+		encodedMessages, err := json.Marshal(messages)
+		if err != nil {
+			return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt rendering failed", "invalid_params", map[string]any{
+				"field": "arguments", "problem": "render_error",
+			})
+		}
+		if len(encodedMessages) > maxRenderedPromptBytes {
+			return semanticError(msg.ID, jsonrpc.ErrInvalidParams, "Prompt arguments produced oversized output", "invalid_params", map[string]any{
+				"field": "arguments", "problem": "rendered_prompt_too_large", "maxBytes": maxRenderedPromptBytes,
+			})
+		}
+		return jsonrpc.NewResponse(msg.ID, map[string]any{
+			"resultType": "complete", "_meta": resultMeta(), "ttlMs": int64(0), "cacheScope": "private",
+			"name": prompt.Name, "description": prompt.Description, "messages": messages,
+		})
 	}
 
 	var renderedPrompt string
@@ -367,11 +498,19 @@ func BuildPingResponse(msg jsonrpc.Request) *jsonrpc.Response {
 }
 
 func BuildDiscoverResponse(msg jsonrpc.Request, promptCatalogEnabled bool) *jsonrpc.Response {
+	return buildDiscoverResponse(msg, promptCatalogEnabled, DispatchProviders{})
+}
+
+func buildDiscoverResponse(msg jsonrpc.Request, promptCatalogEnabled bool, providers DispatchProviders) *jsonrpc.Response {
+	capabilities := ServerCapabilities(promptCatalogEnabled, true)
+	if providers.Completion != nil {
+		capabilities["completions"] = map[string]any{}
+	}
 	return jsonrpc.NewResponse(msg.ID, map[string]any{
 		"resultType":        "complete",
 		"_meta":             resultMeta(),
 		"supportedVersions": []string{mcpv20260728.ProtocolVersion},
-		"capabilities":      ServerCapabilities(promptCatalogEnabled, true),
+		"capabilities":      capabilities,
 		"instructions":      "Godot MCP server. Use explicit editor_session_id for editor state and runtime bridge operations.",
 		"ttlMs":             0,
 		"cacheScope":        "public",
@@ -383,21 +522,40 @@ func DispatchStandardMethodWithPromptOptions(msg jsonrpc.Request, toolManager *t
 }
 
 func DispatchStandardMethodWithOptions(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions, toolCallOptions ToolCallOptions) any {
+	return DispatchStandardMethodWithProviders(msg, toolManager, catalog, readResource, promptRenderOptions, toolCallOptions, DispatchProviders{})
+}
+
+func DispatchStandardMethodWithProviders(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions, toolCallOptions ToolCallOptions, providers DispatchProviders) any {
+	return DispatchStandardMethodWithContextAndProviders(msg, toolManager, catalog, readResource, promptRenderOptions, toolCallOptions, providers, DispatchContext{})
+}
+
+func DispatchStandardMethodWithContextAndProviders(msg jsonrpc.Request, toolManager *tools.Manager, catalog *promptcatalog.Registry, readResource func(string) (any, error), promptRenderOptions PromptRenderOptions, toolCallOptions ToolCallOptions, providers DispatchProviders, dispatchContext DispatchContext) any {
 	switch msg.Method {
 	case "server/discover":
-		return BuildDiscoverResponse(msg, catalog != nil && catalog.Enabled())
+		return buildDiscoverResponse(msg, catalog != nil && catalog.Enabled(), providers)
 	case "tools/list":
 		return BuildToolsListResponse(msg, toolManager.GetTools())
 	case "resources/list":
-		return BuildResourcesListResponse(msg)
+		return buildResourcesListResponse(msg, providers.Resources)
+	case "resources/templates/list":
+		return buildResourceTemplatesListResponse(msg, providers.Resources)
 	case "resources/read":
-		return BuildResourcesReadResponse(msg, readResource)
+		return buildResourcesReadResponse(msg, readResource, providers.Resources, dispatchContext)
 	case "prompts/list":
 		return BuildPromptsListResponse(msg, catalog)
 	case "prompts/get":
-		return BuildPromptsGetResponseWithOptions(msg, catalog, promptRenderOptions)
+		return buildPromptsGetResponseWithContext(msg, catalog, promptRenderOptions, dispatchContext)
+	case "completion/complete":
+		return buildCompletionCompleteResponse(msg, providers.Completion)
 	case "tools/call":
-		return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{}, toolCallOptions)
+		return BuildToolCallResponseWithContextAndOptions(msg, toolManager, readResource, ToolCallContext{
+			Context:            dispatchContext.Context,
+			Modern:             dispatchContext.RequestMeta.ProtocolVersion == mcpv20260728.ProtocolVersion,
+			ClientInfo:         dispatchContext.RequestMeta.ClientInfo,
+			ClientCapabilities: dispatchContext.RequestMeta.ClientCapabilities,
+			RequestStateCodec:  dispatchContext.RequestStateCodec,
+			PrincipalID:        dispatchContext.PrincipalID,
+		}, toolCallOptions)
 	default:
 		if msg.ID != nil {
 			return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", map[string]any{
@@ -419,6 +577,26 @@ func semanticError(id any, code jsonrpc.ErrorCode, message, kind string, extra m
 	}
 	maps.Copy(data, extra)
 	return jsonrpc.NewErrorResponse(id, int(code), message, data)
+}
+
+func roundTripDispatchResponse(id any, method string, value any, err error) *jsonrpc.Response {
+	if err != nil {
+		if errors.Is(err, mcpv20260728.ErrInvalidRequestState) {
+			return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInvalidParams), "Invalid requestState", nil)
+		}
+		if errors.Is(err, mcpv20260728.ErrInvalidRoundTripInput) {
+			return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInvalidParams), "Invalid inputResponses", nil)
+		}
+		return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInternalError), "Invalid multi round-trip result", nil)
+	}
+	if inputRequired, ok := value.(mcp.InputRequiredResult); ok {
+		return jsonrpc.NewResponse(id, inputRequired)
+	}
+	complete, normalizeErr := mcpv20260728.NormalizeMethodCompleteResult(method, value, resultMeta())
+	if normalizeErr != nil {
+		return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrInternalError), "Invalid multi round-trip result", nil)
+	}
+	return jsonrpc.NewResponse(id, complete)
 }
 
 func promptCatalogUnavailableData(catalog *promptcatalog.Registry) (map[string]any, bool) {
@@ -781,6 +959,7 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 		ToolManager:  toolManager,
 		ReadResource: readResource,
 		Context: toolpipeline.ToolCallContext{
+			Context:                 callContext.Context,
 			RequestID:               callContext.RequestID,
 			ProgressRouteKey:        callContext.ProgressRouteKey,
 			SessionID:               callContext.SessionID,
@@ -790,6 +969,10 @@ func BuildToolCallResponseWithContextAndOptions(msg jsonrpc.Request, toolManager
 			SessionInitialized:      callContext.SessionInitialized,
 			MutatingAllowed:         callContext.MutatingAllowed,
 			Modern:                  callContext.Modern,
+			ClientInfo:              callContext.ClientInfo,
+			ClientCapabilities:      callContext.ClientCapabilities,
+			RequestStateCodec:       callContext.RequestStateCodec,
+			PrincipalID:             callContext.PrincipalID,
 		},
 		Options: toolpipeline.ToolCallOptions{
 			SchemaValidationEnabled:   options.SchemaValidationEnabled,

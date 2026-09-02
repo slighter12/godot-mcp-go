@@ -44,10 +44,35 @@ func TestServerCapabilities_PromptsCapabilityToggle(t *testing.T) {
 	if promptsCapMap["listChanged"] != true {
 		t.Fatalf("expected listChanged=true, got %v", promptsCapMap["listChanged"])
 	}
+	if _, ok := withPrompts["completions"]; ok {
+		t.Fatal("did not expect completions capability without a completion provider")
+	}
 
 	withoutPrompts := ServerCapabilities(false, false)
 	if _, ok := withoutPrompts["prompts"]; ok {
 		t.Fatal("did not expect prompts capability when prompt catalog is disabled")
+	}
+	if _, ok := withoutPrompts["completions"]; ok {
+		t.Fatal("did not expect completions capability when prompt catalog is disabled")
+	}
+}
+
+func TestDispatchCompletionCompleteIsUnavailableWithoutProvider(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name: "build-scene",
+		Arguments: []promptcatalog.PromptArgument{
+			{Name: "scene", Required: true},
+		},
+		Template: "Build {{scene}}",
+	})
+
+	response := DispatchStandardMethod(mustRequest(t, "completion/complete", map[string]any{
+		"ref":      map[string]any{"type": "ref/prompt", "name": "build-scene"},
+		"argument": map[string]any{"name": "scene", "value": "pla"},
+	}), tools.NewManager(), catalog, nil).(*jsonrpc.Response)
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrMethodNotFound) {
+		t.Fatalf("expected completion method to be unavailable, got %#v", response)
 	}
 }
 
@@ -402,6 +427,23 @@ func TestBuildPromptsGetResponse_RenderedPromptTooLarge(t *testing.T) {
 	}
 	if m["problem"] != "rendered_prompt_too_large" {
 		t.Fatalf("expected rendered_prompt_too_large, got %v", m["problem"])
+	}
+}
+
+func TestBuildPromptsGetResponse_RejectsOversizedProgrammaticMessages(t *testing.T) {
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name: "oversized-programmatic", Template: "fixture",
+		RenderMessages: func(map[string]string) ([]map[string]any, error) {
+			return []map[string]any{{"role": "user", "content": map[string]any{"type": "text", "text": strings.Repeat("x", maxRenderedPromptBytes)}}}, nil
+		},
+	})
+	response := BuildPromptsGetResponse(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: "oversized-programmatic", Method: "prompts/get",
+		Params: json.RawMessage(`{"name":"oversized-programmatic"}`),
+	}, catalog)
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrInvalidParams) {
+		t.Fatalf("expected oversized programmatic prompt to be rejected: %#v", response)
 	}
 }
 

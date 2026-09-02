@@ -1,6 +1,7 @@
 package promptcatalog
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/slighter12/godot-mcp-go/mcp"
 )
 
 // Prompt represents one prompt exposed through MCP prompt endpoints.
@@ -23,6 +26,12 @@ type Prompt struct {
 	Arguments   []PromptArgument
 	Template    string
 	SourcePath  string
+	// RenderMessages optionally supplies protocol content for programmatic
+	// prompts. File-backed production prompts leave this nil.
+	RenderMessages func(map[string]string) ([]map[string]any, error)
+	// RoundTripHandler opts a programmatic prompt into MCP input-required
+	// handling. File-backed prompts leave this nil.
+	RoundTripHandler func(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error)
 }
 
 // PromptArgument describes one named template argument.

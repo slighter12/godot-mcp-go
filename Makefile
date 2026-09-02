@@ -5,9 +5,9 @@ SERVER_URL ?= http://$(SERVER_HOST):$(SERVER_PORT)/mcp
 SESSION_ISOLATION_PORT ?= 19080
 INSPECTOR_SERVER_PORT ?= 29080
 INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(INSPECTOR_SERVER_PORT)/mcp
-INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:latest
+INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:2.4.0
 
-.PHONY: help run-http test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-all
+.PHONY: help run-http test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-conformance-cleanup test-conformance-2026-07-28 test-addon-static test-quick test-release test-all
 
 help:
 	@echo "Available targets:"
@@ -23,7 +23,12 @@ help:
 	@echo "  make test-lifecycle-initialized-id - Verify removed initialize/initialized methods and direct requests"
 	@echo "  make test-inspector-docker - Run MCP Inspector CLI checks in Docker"
 	@echo "  make test-inspector-header-negative - Verify Inspector call fails without valid protocol header"
-	@echo "  make test-all              - Run all tests above"
+	@echo "  make test-conformance-2026-07-28 - Run the pinned official MCP conformance suite"
+	@echo "  make test-conformance-cleanup - Verify the fixture process is reaped"
+	@echo "  make test-addon-static     - Run the Godot addon static check"
+	@echo "  make test-quick            - Run local Go and addon checks without Docker or Bun"
+	@echo "  make test-release          - Run every documented release gate"
+	@echo "  make test-all              - Alias for test-release"
 
 run-http:
 	@GOCACHE="$${GOCACHE:-$${TMPDIR:-/tmp}/godot-mcp-go-build-cache}" $(GO) run main.go
@@ -64,4 +69,35 @@ test-inspector-docker: inspector-pull
 test-inspector-header-negative: inspector-pull
 	@GO="$(GO)" SERVER_HOST="$(SERVER_HOST)" SERVER_PORT="$(INSPECTOR_SERVER_PORT)" INSPECTOR_SERVER_URL="$(INSPECTOR_SERVER_URL)" INSPECTOR_IMAGE="$(INSPECTOR_IMAGE)" ./scripts/test-inspector-header-negative.sh
 
-test-all: test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id test-inspector-docker test-inspector-header-negative
+test-conformance-2026-07-28:
+	@GO="$(GO)" ./scripts/test-conformance-2026-07-28.sh
+
+test-conformance-cleanup:
+	@GO="$(GO)" ./scripts/test-conformance-cleanup.sh
+
+test-addon-static:
+	@./godot-plugin/addons/godot_mcp/static_check.sh
+
+test-quick: test-go test-addon-static
+
+test-release:
+	@set -e; \
+	for target in \
+		test-go \
+		test-http-smoke \
+		test-http-runtime-log-smoke \
+		test-http-ping \
+		test-http-delete \
+		test-http-session-isolation \
+		test-http-protocol-header \
+		test-http-allow-list-runtime-bridge \
+		test-lifecycle-initialized-id \
+		test-inspector-docker \
+		test-inspector-header-negative \
+		test-conformance-cleanup \
+		test-conformance-2026-07-28 \
+		test-addon-static; do \
+		$(MAKE) "$$target"; \
+	done
+
+test-all: test-release

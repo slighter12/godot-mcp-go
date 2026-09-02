@@ -15,6 +15,9 @@ A Go implementation of an MCP server for Godot with `stdio` and Streamable HTTP 
   - tool: `godot.runtime.health.get`
   - resource: `godot://runtime/metrics`
 - Tool controls: schema validation, unknown argument rejection, permission policy, progress notifications
+- MCP 2026-07-28 resource templates, cache metadata, and standard content blocks
+- Strict standard and `x-mcp-header` HTTP validation
+- Pinned official conformance fixture and CI gate, isolated from the production catalog
 
 ## Prerequisites
 
@@ -76,13 +79,15 @@ Recommended sequence:
 MCP_USE_STDIO=true ./godot-mcp-go
 ```
 
-Every stdio request must include the same `_meta` protocol envelope described below. There is no initialize handshake.
+Every stdio request must include the same `_meta` protocol envelope described below. There is no initialize handshake. Each newline-delimited frame is limited to 1 MiB; an oversized frame receives one `-32600 Request body too large` response and terminates the transport.
 
 ## Protocol and Progress Contract
 
 - Supported protocol version is strict: `2026-07-28` only.
 - Every request includes `params._meta` with namespaced `protocolVersion` and `clientCapabilities`; `clientInfo` is recommended.
 - `server/discover` returns supported versions, capabilities, server identity, and cache metadata.
+- `resources/templates/list` returns the resource-template catalog; production currently has no templates.
+- `completion/complete` is advertised only when an explicit completion provider is installed through `NewServerWithOptions`; the default Godot executable installs none.
 - Tool progress is emitted as `notifications/progress` and requires `tools/call` `_meta.progressToken`.
 - HTTP progress is written to the same request's SSE response; closing that response cancels the request. Long-lived command and prompt events use `subscriptions/listen`, which sends typed subscription IDs, periodic SSE comments, and a terminal `resultType: "complete"` result on graceful server shutdown.
 
@@ -106,6 +111,26 @@ Requests are stateless and do not use the removed `initialize`/`initialized` lif
 ```
 
 HTTP `POST /mcp` requires `MCP-Protocol-Version`, `Mcp-Method`, and both JSON and SSE media types in `Accept`. `Mcp-Name` must match the tool, resource URI, or prompt name when applicable. `GET /mcp` and `DELETE /mcp` return `405`; use `subscriptions/listen` for a long-lived SSE stream.
+
+When a listed tool property declares `x-mcp-header`, HTTP clients must also send the matching `Mcp-Param-{Name}` header. Nested properties are supported along `properties`-only schema paths. Unsafe or sentinel-looking strings use `=?base64?...?=` encoding. The server strictly decodes and compares the header with the corresponding JSON body value before execution.
+
+Production servers enable MRTR with `ServerOptions.RequestStateKeyRing`. Its active AES-256-GCM key mints confidential `v2` state while decrypt-only keys provide rotation overlap; every key has a unique ID and at least 32 bytes of explicit material. The deprecated `RequestStateKey` field remains a single-key compatibility entry but cannot rotate without retry interruption. Tools, programmatic prompts, and resource catalogs opt in through the same shared round-trip interfaces. The default Godot catalog has no MRTR handler, and a configured handler without a state key fails before execution. The fixture uses a random process-local key only when no fixture key is supplied.
+
+The coordinator encrypts continuation data and binds state to the method, handler identity, original parameters, current response contract, round, expiry, and an optional hosting-adapter `PrincipalID`. The built-in HTTP and stdio servers do not authenticate clients, leave `PrincipalID` empty, and therefore treat `requestState` as a bearer capability. `clientInfo` is never treated as an authenticated identity. Unknown but well-formed response IDs are filtered, malformed or mismatched responses return `-32602`, and partial valid responses are encrypted while only missing inputs are requested again.
+
+MRTR `inputResponses` are limited to 256 KiB, 128 top-level entries, depth 32, and 4096 decoded nodes. Form elicitation accepts only the released top-level object schema with boolean, integer, number, string, single-enum, and multi-enum properties; unsupported JSON Schema keywords or nested objects are rejected before state is minted. URL elicitation requires an absolute URL and an accepted response without form content.
+
+Standard tool content is validated before transport: decoded blocks and ordinary raw tool results are limited to 8 MiB, while the complete normalized result is limited to 16 MiB. Binary blocks require strict Base64 and valid MIME types; embedded resources require exactly one of `text` or `blob`.
+
+## MCP Conformance
+
+Run the frozen official server requirements against the isolated fixture:
+
+```bash
+make test-conformance-2026-07-28
+```
+
+The command uses `@modelcontextprotocol/conformance@0.2.0-alpha.11`. The fixture binds only to loopback and never adds its `test_*` tools, resources, or prompts to the production server. Run every release gate with `make test-release`.
 
 ## Mutating Capability Negotiation
 

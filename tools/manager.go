@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/slighter12/godot-mcp-go/internal/domain/toolspec"
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/logger"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/tools/types"
@@ -19,6 +20,7 @@ import (
 type ToolFunc func(args map[string]any) (any, error)
 
 var ErrToolNotFound = errors.New("tool not found")
+var ErrToolResultTooLarge = errors.New("tool result exceeds protocol limit")
 
 func IsToolNotFound(err error) bool {
 	return errors.Is(err, ErrToolNotFound)
@@ -26,15 +28,32 @@ func IsToolNotFound(err error) bool {
 
 // Manager implements ToolRegistry interface
 type Manager struct {
-	tools map[string]types.Tool
-	mutex sync.RWMutex
+	tools         map[string]types.Tool
+	nameValidator func(string) bool
+	mutex         sync.RWMutex
 }
 
 // NewManager creates a new tool manager
 func NewManager() *Manager {
-	return &Manager{
-		tools: make(map[string]types.Tool),
+	return NewManagerWithNameValidator(toolspec.ValidateToolName)
+}
+
+// NewManagerWithNameValidator creates an isolated manager with an explicit
+// name policy. Production code should use NewManager; this constructor exists
+// for opt-in protocol fixtures that must expose specification-defined names.
+func NewManagerWithNameValidator(validator func(string) bool) *Manager {
+	if validator == nil {
+		validator = toolspec.ValidateToolName
 	}
+	return &Manager{
+		tools:         make(map[string]types.Tool),
+		nameValidator: validator,
+	}
+}
+
+// ValidToolName applies this manager's configured catalog name policy.
+func (m *Manager) ValidToolName(name string) bool {
+	return m != nil && m.nameValidator != nil && m.nameValidator(name)
 }
 
 // RegisterTool registers a new tool
@@ -50,8 +69,11 @@ func (m *Manager) RegisterTool(tool types.Tool) error {
 	if name == "" {
 		return errors.New("tool name cannot be empty")
 	}
-	if !toolspec.ValidateToolName(name) {
+	if !m.nameValidator(name) {
 		return fmt.Errorf("invalid canonical tool name: %s", name)
+	}
+	if err := mcpv20260728.ValidateParameterHeaderSchema(tool.InputSchema()); err != nil {
+		return fmt.Errorf("invalid x-mcp-header schema for %s: %w", name, err)
 	}
 
 	m.tools[name] = tool
@@ -133,6 +155,9 @@ func (m *Manager) GetTools() []mcp.Tool {
 		if at, ok := tool.(types.AnnotatedTool); ok {
 			mcpTool.Annotations = at.Annotations()
 		}
+		if outputTool, ok := tool.(types.OutputSchemaTool); ok {
+			mcpTool.OutputSchema = outputTool.OutputSchema()
+		}
 		mcpTools = append(mcpTools, mcpTool)
 	}
 
@@ -152,6 +177,9 @@ func (m *Manager) CallTool(name string, args map[string]any) (any, error) {
 	resultJSON, err := m.ExecuteTool(name, argsJSON)
 	if err != nil {
 		return nil, err
+	}
+	if len(resultJSON) > mcpv20260728.MaxDecodedContentBlockBytes {
+		return nil, ErrToolResultTooLarge
 	}
 
 	// Convert result back to any

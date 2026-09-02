@@ -3,6 +3,16 @@ set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
+search_lines() {
+  pattern="$1"
+  shift
+  if command -v rg >/dev/null 2>&1; then
+    rg -n "$pattern" "$@"
+  else
+    grep -En "$pattern" "$@"
+  fi
+}
+
 set -- \
   "$ROOT_DIR/runtime_companion.gd" \
   "$ROOT_DIR/runtime_mcp_interface.gd" \
@@ -18,9 +28,9 @@ for runtime_file in "$@"; do
   fi
 done
 
-if rg -n 'EditorInterface' "$@" >/dev/null; then
+if search_lines 'EditorInterface' "$@" >/dev/null; then
   echo "runtime addon static check failed: runtime autoload scripts reference EditorInterface"
-  rg -n 'EditorInterface' "$@"
+  search_lines 'EditorInterface' "$@"
   exit 1
 else
   rg_status=$?
@@ -30,32 +40,32 @@ else
   fi
 fi
 
-if rg -n 'GDScriptFunctionState' "$ROOT_DIR/runtime_companion.gd" >/dev/null; then
+if search_lines 'GDScriptFunctionState' "$ROOT_DIR/runtime_companion.gd" >/dev/null; then
   echo "runtime addon static check failed: found GDScriptFunctionState reference"
   exit 1
 fi
 
-if ! rg -n 'return "%sZ" % Time.get_datetime_string_from_system\(true\)' "$ROOT_DIR/runtime_companion.gd" >/dev/null; then
+if ! search_lines 'return "%sZ" % Time.get_datetime_string_from_system\(true\)' "$ROOT_DIR/runtime_companion.gd" >/dev/null; then
   echo "runtime addon static check failed: _now_rfc3339 is not explicit UTC RFC3339 with Z"
   exit 1
 fi
 
-if ! rg -n 'var now = _now_rfc3339\(\)' "$ROOT_DIR/runtime_snapshot_collector.gd" >/dev/null; then
+if ! search_lines 'var now = _now_rfc3339\(\)' "$ROOT_DIR/runtime_snapshot_collector.gd" >/dev/null; then
   echo "runtime addon static check failed: runtime snapshot collector is not using _now_rfc3339 for updated_at"
   exit 1
 fi
 
-if ! rg -n 'return "%sZ" % Time.get_datetime_string_from_system\(true\)' "$ROOT_DIR/runtime_snapshot_collector.gd" >/dev/null; then
+if ! search_lines 'return "%sZ" % Time.get_datetime_string_from_system\(true\)' "$ROOT_DIR/runtime_snapshot_collector.gd" >/dev/null; then
   echo "runtime addon static check failed: runtime snapshot collector _now_rfc3339 is not explicit UTC RFC3339 with Z"
   exit 1
 fi
 
-if ! rg -n 'const DEFAULT_PROTOCOL_VERSION := "2026-07-28"' "$ROOT_DIR/mcp_server.gd" >/dev/null; then
+if ! search_lines 'const DEFAULT_PROTOCOL_VERSION := "2026-07-28"' "$ROOT_DIR/mcp_server.gd" >/dev/null; then
   echo "runtime addon static check failed: MCP client is not pinned to protocol 2026-07-28"
   exit 1
 fi
 
-if rg -n '2025-11-25|MCP-Session-Id|mcp_client\.get\("session_id"\)' \
+if search_lines '2025-11-25|MCP-Session-Id|mcp_client\.get\("session_id"\)' \
   "$ROOT_DIR/mcp_server.gd" \
   "$ROOT_DIR/godot_mcp.gd" \
   "$ROOT_DIR/runtime_companion.gd" >/dev/null; then

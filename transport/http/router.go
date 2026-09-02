@@ -20,8 +20,6 @@ import (
 	"github.com/slighter12/godot-mcp-go/transport/shared"
 )
 
-const maxJSONRPCBodyBytes = 1 << 20
-
 const subscriptionKeepAliveInterval = 15 * time.Second
 
 const (
@@ -29,6 +27,12 @@ const (
 	headerMethod          = "Mcp-Method"
 	headerName            = "Mcp-Name"
 )
+
+// DispatchHook is retained as an alias for the transport-neutral shared seam.
+type DispatchHook = shared.DispatchHook
+
+// ProgressDispatchHook provides fixture-only progress frames for one request.
+type ProgressDispatchHook func(context.Context, jsonrpc.Request, mcpv20260728.RequestMeta) ([]*jsonrpc.Notification, any, bool)
 
 func RegisterRoutes(e *echo.Echo, s *Server) {
 	e.GET("/", s.handleHTTPInfo)
@@ -64,7 +68,7 @@ func (s *Server) handleStreamableHTTPRemoved(c echo.Context) error {
 }
 
 func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
-	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, maxJSONRPCBodyBytes)
+	limitedBody := http.MaxBytesReader(c.Response(), c.Request().Body, shared.MaxJSONRPCFrameBytes)
 	defer limitedBody.Close()
 	body, err := io.ReadAll(limitedBody)
 	if err != nil {
@@ -89,7 +93,7 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 	}
 
 	request := requests[0]
-	meta, protocolResponse := validateModernHTTPRequest(c, request)
+	meta, protocolResponse := s.validateModernHTTPRequest(c, request)
 	if protocolResponse != nil {
 		return c.JSON(http.StatusBadRequest, protocolResponse)
 	}
@@ -104,7 +108,7 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		return s.handleProgressToolCall(c, request, meta)
 	}
 	if request.ID == nil {
-		if response, handleErr := s.dispatchModernMessage(request, meta, ""); handleErr != nil {
+		if response, handleErr := s.dispatchModernMessage(c.Request().Context(), request, meta, ""); handleErr != nil {
 			return c.JSON(http.StatusBadRequest, jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Notification rejected", nil))
 		} else if response != nil {
 			if responseObj, ok := response.(*jsonrpc.Response); ok && responseObj.Error != nil {
@@ -114,7 +118,7 @@ func (s *Server) handleStreamableHTTPPost(c echo.Context) error {
 		return c.NoContent(http.StatusAccepted)
 	}
 
-	response, handleErr := s.dispatchModernMessage(request, meta, "")
+	response, handleErr := s.dispatchModernMessage(c.Request().Context(), request, meta, "")
 	if handleErr != nil {
 		logger.Error("Error handling modern MCP message", "method", request.Method, "error", handleErr)
 		response = jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInternalError), "Internal error", nil)
@@ -156,11 +160,16 @@ func (s *Server) missingMutatingCapability(request jsonrpc.Request, meta mcpv202
 	})
 }
 
-func validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv20260728.RequestMeta, *jsonrpc.Response) {
+func (s *Server) validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv20260728.RequestMeta, *jsonrpc.Response) {
 	meta, err := mcpv20260728.ParseRequestMeta(request.Params)
 	if err != nil {
 		switch {
 		case errors.Is(err, mcpv20260728.ErrInvalidProtocolVersion):
+			headerVersion, headerOK := singleHeaderValue(c.Request().Header, headerProtocolVersion)
+			headerVersion = strings.TrimSpace(headerVersion)
+			if headerOK && headerVersion != "" && headerVersion != meta.ProtocolVersion {
+				return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Protocol version header does not match request metadata", mcpv20260728.HeaderMismatchData(headerProtocolVersion, headerVersion, meta.ProtocolVersion))
+			}
 			return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrUnsupportedProtocolVersion), "Unsupported protocol version", mcpv20260728.UnsupportedVersionData(meta.ProtocolVersion))
 		case errors.Is(err, mcpv20260728.ErrMissingProtocolVersion), errors.Is(err, mcpv20260728.ErrMissingClientCapabilities), errors.Is(err, mcpv20260728.ErrInvalidRequestMeta):
 			data := mcpv20260728.AddSupportedVersionsForInitialize(request.Method, map[string]any{"reason": err.Error()})
@@ -184,6 +193,11 @@ func validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv202
 	if err := mcpv20260728.ValidateMethodHeader(request.Method, methodHeader); err != nil {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrHeaderMismatch), "Mcp-Method header does not match request", mcpv20260728.HeaderMismatchData(headerMethod, methodHeader, request.Method))
 	}
+	if request.Method == "tools/call" {
+		if _, err := mcpv20260728.DecodeToolCallParams(request.Params, true); err != nil {
+			return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
+		}
+	}
 
 	name := requestName(request)
 	nameHeader, nameHeaderOK := optionalSingleHeaderValue(c.Request().Header, headerName)
@@ -198,7 +212,40 @@ func validateModernHTTPRequest(c echo.Context, request jsonrpc.Request) (mcpv202
 	if !acceptsJSONAndEventStream(strings.Join(c.Request().Header.Values(echo.HeaderAccept), ",")) {
 		return meta, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidRequest), "Accept header must include application/json and text/event-stream", nil)
 	}
+	if response := s.validateCustomParameterHeaders(c.Request().Header, request); response != nil {
+		return meta, response
+	}
 	return meta, nil
+}
+
+func (s *Server) validateCustomParameterHeaders(headers http.Header, request jsonrpc.Request) *jsonrpc.Response {
+	if s == nil || s.toolManager == nil || request.Method != "tools/call" {
+		return nil
+	}
+	params, err := mcpv20260728.DecodeToolCallParams(request.Params, true)
+	if err != nil {
+		return jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid tool call payload", nil)
+	}
+	tool, ok := s.toolManager.GetTool(params.Name)
+	if !ok || tool == nil {
+		return nil
+	}
+
+	if err := mcpv20260728.ValidateParameterHeaders(tool.InputSchema(), params.Arguments, headers); err != nil {
+		var headerErr *mcpv20260728.ParameterHeaderError
+		if errors.As(err, &headerErr) {
+			return headerParameterMismatch(request.ID, headerErr.Path, headerErr.Reason)
+		}
+		return headerParameterMismatch(request.ID, "", "invalid x-mcp-header schema")
+	}
+	return nil
+}
+
+func headerParameterMismatch(id any, argumentName, reason string) *jsonrpc.Response {
+	return jsonrpc.NewErrorResponse(id, int(jsonrpc.ErrHeaderMismatch), "Mcp-Param header does not match request", map[string]any{
+		"argument": argumentName,
+		"reason":   reason,
+	})
 }
 
 func singleHeaderValue(headers http.Header, name string) (string, bool) {
@@ -252,7 +299,12 @@ func acceptsJSONAndEventStream(acceptHeader string) bool {
 	return hasJSON && hasSSE
 }
 
-func (s *Server) dispatchModernMessage(msg jsonrpc.Request, meta mcpv20260728.RequestMeta, progressRouteKey string) (any, error) {
+func (s *Server) dispatchModernMessage(ctx context.Context, msg jsonrpc.Request, meta mcpv20260728.RequestMeta, progressRouteKey string) (any, error) {
+	if s != nil {
+		if response, handled := shared.DispatchWithHook(ctx, msg, meta, s.dispatchHook); handled {
+			return response, nil
+		}
+	}
 	if msg.Method == "initialize" || msg.Method == "initialized" || msg.Method == "notifications/initialized" || msg.Method == "ping" {
 		return jsonrpc.NewErrorResponse(msg.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", mcpv20260728.AddSupportedVersionsForInitialize(msg.Method, map[string]any{"method": msg.Method})), nil
 	}
@@ -262,12 +314,14 @@ func (s *Server) dispatchModernMessage(msg jsonrpc.Request, meta mcpv20260728.Re
 		}), nil
 	}
 	if msg.Method == "tools/call" {
-		return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.modernToolCallContext(meta, requestIDKey(msg.ID), progressRouteKey), s.toolCallOptions()), nil
+		return shared.BuildToolCallResponseWithContextAndOptions(msg, s.toolManager, s.handleGodotResource, s.modernToolCallContext(ctx, meta, requestIDKey(msg.ID), progressRouteKey), s.toolCallOptions()), nil
 	}
-	return shared.DispatchStandardMethodWithPromptOptions(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions()), nil
+	return shared.DispatchStandardMethodWithContextAndProviders(msg, s.toolManager, s.promptCatalog, s.handleGodotResource, s.promptRenderOptions(), s.toolCallOptions(), s.dispatchProviders, shared.DispatchContext{
+		Context: ctx, RequestMeta: meta, RequestStateCodec: s.requestStateCodec,
+	}), nil
 }
 
-func (s *Server) modernToolCallContext(meta mcpv20260728.RequestMeta, requestID string, progressRouteKey string) shared.ToolCallContext {
+func (s *Server) modernToolCallContext(ctx context.Context, meta mcpv20260728.RequestMeta, requestID string, progressRouteKey string) shared.ToolCallContext {
 	editorSessionID := ""
 	if settings := mcpv20260728.ExtensionSettings(meta.ClientCapabilities, mcpv20260728.GodotExtensionID); settings != nil {
 		editorSessionID, _ = settings["editor_session_id"].(string)
@@ -278,6 +332,7 @@ func (s *Server) modernToolCallContext(meta mcpv20260728.RequestMeta, requestID 
 		}
 	}
 	return shared.ToolCallContext{
+		Context:                 ctx,
 		RequestID:               requestID,
 		ProgressRouteKey:        strings.TrimSpace(progressRouteKey),
 		SessionID:               strings.TrimSpace(editorSessionID),
@@ -287,6 +342,9 @@ func (s *Server) modernToolCallContext(meta mcpv20260728.RequestMeta, requestID 
 		SessionInitialized:      true,
 		MutatingAllowed:         mcpv20260728.MutatingCapability(meta) || (s.config != nil && s.config.ToolControls.AllowMutatingWithoutCapability),
 		Modern:                  true,
+		ClientInfo:              meta.ClientInfo,
+		ClientCapabilities:      meta.ClientCapabilities,
+		RequestStateCodec:       s.requestStateCodec,
 	}
 }
 
@@ -306,6 +364,22 @@ func (s *Server) handleProgressToolCall(c echo.Context, request jsonrpc.Request,
 	s.registerProgressStream(progressRouteKey, transport)
 	defer s.unregisterProgressStream(progressRouteKey, transport)
 	defer transport.Close()
+	if s.progressDispatchHook != nil {
+		if notifications, response, handled := s.progressDispatchHook(c.Request().Context(), request, meta); handled {
+			for _, notification := range notifications {
+				if c.Request().Context().Err() != nil {
+					return nil
+				}
+				if err := transport.SendSSEWithTimeout("message", notification, progressWriteTimeout); err != nil {
+					return nil
+				}
+			}
+			if response != nil {
+				_ = transport.SendSSEWithTimeout("message", response, progressWriteTimeout)
+			}
+			return nil
+		}
+	}
 
 	type dispatchResult struct {
 		response any
@@ -313,7 +387,7 @@ func (s *Server) handleProgressToolCall(c echo.Context, request jsonrpc.Request,
 	}
 	resultCh := make(chan dispatchResult, 1)
 	go func() {
-		response, handleErr := s.dispatchModernMessage(request, meta, progressRouteKey)
+		response, handleErr := s.dispatchModernMessage(c.Request().Context(), request, meta, progressRouteKey)
 		resultCh <- dispatchResult{response: response, err: handleErr}
 	}()
 

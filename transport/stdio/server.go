@@ -1,6 +1,7 @@
 package stdio
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,6 +33,8 @@ type StdioServer struct {
 	promptCatalog       *promptcatalog.Registry
 	promptRenderOptions shared.PromptRenderOptions
 	toolCallOptions     shared.ToolCallOptions
+	dispatchProviders   shared.DispatchProviders
+	requestStateCodec   *mcpv20260728.RequestStateCodec
 
 	writeMu                   sync.Mutex
 	output                    io.Writer
@@ -75,16 +78,35 @@ func (s *StdioServer) AttachToolCallOptions(options shared.ToolCallOptions) {
 	s.toolCallOptions = options
 }
 
+// AttachDispatchProviders enables optional production capabilities through
+// the same shared dispatch providers used by Streamable HTTP.
+func (s *StdioServer) AttachDispatchProviders(providers shared.DispatchProviders) {
+	s.dispatchProviders = providers
+}
+
+func (s *StdioServer) AttachRequestStateCodec(codec *mcpv20260728.RequestStateCodec) {
+	s.requestStateCodec = codec
+}
+
 func (s *StdioServer) Start() error {
-	decoder := json.NewDecoder(os.Stdin)
+	return s.serve(os.Stdin)
+}
+
+func (s *StdioServer) serve(input io.Reader) error {
+	reader := bufio.NewReader(input)
 	logger.Debug("Stdio server started and waiting for messages")
 
 	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
+		raw, oversized, err := readStdioFrame(reader)
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				s.cancelAll()
 				return nil
+			}
+			if oversized {
+				s.write(jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrInvalidRequest), "Request body too large", nil))
+				s.cancelAll()
+				return errors.New("request body too large")
 			}
 			logger.Error("Error decoding message", "error", err)
 			s.write(jsonrpc.NewErrorResponse(nil, int(jsonrpc.ErrParseError), "Parse error", nil))
@@ -111,6 +133,45 @@ func (s *StdioServer) Start() error {
 				continue
 			}
 			go s.handleRequest(request)
+		}
+	}
+}
+
+func readStdioFrame(reader *bufio.Reader) (json.RawMessage, bool, error) {
+	frame := make([]byte, 0, 4096)
+	for {
+		if len(frame) == shared.MaxJSONRPCFrameBytes {
+			boundary, err := reader.ReadByte()
+			switch {
+			case err == nil && boundary == '\n':
+				frame = append(frame, boundary)
+				return json.RawMessage(frame), false, nil
+			case err == nil:
+				return nil, true, errors.New("request body too large")
+			case errors.Is(err, io.EOF):
+				return json.RawMessage(frame), false, nil
+			default:
+				return nil, false, err
+			}
+		}
+		chunk, err := reader.ReadSlice('\n')
+		frameBytes := len(frame) + len(chunk)
+		if len(chunk) > 0 && chunk[len(chunk)-1] == '\n' {
+			frameBytes--
+		}
+		if frameBytes > shared.MaxJSONRPCFrameBytes {
+			return nil, true, errors.New("request body too large")
+		}
+		frame = append(frame, chunk...)
+		switch {
+		case err == nil:
+			return json.RawMessage(frame), false, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF) && len(frame) > 0:
+			return json.RawMessage(frame), false, nil
+		default:
+			return nil, false, err
 		}
 	}
 }
@@ -144,7 +205,7 @@ func (s *StdioServer) handleRequest(request jsonrpc.Request) {
 		return
 	}
 
-	response, handleErr := s.dispatch(request, meta)
+	response, handleErr := s.dispatchContext(ctx, request, meta)
 	if ctx.Err() != nil || request.ID == nil {
 		return
 	}
@@ -158,13 +219,22 @@ func (s *StdioServer) handleRequest(request jsonrpc.Request) {
 }
 
 func (s *StdioServer) dispatch(request jsonrpc.Request, meta mcpv20260728.RequestMeta) (any, error) {
+	return s.dispatchContext(context.Background(), request, meta)
+}
+
+func (s *StdioServer) dispatchContext(ctx context.Context, request jsonrpc.Request, meta mcpv20260728.RequestMeta) (any, error) {
 	if request.Method == "initialize" || request.Method == "initialized" || request.Method == "notifications/initialized" || request.Method == "ping" {
 		return jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrMethodNotFound), "Method not found", mcpv20260728.AddSupportedVersionsForInitialize(request.Method, map[string]any{"method": request.Method})), nil
 	}
 	if request.Method == "tools/call" {
-		return shared.BuildToolCallResponseWithContextAndOptions(request, s.toolManager, readGodotResource, modernToolCallContext(meta, requestIDKey(request.ID)), s.toolCallOptions), nil
+		callContext := modernToolCallContext(meta, requestIDKey(request.ID))
+		callContext.Context = ctx
+		callContext.RequestStateCodec = s.requestStateCodec
+		return shared.BuildToolCallResponseWithContextAndOptions(request, s.toolManager, readGodotResource, callContext, s.toolCallOptions), nil
 	}
-	return shared.DispatchStandardMethodWithOptions(request, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions, s.toolCallOptions), nil
+	return shared.DispatchStandardMethodWithContextAndProviders(request, s.toolManager, s.promptCatalog, readGodotResource, s.promptRenderOptions, s.toolCallOptions, s.dispatchProviders, shared.DispatchContext{
+		Context: ctx, RequestMeta: meta, RequestStateCodec: s.requestStateCodec,
+	}), nil
 }
 
 func modernToolCallContext(meta mcpv20260728.RequestMeta, requestID string) shared.ToolCallContext {
@@ -181,6 +251,8 @@ func modernToolCallContext(meta mcpv20260728.RequestMeta, requestID string) shar
 		SessionInitialized:      true,
 		MutatingAllowed:         mcpv20260728.MutatingCapability(meta),
 		Modern:                  true,
+		ClientInfo:              meta.ClientInfo,
+		ClientCapabilities:      meta.ClientCapabilities,
 	}
 }
 
