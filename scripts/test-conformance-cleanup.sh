@@ -21,7 +21,7 @@ printf '%s\n' '#!/usr/bin/env sh' \
   'exit 0' >"$test_dir/bunx"
 chmod +x "$test_dir/bunx"
 
-run_output="$(PATH="$test_dir:$PATH" CONFORMANCE_PORT="$port" \
+run_output="$(PATH="$test_dir:$PATH" CONFORMANCE_OUTPUT_DIR= CONFORMANCE_PORT="$port" \
   ./scripts/test-conformance-2026-07-28.sh)"
 
 output_dir="$(printf '%s\n' "$run_output" | sed -n 's/^Conformance output: //p')"
@@ -41,7 +41,7 @@ fi
 
 failure_port=$((port + 2))
 set +e
-failure_output="$(PATH="$test_dir:$PATH" FAKE_BUNX_FAIL=1 CONFORMANCE_PORT="$failure_port" \
+failure_output="$(PATH="$test_dir:$PATH" FAKE_BUNX_FAIL=1 CONFORMANCE_OUTPUT_DIR= CONFORMANCE_PORT="$failure_port" \
   ./scripts/test-conformance-2026-07-28.sh 2>&1)"
 failure_status=$?
 set -e
@@ -58,7 +58,7 @@ rm -rf "$retained_dir"
 
 timeout_port=$((port + 3))
 set +e
-timeout_output="$(PATH="$test_dir:$PATH" FAKE_BUNX_HANG=1 CONFORMANCE_TIMEOUT_SECONDS=1 CONFORMANCE_PORT="$timeout_port" \
+timeout_output="$(PATH="$test_dir:$PATH" FAKE_BUNX_HANG=1 CONFORMANCE_OUTPUT_DIR= CONFORMANCE_TIMEOUT_SECONDS=1 CONFORMANCE_PORT="$timeout_port" \
   ./scripts/test-conformance-2026-07-28.sh 2>&1)"
 timeout_status=$?
 set -e
