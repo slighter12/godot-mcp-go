@@ -96,7 +96,7 @@ if [ "$negative_status" -eq 124 ]; then
   exit 1
 fi
 
-if ! grep -Eiq "MCP-Protocol-Version|protocol[- ]version|Invalid request metadata|Mcp-Method header" "$inspector_output"; then
+if ! grep -Eiq "MCP-Protocol-Version|protocol[- ]version|Invalid request metadata" "$inspector_output"; then
   echo "expected protocol-header validation error, got:"
   cat "$inspector_output"
   exit 1

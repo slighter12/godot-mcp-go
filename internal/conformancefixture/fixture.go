@@ -367,7 +367,11 @@ func (f *Fixture) handleRoundTripTool(name string) func(context.Context, mcp.Rou
 			if !hasCapability(request.ClientCapabilities, "elicitation") {
 				return mcp.RoundTripOutcome{}, errors.New("missing elicitation capability")
 			}
-			if _, present := request.InputResponses["stream"]; present {
+			responsesComplete, responseErr := validateResponses(request.InputResponses, []string{"stream"})
+			if responseErr != nil {
+				return mcp.RoundTripOutcome{}, mcpv20260728.ErrInvalidRoundTripInput
+			}
+			if responsesComplete {
 				return fixtureComplete("Streaming elicitation completed"), nil
 			}
 			return fixtureInputRequired(map[string]mcp.InputRequest{"stream": elicitation("Streaming elicitation", "value", "string")}, false), nil

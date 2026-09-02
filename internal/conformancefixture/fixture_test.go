@@ -229,6 +229,32 @@ func TestStreamingElicitationCompletesAfterValidatedResponse(t *testing.T) {
 	}
 }
 
+func TestStreamingElicitationRejectsMalformedRetryResponse(t *testing.T) {
+	if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
+		t.Fatalf("initialize logger: %v", err)
+	}
+	fixture, err := New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	meta := mcpv20260728.RequestMeta{ClientCapabilities: map[string]any{"elicitation": map[string]any{}}}
+	first := dispatchFixture(t, fixture, jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: 1, Method: "tools/call",
+		Params: rawJSON(t, map[string]any{"name": "test_streaming_elicitation", "arguments": map[string]any{}}),
+	}, meta)
+	required := first.Result.(mcp.InputRequiredResult)
+	second := dispatchFixture(t, fixture, jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: 2, Method: "tools/call",
+		Params: rawJSON(t, map[string]any{
+			"name": "test_streaming_elicitation", "arguments": map[string]any{}, "requestState": required.RequestState,
+			"inputResponses": map[string]any{"stream": true},
+		}),
+	}, meta)
+	if second.Error == nil || second.Error.Code != int(jsonrpc.ErrInvalidParams) || second.Result != nil {
+		t.Fatalf("malformed streaming response was accepted: %#v", second)
+	}
+}
+
 func TestCapabilityFixtureCompletesWhenClientOffersNoInputCapabilities(t *testing.T) {
 	if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
 		t.Fatalf("initialize logger: %v", err)

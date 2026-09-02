@@ -80,6 +80,24 @@ test-addon-static:
 
 test-quick: test-go test-addon-static
 
-test-release: test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id test-inspector-docker test-inspector-header-negative test-conformance-cleanup test-conformance-2026-07-28 test-addon-static
+test-release:
+	@set -e; \
+	for target in \
+		test-go \
+		test-http-smoke \
+		test-http-runtime-log-smoke \
+		test-http-ping \
+		test-http-delete \
+		test-http-session-isolation \
+		test-http-protocol-header \
+		test-http-allow-list-runtime-bridge \
+		test-lifecycle-initialized-id \
+		test-inspector-docker \
+		test-inspector-header-negative \
+		test-conformance-cleanup \
+		test-conformance-2026-07-28 \
+		test-addon-static; do \
+		$(MAKE) "$$target"; \
+	done
 
 test-all: test-release
