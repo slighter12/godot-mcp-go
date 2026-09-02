@@ -6,7 +6,10 @@ SERVER_HOST="${CONFORMANCE_HOST:-127.0.0.1}"
 SERVER_PORT="${CONFORMANCE_PORT:-39080}"
 SERVER_URL="http://${SERVER_HOST}:${SERVER_PORT}/mcp"
 OUTPUT_DIR="${CONFORMANCE_OUTPUT_DIR:-}"
+CONFORMANCE_TIMEOUT_SECONDS="${CONFORMANCE_TIMEOUT_SECONDS:-900}"
 temporary_output=0
+
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/process-utils.sh"
 
 fixture_dir="$(mktemp -d /tmp/godot-mcp-conformance-server.XXXXXX)"
 if [ -z "$OUTPUT_DIR" ]; then
@@ -19,9 +22,9 @@ fixture_bin="$fixture_dir/conformance-fixture"
 server_log="$fixture_dir/server.log"
 
 cleanup() {
+  terminate_process "${RUN_WITH_DEADLINE_PID:-}"
   if [ -n "${server_pid:-}" ]; then
-    kill "$server_pid" >/dev/null 2>&1 || true
-    wait "$server_pid" >/dev/null 2>&1 || true
+    terminate_process "$server_pid"
   fi
   rm -rf "$fixture_dir"
 }
@@ -38,7 +41,7 @@ for _ in $(seq 1 120); do
     sed -n '1,240p' "$server_log"
     exit 1
   fi
-  if curl -fsS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
+  if curl --connect-timeout 1 --max-time 1 -fsS "http://${SERVER_HOST}:${SERVER_PORT}/" >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -53,7 +56,7 @@ fi
 
 echo "Conformance output: $OUTPUT_DIR"
 runner_status=0
-bunx @modelcontextprotocol/conformance@0.2.0-alpha.11 server \
+run_with_deadline "$CONFORMANCE_TIMEOUT_SECONDS" bunx @modelcontextprotocol/conformance@0.2.0-alpha.11 server \
   --url "$SERVER_URL" \
   --requirements 2026-07-28 \
   --output-dir "$OUTPUT_DIR" || runner_status=$?

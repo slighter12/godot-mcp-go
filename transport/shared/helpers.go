@@ -234,9 +234,7 @@ func buildResourcesReadResponse(msg jsonrpc.Request, readResource func(string) (
 				mcpv20260728.RequestStateBinding{Method: msg.Method, Identity: params.URI, Parameters: map[string]any{"uri": params.URI}, PrincipalID: dispatchContext.PrincipalID},
 				mcp.RoundTripRequest{Method: msg.Method, URI: params.URI, InputResponses: inputResponses, InputResponsesPresent: inputResponsesPresent, ClientInfo: dispatchContext.RequestMeta.ClientInfo, ClientCapabilities: dispatchContext.RequestMeta.ClientCapabilities, PrincipalID: dispatchContext.PrincipalID},
 				params.RequestState, resultMeta(), handler.ReadResourceRoundTrip)
-			if response := roundTripDispatchResponse(msg.ID, msg.Method, value, err); response != nil {
-				return response
-			}
+			return roundTripDispatchResponse(msg.ID, msg.Method, value, err)
 		}
 		contents, err := catalog.ReadResource(params.URI)
 		if err != nil {
@@ -397,9 +395,7 @@ func buildPromptsGetResponseWithContext(msg jsonrpc.Request, catalog *promptcata
 			mcpv20260728.RequestStateBinding{Method: msg.Method, Identity: prompt.Name, Parameters: arguments, PrincipalID: dispatchContext.PrincipalID},
 			mcp.RoundTripRequest{Method: msg.Method, Name: prompt.Name, Arguments: arguments, InputResponses: inputResponses, InputResponsesPresent: inputResponsesPresent, ClientInfo: dispatchContext.RequestMeta.ClientInfo, ClientCapabilities: dispatchContext.RequestMeta.ClientCapabilities, PrincipalID: dispatchContext.PrincipalID},
 			params.RequestState, resultMeta(), prompt.RoundTripHandler)
-		if response := roundTripDispatchResponse(msg.ID, msg.Method, value, err); response != nil {
-			return response
-		}
+		return roundTripDispatchResponse(msg.ID, msg.Method, value, err)
 	}
 	if prompt.RenderMessages != nil {
 		messages, err := prompt.RenderMessages(rawArgs)

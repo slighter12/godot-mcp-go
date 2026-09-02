@@ -27,6 +27,11 @@ type stateOnlyResourceCatalog struct{}
 
 type invalidContentResourceCatalog struct{}
 
+type countingRoundTripResourceCatalog struct {
+	roundTripCalls *int
+	readCalls      *int
+}
+
 type countingRoundTripTool struct{ calls *int }
 
 type unsupportedSchemaRoundTripTool struct{}
@@ -82,6 +87,19 @@ func (invalidContentResourceCatalog) ReadResource(string) ([]map[string]any, err
 }
 func (invalidContentResourceCatalog) ReadResourceRoundTrip(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error) {
 	return mcp.RoundTripOutcome{Complete: map[string]any{"contents": []any{map[string]any{"uri": "test://invalid", "blob": "not-base64", "mimeType": "image/png"}}}}, nil
+}
+
+func (c countingRoundTripResourceCatalog) ListResources() []map[string]any { return nil }
+func (c countingRoundTripResourceCatalog) ListResourceTemplates() []map[string]any {
+	return nil
+}
+func (c countingRoundTripResourceCatalog) ReadResource(string) ([]map[string]any, error) {
+	*c.readCalls++
+	return []map[string]any{{"uri": "test://fallback", "text": "fallback"}}, nil
+}
+func (c countingRoundTripResourceCatalog) ReadResourceRoundTrip(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error) {
+	*c.roundTripCalls++
+	return mcp.RoundTripOutcome{Complete: map[string]any{"contents": []any{}}}, nil
 }
 
 func (stateOnlyResourceCatalog) ListResources() []map[string]any         { return nil }
@@ -520,6 +538,43 @@ func TestSharedResourceDispatchSupportsMRTRProvider(t *testing.T) {
 	result := second.Result.(map[string]any)
 	if second.Error != nil || result["resultType"] != "complete" || fmt.Sprint(result["ttlMs"]) != "0" || result["cacheScope"] != "private" {
 		t.Fatalf("unexpected completed resource MRTR response: %#v", second)
+	}
+}
+
+func TestSharedResourceMRTRWithoutStateCodecDoesNotEnterHandlerOrFallback(t *testing.T) {
+	roundTripCalls := 0
+	readCalls := 0
+	response := DispatchStandardMethodWithContextAndProviders(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: "resource-no-codec", Method: "resources/read", Params: json.RawMessage(`{"uri":"test://protected"}`),
+	}, tools.NewManager(), nil, nil, DefaultPromptRenderOptions(), DefaultToolCallOptions(), DispatchProviders{Resources: countingRoundTripResourceCatalog{
+		roundTripCalls: &roundTripCalls,
+		readCalls:      &readCalls,
+	}}, DispatchContext{}).(*jsonrpc.Response)
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrInternalError) || roundTripCalls != 0 || readCalls != 0 {
+		t.Fatalf("MRTR resource used handler or fallback without codec: roundTrip=%d read=%d response=%#v", roundTripCalls, readCalls, response)
+	}
+}
+
+func TestSharedPromptMRTRWithoutStateCodecDoesNotEnterHandlerOrFallback(t *testing.T) {
+	roundTripCalls := 0
+	renderCalls := 0
+	catalog := promptcatalog.NewRegistry(true)
+	catalog.RegisterPrompt(promptcatalog.Prompt{
+		Name: "protected-prompt",
+		RoundTripHandler: func(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error) {
+			roundTripCalls++
+			return mcp.RoundTripOutcome{Complete: map[string]any{"messages": []any{}}}, nil
+		},
+		RenderMessages: func(map[string]string) ([]map[string]any, error) {
+			renderCalls++
+			return []map[string]any{}, nil
+		},
+	})
+	response := DispatchStandardMethodWithContextAndProviders(jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: "prompt-no-codec", Method: "prompts/get", Params: json.RawMessage(`{"name":"protected-prompt"}`),
+	}, tools.NewManager(), catalog, nil, DefaultPromptRenderOptions(), DefaultToolCallOptions(), DispatchProviders{}, DispatchContext{}).(*jsonrpc.Response)
+	if response.Error == nil || response.Error.Code != int(jsonrpc.ErrInternalError) || roundTripCalls != 0 || renderCalls != 0 {
+		t.Fatalf("MRTR prompt used handler or fallback without codec: roundTrip=%d render=%d response=%#v", roundTripCalls, renderCalls, response)
 	}
 }
 

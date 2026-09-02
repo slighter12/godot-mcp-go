@@ -55,6 +55,21 @@ func TestInputSchemaRoundTripPreservesLargeJSONSchemaInteger(t *testing.T) {
 	}
 }
 
+func TestInputSchemaRoundTripPreservesLargeNestedPropertyInteger(t *testing.T) {
+	const source = `{"type":"object","properties":{"count":{"type":"integer","const":9007199254740993}},"required":[]}`
+	var schema InputSchema
+	if err := json.Unmarshal([]byte(source), &schema); err != nil {
+		t.Fatalf("unmarshal input schema: %v", err)
+	}
+	raw, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("marshal input schema: %v", err)
+	}
+	if !strings.Contains(string(raw), `"const":9007199254740993`) {
+		t.Fatalf("large nested integer changed during round trip: %s", raw)
+	}
+}
+
 func TestNewServerErrorMessageNormalizesOutOfRangeCodes(t *testing.T) {
 	for _, code := range []jsonrpc.ErrorCode{-31999, -32100, -32603} {
 		message := NewServerErrorMessage("client", "server", code, "error", nil)

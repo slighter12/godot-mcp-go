@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/runtimebridge"
 	tooltypes "github.com/slighter12/godot-mcp-go/tools/types"
 )
@@ -322,6 +324,32 @@ func TestRuntimeSceneTreeGetTool_ReturnsRuntimeSnapshotMissingCode(t *testing.T)
 	}
 	if semanticErr.Data["code"] != "runtime_snapshot_missing" {
 		t.Fatalf("expected code runtime_snapshot_missing, got %v", semanticErr.Data["code"])
+	}
+}
+
+func TestRuntimeSceneTreeGetTool_ReturnsSemanticErrorForOversizedResult(t *testing.T) {
+	runtimebridge.ResetDefaultRuntimeSnapshotStoreForTests(10*time.Second, 0)
+	now := time.Now().UTC()
+	runtimebridge.DefaultRuntimeSnapshotStore().Upsert("game_large", runtimebridge.RuntimeSnapshot{
+		SessionID:  "game_large",
+		SnapshotID: "snap_large",
+		UpdatedAt:  now.Format(time.RFC3339Nano),
+		Running:    true,
+		SceneTree: runtimebridge.CompactNode{
+			Path: "/root/Large",
+			Name: strings.Repeat("x", mcpv20260728.MaxDecodedContentBlockBytes),
+			Type: "Node",
+		},
+	}, now)
+
+	tool := &RuntimeSceneTreeGetTool{}
+	_, err := tool.Execute(json.RawMessage(`{
+		"session_id":"game_large",
+		"_mcp":{"session_id":"editor-1","session_initialized":true}
+	}`))
+	semanticErr, ok := tooltypes.AsSemanticError(err)
+	if !ok || semanticErr.Kind != tooltypes.SemanticKindExecutionFailed || semanticErr.Data["code"] != "result_too_large" || semanticErr.Data["max_bytes"] != mcpv20260728.MaxDecodedContentBlockBytes {
+		t.Fatalf("unexpected oversized scene-tree error: %#v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/big"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -98,6 +99,14 @@ func validateElicitationPropertySchema(schema map[string]any) error {
 		}
 		if typeName == "integer" && (!optionalInteger(schema, "default") || !optionalInteger(schema, "minimum") || !optionalInteger(schema, "maximum")) {
 			return errors.New("invalid integer schema")
+		}
+		if typeName == "integer" {
+			minimum, hasMin := integerValue(schema["minimum"])
+			maximum, hasMax := integerValue(schema["maximum"])
+			if hasMin && hasMax && minimum > maximum {
+				return errors.New("invalid number range")
+			}
+			break
 		}
 		minimum, hasMin := numberValue(schema["minimum"])
 		maximum, hasMax := numberValue(schema["maximum"])
@@ -409,11 +418,25 @@ func numberValue(value any) (float64, bool) {
 }
 
 func integerValue(value any) (int64, bool) {
-	number, ok := numberValue(value)
-	if !ok || math.Trunc(number) != number || number < math.MinInt64 || number > math.MaxInt64 {
+	switch number := value.(type) {
+	case json.Number:
+		rational, ok := new(big.Rat).SetString(number.String())
+		if !ok || !rational.IsInt() || !rational.Num().IsInt64() {
+			return 0, false
+		}
+		return rational.Num().Int64(), true
+	case float64:
+		if math.IsInf(number, 0) || math.IsNaN(number) || math.Trunc(number) != number || number < math.MinInt64 || number >= 1<<63 {
+			return 0, false
+		}
+		return int64(number), true
+	case int:
+		return int64(number), true
+	case int64:
+		return number, true
+	default:
 		return 0, false
 	}
-	return int64(number), true
 }
 
 func schemaStringArray(value any) ([]string, bool) {

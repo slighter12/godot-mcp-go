@@ -168,6 +168,85 @@ func TestMalformedSamplingAndRootsResponsesAreRejected(t *testing.T) {
 	}
 }
 
+func TestProgressDispatchOnlyEmitsNotificationsForValidToken(t *testing.T) {
+	if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
+		t.Fatalf("initialize logger: %v", err)
+	}
+	fixture, err := New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	request := jsonrpc.Request{JSONRPC: jsonrpc.Version, ID: "progress", Method: "tools/call", Params: json.RawMessage(`{"name":"test_tool_with_progress","arguments":{}}`)}
+
+	for _, test := range []struct {
+		name              string
+		token             any
+		wantNotifications int
+		wantError         bool
+	}{
+		{name: "missing", wantNotifications: 0},
+		{name: "invalid", token: true, wantNotifications: 0, wantError: true},
+		{name: "string", token: "progress-token", wantNotifications: 3},
+		{name: "number", token: float64(7), wantNotifications: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			notifications, result, handled := fixture.ProgressDispatch(context.Background(), request, mcpv20260728.RequestMeta{ProgressToken: test.token})
+			if !handled || len(notifications) != test.wantNotifications {
+				t.Fatalf("unexpected progress dispatch: handled=%v notifications=%d result=%#v", handled, len(notifications), result)
+			}
+			response := result.(*jsonrpc.Response)
+			if (response.Error != nil) != test.wantError {
+				t.Fatalf("unexpected progress response: %#v", response)
+			}
+		})
+	}
+}
+
+func TestStreamingElicitationCompletesAfterValidatedResponse(t *testing.T) {
+	if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
+		t.Fatalf("initialize logger: %v", err)
+	}
+	fixture, err := New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	meta := mcpv20260728.RequestMeta{ClientCapabilities: map[string]any{"elicitation": map[string]any{}}}
+	first := dispatchFixture(t, fixture, jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: 1, Method: "tools/call",
+		Params: rawJSON(t, map[string]any{"name": "test_streaming_elicitation", "arguments": map[string]any{}}),
+	}, meta)
+	required := first.Result.(mcp.InputRequiredResult)
+	second := dispatchFixture(t, fixture, jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: 2, Method: "tools/call",
+		Params: rawJSON(t, map[string]any{
+			"name": "test_streaming_elicitation", "arguments": map[string]any{}, "requestState": required.RequestState,
+			"inputResponses": map[string]any{"stream": map[string]any{"action": "accept", "content": map[string]any{"value": "done"}}},
+		}),
+	}, meta)
+	result, ok := second.Result.(map[string]any)
+	if second.Error != nil || !ok || result["resultType"] != "complete" {
+		t.Fatalf("streaming elicitation did not complete: %#v", second)
+	}
+}
+
+func TestCapabilityFixtureCompletesWhenClientOffersNoInputCapabilities(t *testing.T) {
+	if err := logger.Init(logger.GetLevelFromString("error"), logger.FormatJSON); err != nil {
+		t.Fatalf("initialize logger: %v", err)
+	}
+	fixture, err := New([]byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	response := dispatchFixture(t, fixture, jsonrpc.Request{
+		JSONRPC: jsonrpc.Version, ID: 1, Method: "tools/call",
+		Params: rawJSON(t, map[string]any{"name": "test_input_required_result_capabilities", "arguments": map[string]any{}}),
+	}, mcpv20260728.RequestMeta{})
+	result, ok := response.Result.(map[string]any)
+	if response.Error != nil || !ok || result["resultType"] != "complete" {
+		t.Fatalf("empty capability set did not complete: %#v", response)
+	}
+}
+
 func rawJSON(t *testing.T, value any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(value)

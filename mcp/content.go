@@ -30,6 +30,22 @@ type ResourceContents struct {
 	Blob     string `json:"blob,omitempty"`
 }
 
+// MarshalJSON preserves the valid empty-text representation while retaining
+// the source-compatible string fields used by existing callers.
+func (c ResourceContents) MarshalJSON() ([]byte, error) {
+	result := map[string]any{"uri": c.URI}
+	if c.MimeType != "" {
+		result["mimeType"] = c.MimeType
+	}
+	if c.Text != "" || c.Blob == "" {
+		result["text"] = c.Text
+	}
+	if c.Blob != "" {
+		result["blob"] = c.Blob
+	}
+	return json.Marshal(result)
+}
+
 // EmbeddedResourceContent is a standard embedded resource content block.
 type EmbeddedResourceContent struct {
 	Type     string           `json:"type"`

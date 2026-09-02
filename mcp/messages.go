@@ -84,7 +84,7 @@ func (s *InputSchema) UnmarshalJSON(data []byte) error {
 		delete(raw, "type")
 	}
 	if value, ok := raw["properties"]; ok {
-		if err := json.Unmarshal(value, &s.Properties); err != nil {
+		if err := decodeJSONUseNumber(value, &s.Properties); err != nil {
 			return err
 		}
 		delete(raw, "properties")
@@ -104,14 +104,18 @@ func (s *InputSchema) UnmarshalJSON(data []byte) error {
 	s.Extras = make(map[string]any, len(raw))
 	for key, value := range raw {
 		var decoded any
-		decoder := json.NewDecoder(bytes.NewReader(value))
-		decoder.UseNumber()
-		if err := decoder.Decode(&decoded); err != nil {
+		if err := decodeJSONUseNumber(value, &decoded); err != nil {
 			return err
 		}
 		s.Extras[key] = decoded
 	}
 	return nil
+}
+
+func decodeJSONUseNumber(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 // ToolCallMessage represents a tool call request

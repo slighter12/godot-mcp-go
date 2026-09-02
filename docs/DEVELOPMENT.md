@@ -67,7 +67,9 @@ make test-release
 
 For a fast local check that does not require Docker or Bun, run `make test-quick`.
 
-It runs, in order:
+It runs `test-go` and `test-addon-static`.
+
+The complete `make test-release` gate runs, in order:
 
 1. `go test ./...`
 2. `make test-http-smoke`

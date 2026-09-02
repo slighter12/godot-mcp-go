@@ -39,8 +39,8 @@ type ContentResultTool interface {
 }
 
 // MultiRoundTripTool opts a tool into the MCP 2026-07-28 input-required flow.
-// The ordinary Execute method remains the compatibility path when MRTR is not
-// configured by the hosting server.
+// Modern dispatch requires request-state configuration before entering the
+// handler. Execute remains the legacy and non-modern compatibility path.
 type MultiRoundTripTool interface {
 	Tool
 	ExecuteRoundTrip(context.Context, mcp.RoundTripRequest) (mcp.RoundTripOutcome, error)

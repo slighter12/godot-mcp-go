@@ -104,7 +104,6 @@ func NormalizeMethodCompleteResult(method string, value any, defaultMeta map[str
 		if _, present := result["content"]; !present {
 			result["content"] = []any{}
 		}
-		return NormalizeCompleteResult(result, defaultMeta)
 	case "prompts/get":
 		if err := validatePromptMessages(result["messages"]); err != nil {
 			return nil, err

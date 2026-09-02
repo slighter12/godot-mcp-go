@@ -16,6 +16,7 @@ printf '%s\n' '#!/usr/bin/env sh' \
   '  shift' \
   'done' \
   'if [ -n "$output_dir" ]; then mkdir -p "$output_dir"; printf failed >"$output_dir/fake-report"; fi' \
+  'if [ "${FAKE_BUNX_HANG:-0}" = "1" ]; then while :; do :; done; fi' \
   'if [ "${FAKE_BUNX_FAIL:-0}" = "1" ]; then exit 7; fi' \
   'exit 0' >"$test_dir/bunx"
 chmod +x "$test_dir/bunx"
@@ -55,6 +56,23 @@ if [ -z "$retained_dir" ] || [ ! -f "$retained_dir/fake-report" ]; then
 fi
 rm -rf "$retained_dir"
 
+timeout_port=$((port + 3))
+set +e
+timeout_output="$(PATH="$test_dir:$PATH" FAKE_BUNX_HANG=1 CONFORMANCE_TIMEOUT_SECONDS=1 CONFORMANCE_PORT="$timeout_port" \
+  ./scripts/test-conformance-2026-07-28.sh 2>&1)"
+timeout_status=$?
+set -e
+if [ "$timeout_status" -ne 124 ]; then
+  echo "expected conformance runner timeout status 124, got $timeout_status"
+  exit 1
+fi
+timeout_retained_dir="$(printf '%s\n' "$timeout_output" | sed -n 's/^Conformance failure output retained: //p')"
+if [ -z "$timeout_retained_dir" ] || [ ! -f "$timeout_retained_dir/fake-report" ]; then
+  echo "timed-out conformance output was not retained: ${timeout_retained_dir:-missing}"
+  exit 1
+fi
+rm -rf "$timeout_retained_dir"
+
 if curl -fsS "http://127.0.0.1:${port}/" >/dev/null 2>&1; then
   echo "conformance fixture still owns port ${port} after runner exit"
   exit 1
@@ -65,6 +83,10 @@ if curl -fsS "http://127.0.0.1:${explicit_port}/" >/dev/null 2>&1; then
 fi
 if curl -fsS "http://127.0.0.1:${failure_port}/" >/dev/null 2>&1; then
   echo "conformance fixture still owns port ${failure_port} after failed runner"
+  exit 1
+fi
+if curl --connect-timeout 1 --max-time 1 -fsS "http://127.0.0.1:${timeout_port}/" >/dev/null 2>&1; then
+  echo "conformance fixture still owns port ${timeout_port} after runner timeout"
   exit 1
 fi
 

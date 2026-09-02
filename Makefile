@@ -5,7 +5,7 @@ SERVER_URL ?= http://$(SERVER_HOST):$(SERVER_PORT)/mcp
 SESSION_ISOLATION_PORT ?= 19080
 INSPECTOR_SERVER_PORT ?= 29080
 INSPECTOR_SERVER_URL ?= http://host.docker.internal:$(INSPECTOR_SERVER_PORT)/mcp
-INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:1.0.1
+INSPECTOR_IMAGE ?= ghcr.io/modelcontextprotocol/inspector:2.4.0
 
 .PHONY: help run-http test-go test-http-smoke test-http-runtime-log-smoke test-http-ping test-http-delete test-http-session-isolation test-http-protocol-header test-http-allow-list-runtime-bridge test-lifecycle-initialized-id inspector-pull test-inspector-docker test-inspector-header-negative test-conformance-cleanup test-conformance-2026-07-28 test-addon-static test-quick test-release test-all
 

@@ -209,6 +209,13 @@ func parameterHeaderBindings(schema mcp.InputSchema) ([]parameterHeaderBinding, 
 				for name, rawChild := range children {
 					childSchema, ok := rawChild.(map[string]any)
 					if !ok {
+						found, err := containsAnnotation(rawChild, depth+1)
+						if err != nil {
+							return err
+						}
+						if found {
+							return fmt.Errorf("property %q contains x-mcp-header outside a properties path", strings.Join(append(path, name), "."))
+						}
 						continue
 					}
 					if err := visitProperty(childSchema, append(path, name), depth+1); err != nil {
@@ -231,6 +238,13 @@ func parameterHeaderBindings(schema mcp.InputSchema) ([]parameterHeaderBinding, 
 	for name, raw := range schema.Properties {
 		property, ok := raw.(map[string]any)
 		if !ok {
+			found, err := containsAnnotation(raw, 1)
+			if err != nil {
+				return nil, err
+			}
+			if found {
+				return nil, fmt.Errorf("property %q contains x-mcp-header outside a properties path", name)
+			}
 			continue
 		}
 		if err := visitProperty(property, []string{name}, 1); err != nil {

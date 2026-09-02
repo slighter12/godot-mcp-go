@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/slighter12/godot-mcp-go/config"
+	"github.com/slighter12/godot-mcp-go/internal/infra/notifications"
 	"github.com/slighter12/godot-mcp-go/internal/protocol/mcpv20260728"
 	"github.com/slighter12/godot-mcp-go/mcp"
 	"github.com/slighter12/godot-mcp-go/mcp/jsonrpc"
@@ -110,6 +111,12 @@ func (f *Fixture) ProgressDispatch(_ context.Context, request jsonrpc.Request, m
 	}
 	if request.Method != "tools/call" || json.Unmarshal(request.Params, &params) != nil || params.Name != "test_tool_with_progress" {
 		return nil, nil, false
+	}
+	if meta.ProgressToken == nil {
+		return nil, completeText(request.ID, "Progress tool completed"), true
+	}
+	if !notifications.IsValidProgressToken(meta.ProgressToken) {
+		return nil, jsonrpc.NewErrorResponse(request.ID, int(jsonrpc.ErrInvalidParams), "Invalid progress token", nil), true
 	}
 	notifications := make([]*jsonrpc.Notification, 0, 3)
 	for _, progress := range []int{0, 50, 100} {
@@ -360,6 +367,9 @@ func (f *Fixture) handleRoundTripTool(name string) func(context.Context, mcp.Rou
 			if !hasCapability(request.ClientCapabilities, "elicitation") {
 				return mcp.RoundTripOutcome{}, errors.New("missing elicitation capability")
 			}
+			if _, present := request.InputResponses["stream"]; present {
+				return fixtureComplete("Streaming elicitation completed"), nil
+			}
 			return fixtureInputRequired(map[string]mcp.InputRequest{"stream": elicitation("Streaming elicitation", "value", "string")}, false), nil
 		}
 		if name == "test_input_required_result_capabilities" {
@@ -372,6 +382,9 @@ func (f *Fixture) handleRoundTripTool(name string) func(context.Context, mcp.Rou
 			}
 			if hasCapability(request.ClientCapabilities, "roots") {
 				requests["roots"] = roots()
+			}
+			if len(requests) == 0 {
+				return fixtureComplete("No supported input capabilities"), nil
 			}
 			return fixtureInputRequired(requests, false), nil
 		}
